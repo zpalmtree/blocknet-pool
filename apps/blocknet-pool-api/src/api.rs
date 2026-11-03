@@ -460,6 +460,10 @@ struct MinerBalancePayload {
 
 type MinerBalanceResponseCache = TimedMapCache<MinerBalancePayload>;
 
+fn miner_balance_cache_key(address: &str, include_pending_estimate: bool) -> String {
+    format!("{address}:{include_pending_estimate}")
+}
+
 #[derive(Clone)]
 struct MinerDetailPayload {
     found: bool,
@@ -1014,11 +1018,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
     let public_telemetry = Router::new()
         .route("/api/stats", get(handle_stats))
         .route("/api/miner/:address/balance", get(handle_miner_balance))
-        .route("/api/miner/:address", get(handle_miner))
-        .route_layer(middleware::from_fn_with_state(
-            app_state.clone(),
-            limit_public_telemetry_requests,
-        ));
+        .route("/api/miner/:address", get(handle_miner));
 
     let app = Router::new()
         .route("/", get(handle_ui))
@@ -1557,7 +1557,13 @@ struct MinerListItem {
     last_share_at: Option<SystemTime>,
 }
 
-async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
+async fn handle_stats(client: ClientIp, State(state): State<ApiState>) -> Response {
+    if let Some(cached) = state.fresh_stats_response() {
+        return Json(cached).into_response();
+    }
+    if !state.allow_telemetry_miss(&client, PublicTelemetryRouteKind::Stats) {
+        return telemetry_rate_limited_response();
+    }
     json_result(
         state.cached_stats_response().await,
         "failed loading pool stats",
@@ -2844,11 +2850,18 @@ async fn handle_miners(
 async fn handle_miner_balance(
     Path(address): Path<String>,
     Query(query): Query<MinerBalanceQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
+) -> Response {
     // A solo miner may look up the login they mine with.
     let address = pool_common::solo::split_solo_login(&address).1.to_string();
     let include_pending_estimate = query.include_pending_estimate.unwrap_or(true);
+    if let Some(cached) = state.fresh_miner_balance_payload(&address, include_pending_estimate) {
+        return Json(cached).into_response();
+    }
+    if !state.allow_telemetry_miss(&client, PublicTelemetryRouteKind::Miner) {
+        return telemetry_rate_limited_response();
+    }
     json_result(
         state
             .cached_miner_balance_payload(&address, include_pending_estimate)
@@ -2859,11 +2872,19 @@ async fn handle_miner_balance(
 
 async fn handle_miner(
     Path(address): Path<String>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
+) -> Response {
     // A solo miner may look up the login they mine with.
     let address = pool_common::solo::split_solo_login(&address).1.to_string();
-    match state.cached_miner_detail_payload(&address).await {
+    let payload = match state.fresh_miner_detail_payload(&address) {
+        Some(cached) => Ok(cached),
+        None if !state.allow_telemetry_miss(&client, PublicTelemetryRouteKind::Miner) => {
+            return telemetry_rate_limited_response();
+        }
+        None => state.cached_miner_detail_payload(&address).await,
+    };
+    match payload {
         Ok(payload) => {
             if payload.found {
                 Json(payload.body).into_response()
@@ -4535,6 +4556,50 @@ impl ApiState {
         loaded
     }
 
+    /// Counts a telemetry cache miss against the client's budget. Cache hits
+    /// are served without it.
+    fn allow_telemetry_miss(&self, client: &ClientIp, route: PublicTelemetryRouteKind) -> bool {
+        let Some(client_key) = client.key() else {
+            return true;
+        };
+        self.public_telemetry_rate_limiter
+            .lock()
+            .allow(client_key, route, Instant::now())
+    }
+
+    fn fresh_stats_response(&self) -> Option<StatsResponse> {
+        let value = self
+            .stats_response_cache
+            .lock()
+            .get(STATS_RESPONSE_CACHE_TTL)?;
+        self.performance.caches.record_hit("stats_response");
+        Some(value)
+    }
+
+    fn fresh_miner_balance_payload(
+        &self,
+        address: &str,
+        include_pending_estimate: bool,
+    ) -> Option<MinerBalancePayload> {
+        let value = self.miner_balance_response_cache.lock().get(
+            &miner_balance_cache_key(address, include_pending_estimate),
+            MINER_BALANCE_RESPONSE_CACHE_TTL,
+            MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES,
+        )?;
+        self.performance.caches.record_hit("miner_balance");
+        Some(value)
+    }
+
+    fn fresh_miner_detail_payload(&self, address: &str) -> Option<MinerDetailPayload> {
+        let value = self.miner_detail_response_cache.lock().get(
+            address,
+            MINER_DETAIL_RESPONSE_CACHE_TTL,
+            MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES,
+        )?;
+        self.performance.caches.record_hit("miner_detail");
+        Some(value)
+    }
+
     async fn cached_stats_response(&self) -> anyhow::Result<StatsResponse> {
         let _refresh = self.cache_refresh_locks.lock("stats").await;
         {
@@ -5163,7 +5228,7 @@ impl ApiState {
         address: &str,
         include_pending_estimate: bool,
     ) -> anyhow::Result<MinerBalancePayload> {
-        let cache_key = format!("{address}:{include_pending_estimate}");
+        let cache_key = miner_balance_cache_key(address, include_pending_estimate);
         let _refresh = self
             .cache_refresh_locks
             .lock(&format!("balance:{cache_key}"))
@@ -5947,22 +6012,6 @@ fn estimate_explorer_network_hashrate_hps(
     Ok(0.0)
 }
 
-fn public_telemetry_route_kind_for_path(path: &str) -> Option<PublicTelemetryRouteKind> {
-    if path == "/api/stats" {
-        return Some(PublicTelemetryRouteKind::Stats);
-    }
-
-    let rest = path.strip_prefix("/api/miner/")?;
-    let mut parts = rest.split('/');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(address), None, None) if !address.is_empty() => Some(PublicTelemetryRouteKind::Miner),
-        (Some(address), Some("balance"), None) if !address.is_empty() => {
-            Some(PublicTelemetryRouteKind::Miner)
-        }
-        _ => None,
-    }
-}
-
 fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
     let path = uri.path();
     if !path.starts_with("/api/") {
@@ -6024,7 +6073,9 @@ fn record_api_route_observation(
         .performance
         .routes
         .record(route, duration, failed, slow);
-    if failed {
+    // Rate-limited requests stay in the route counts above but are not
+    // logged one by one: busy clients produce thousands a minute.
+    if failed && status != StatusCode::TOO_MANY_REQUESTS {
         tracing::warn!(
             component = "api_perf",
             operation = "route",
@@ -6033,7 +6084,7 @@ fn record_api_route_observation(
             duration_ms = duration.as_millis() as u64,
             "api request completed with error"
         );
-    } else if slow || state.performance.should_sample_success() {
+    } else if !failed && (slow || state.performance.should_sample_success()) {
         tracing::info!(
             component = "api_perf",
             operation = "route",
@@ -6122,35 +6173,20 @@ async fn observe_api_request_performance(
     response
 }
 
-async fn limit_public_telemetry_requests(
-    State(state): State<ApiState>,
-    req: Request<Body>,
-    next: Next,
-) -> Response {
-    let route = public_telemetry_route_kind_for_path(req.uri().path());
-    let client_ip = state.client_ip(req.headers(), req.extensions());
-    if let (Some(route), Some(client_ip)) = (route, client_ip.key()) {
-        let allowed = {
-            let mut limiter = state.public_telemetry_rate_limiter.lock();
-            limiter.allow(client_ip, route, Instant::now())
-        };
-        if !allowed {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                [(
-                    header::RETRY_AFTER,
-                    PUBLIC_TELEMETRY_RATE_LIMIT_RETRY_AFTER_SECS.to_string(),
-                )],
-                Json(serde_json::json!({
-                    "error":"rate limit exceeded",
-                    "detail":"telemetry endpoint polled too aggressively; back off and retry"
-                })),
-            )
-                .into_response();
-        }
-    }
-
-    next.run(req).await
+/// Answer for a telemetry cache miss over the client's budget.
+fn telemetry_rate_limited_response() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(
+            header::RETRY_AFTER,
+            PUBLIC_TELEMETRY_RATE_LIMIT_RETRY_AFTER_SECS.to_string(),
+        )],
+        Json(serde_json::json!({
+            "error":"rate limit exceeded",
+            "detail":"telemetry endpoint polled too aggressively; back off and retry"
+        })),
+    )
+        .into_response()
 }
 
 impl ApiState {
@@ -6931,12 +6967,11 @@ mod tests {
 
     use super::{
         pending_estimate_snapshot_can_serve, pending_estimate_snapshot_needs_refresh,
-        public_telemetry_route_kind_for_path, CheckpointFileError, HashrateStatsInput,
-        MinerHashrateRamp, PendingEstimateSnapshotCache, PendingPreviewValidation,
-        PublicTelemetryRateLimiter, PublicTelemetryRouteKind, RewardParticipantStatus,
-        MINER_PENDING_ESTIMATE_HOT_WINDOW, MINER_PENDING_ESTIMATE_REFRESH_AFTER,
-        PUBLIC_TELEMETRY_MINER_RATE_LIMIT, PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW,
-        PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
+        CheckpointFileError, ClientIp, HashrateStatsInput, MinerHashrateRamp,
+        PendingEstimateSnapshotCache, PendingPreviewValidation, PublicTelemetryRateLimiter,
+        PublicTelemetryRouteKind, RewardParticipantStatus, MINER_PENDING_ESTIMATE_HOT_WINDOW,
+        MINER_PENDING_ESTIMATE_REFRESH_AFTER, PUBLIC_TELEMETRY_MINER_RATE_LIMIT,
+        PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW, PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
     };
     use crate::config::Config;
     use axum::body::to_bytes;
@@ -7561,6 +7596,52 @@ mod tests {
         });
     }
 
+    #[test]
+    fn telemetry_cache_hits_are_served_after_the_client_budget_is_spent_postgres() {
+        use super::{handle_miner_balance, handle_stats, MinerBalanceQuery};
+        let state = test_api_state(require_test_store!());
+        let runtime = test_runtime();
+        let client = ClientIp(Some("203.0.113.50".to_string()));
+        runtime.block_on(async {
+            state.cached_stats_response().await.unwrap();
+            state
+                .cached_miner_balance_payload("budget-cached-miner", false)
+                .await
+                .unwrap();
+            {
+                let mut limiter = state.public_telemetry_rate_limiter.lock();
+                let now = Instant::now();
+                while limiter.allow("203.0.113.50", PublicTelemetryRouteKind::Stats, now) {}
+                while limiter.allow("203.0.113.50", PublicTelemetryRouteKind::Miner, now) {}
+            }
+
+            let stats = handle_stats(client.clone(), State(state.clone())).await;
+            assert_eq!(stats.status(), StatusCode::OK);
+            let cached = handle_miner_balance(
+                Path("budget-cached-miner".to_string()),
+                Query(MinerBalanceQuery {
+                    include_pending_estimate: Some(false),
+                }),
+                client.clone(),
+                State(state.clone()),
+            )
+            .await;
+            assert_eq!(cached.status(), StatusCode::OK);
+
+            let uncached = handle_miner_balance(
+                Path("budget-uncached-miner".to_string()),
+                Query(MinerBalanceQuery {
+                    include_pending_estimate: Some(false),
+                }),
+                client.clone(),
+                State(state.clone()),
+            )
+            .await;
+            assert_eq!(uncached.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert!(uncached.headers().contains_key(header::RETRY_AFTER));
+        });
+    }
+
     fn response_json(
         runtime: &tokio::runtime::Runtime,
         response: axum::response::Response,
@@ -7870,24 +7951,6 @@ mod tests {
         assert!(is_api_request_path("/api/status"));
         assert!(!is_api_request_path("/apiary"));
         assert!(!is_api_request_path("/status"));
-    }
-
-    #[test]
-    fn public_telemetry_route_detection_matches_expected_paths() {
-        assert!(matches!(
-            public_telemetry_route_kind_for_path("/api/stats"),
-            Some(PublicTelemetryRouteKind::Stats)
-        ));
-        assert!(matches!(
-            public_telemetry_route_kind_for_path("/api/miner/test-address/balance"),
-            Some(PublicTelemetryRouteKind::Miner)
-        ));
-        assert!(matches!(
-            public_telemetry_route_kind_for_path("/api/miner/test-address"),
-            Some(PublicTelemetryRouteKind::Miner)
-        ));
-        assert!(public_telemetry_route_kind_for_path("/api/miner/test-address/hashrate").is_none());
-        assert!(public_telemetry_route_kind_for_path("/api/status").is_none());
     }
 
     #[test]
@@ -8352,6 +8415,7 @@ mod tests {
         let response = runtime
             .block_on(handle_miner(
                 Path("miner-workers".to_string()),
+                ClientIp::default(),
                 State(state),
             ))
             .into_response();
@@ -8390,6 +8454,7 @@ mod tests {
         let response = runtime
             .block_on(handle_miner(
                 Path("solo:miner-solo-workers".to_string()),
+                ClientIp::default(),
                 State(state),
             ))
             .into_response();
@@ -8437,7 +8502,11 @@ mod tests {
         let state = test_api_state(Arc::clone(&store));
         let runtime = test_runtime();
         let response = runtime
-            .block_on(handle_miner(Path("miner-since".to_string()), State(state)))
+            .block_on(handle_miner(
+                Path("miner-since".to_string()),
+                ClientIp::default(),
+                State(state),
+            ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         let payload = response_json(&runtime, response);
@@ -8535,7 +8604,11 @@ mod tests {
         let state = test_api_state(store);
         let runtime = test_runtime();
         let response = runtime
-            .block_on(handle_miner(Path("miner-hold".to_string()), State(state)))
+            .block_on(handle_miner(
+                Path("miner-hold".to_string()),
+                ClientIp::default(),
+                State(state),
+            ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         let payload = response_json(&runtime, response);
@@ -8592,6 +8665,7 @@ mod tests {
         let response = runtime
             .block_on(handle_miner(
                 Path("miner-backlog".to_string()),
+                ClientIp::default(),
                 State(state),
             ))
             .into_response();
