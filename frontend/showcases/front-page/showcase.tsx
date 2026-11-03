@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from '../../src/App';
 import { initializeLanguage } from '../../src/i18n';
 import { applyTheme } from '../../src/lib/theme';
-import type { BlockItem, InfoResponse, LuckRound, MinerResponse, PayoutItem } from '../../src/types';
+import type { BlockItem, CheckpointsResponse, InfoResponse, LuckRound, MinerResponse, PayoutItem } from '../../src/types';
 import '../../src/styles.css';
 
 const STATES = {
@@ -23,6 +23,7 @@ const STATES = {
   blocks: 'Blocks: effort and status columns',
   start: 'Get Started: the quick start steps',
   payouts: 'Payouts: recent pool payouts',
+  checkpoints: 'Checkpoints: the published checkpoint file',
 } as const;
 type State = keyof typeof STATES;
 
@@ -36,7 +37,7 @@ const WALLET = 'demo-miner-not-a-real-wallet';
 const EXCHANGE = 'demo-shared-exchange-deposit-address';
 const exchangeState = state === 'exchange' || state === 'exchange-ready';
 localStorage.removeItem('pool_last_miner_lookup_address');
-if (state === 'first' || state === 'loading' || state === 'empty' || state === 'luck' || state === 'blocks' || state === 'start' || state === 'payouts') {
+if (state === 'first' || state === 'loading' || state === 'empty' || state === 'luck' || state === 'blocks' || state === 'start' || state === 'payouts' || state === 'checkpoints') {
   localStorage.removeItem('pool_payout_destination_v1');
 } else {
   localStorage.setItem('pool_payout_destination_v1', JSON.stringify({
@@ -85,6 +86,11 @@ const payouts: PayoutItem[] = [12.45, 16.68, 22.53, 33.43, 60.7].map((amount, in
   total_amount: Math.round(amount * BNT), total_fee: 285_610, recipient_count: index === 0 ? 12 : 15,
   tx_hashes: [`demo-payout-tx-${index}`], timestamp: ts(2_880 + index * 30), confirmed: true,
 } as unknown as PayoutItem));
+
+const checkpoints: CheckpointsResponse = {
+  available: true, url: '/checkpoints.dat', entries: 71_500, latest_height: 71_500,
+  latest_hash: 'demo-checkpoint-hash-71500', bytes: 2_288_000, sha256: 'demo-sha256-not-a-real-digest', updated_at: ts(1_800),
+};
 
 const hashrateHistory = Array.from({ length: 168 }, (_, hour) => ({
   timestamp: ts((168 - hour) * 3_600),
@@ -135,6 +141,7 @@ window.fetch = async (input, init) => {
   if (path === '/api/payouts/recent') return json({ items: state === 'empty' ? [] : payouts, total: payouts.length });
   if (path === '/api/luck') return json({ items: luck, total: luck.length });
   if (path === '/api/blocks') return json({ items: blocks, total: 41_048 });
+  if (path === '/api/checkpoints') return json(checkpoints);
   if (path === '/api/payout-destination') return json({ account: 'memo:demo-account', min_payout_amount: 10 });
   if (path.startsWith('/api/miner/')) {
     if (state === 'miner-error') return Response.json({ error: 'Demo: lookup unavailable' }, { status: 500 });
@@ -146,7 +153,7 @@ window.fetch = async (input, init) => {
 };
 
 // The app routes on the path; the showcase picks it, then App renders as on the live site.
-const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', blocks: '/blocks', start: '/start', payouts: '/payouts' };
+const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', blocks: '/blocks', start: '/start', payouts: '/payouts', checkpoints: '/checkpoints' };
 history.replaceState(null, '', `${ROUTES[state] ?? '/'}${location.search}`);
 
 function Bar() {
@@ -171,6 +178,8 @@ function Bar() {
 
 initializeLanguage().then(() => {
   const root = document.getElementById('root')!;
+  // Captures: no scrollbar, so a full-page phone capture keeps its full 390 px width.
+  if (params.get('chrome') === 'off') document.documentElement.style.scrollbarWidth = 'none';
   if (params.get('chrome') !== 'off') {
     const bar = document.createElement('div');
     root.before(bar);

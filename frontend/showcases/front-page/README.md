@@ -24,11 +24,15 @@ pool, explorer or analytics endpoint. States:
 - `blocks`: Blocks, where effort and status badges share one width per column.
 - `start`: Get Started, with one row per quick start step and its action at the end.
 - `payouts`: Payouts, with the public data table layout.
+- `checkpoints`: Checkpoints, with a synthetic checkpoint file.
 
-Every page shares the front page's style: the dark green nav, a deep green title band, flat
-square cards, number groups as one box split by hairlines, and labels and tables without all caps.
+Every page shares the front page's style: a Mint page under the dark green nav and a deep green
+title band whose bottom edge the page rises into as one sheet (slightly curved inside corners on
+wide screens, a straight edge under 1136 px), deep green buttons and tabs, a green footer, flat
+square cards, number groups as one box split by hairlines, centred public tables with equal-width
+badges, and labels and tables without all caps.
 
 The 32 captures in `captures/` (see `captures.html`) cover these states at 1280 px and 390 px, dark
-mode and Arabic, plus Get Started, Blocks, Payouts and Checkpoints captured with live data
-from bntpool.com's public API through a local dev proxy. Source: blocknet-pool master 10f56ea plus the front page change. Captured
-2026-11-03 through the shared Playwright browser.
+mode and Arabic. Every capture uses synthetic data. `chrome=off` also hides the scrollbar, so a
+full-page phone capture keeps its full 390 px width. Source: blocknet-pool branch front-page-redesign.
+Captured 2026-11-03 through the shared Playwright browser.
