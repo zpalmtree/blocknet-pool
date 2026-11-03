@@ -2534,7 +2534,7 @@ td.chip-cell > .badge, td.chip-cell > .round-chip { display: block; width: 100%;
    than the 1080px content (--sheet-out), and the band curves into the sheet's sides (--curve). Narrower
    screens keep the straight edge: there is no room beside the sheet for the curves. */
 @media (min-width: 1136px) {
-  :root { --sheet-out: clamp(0px, 50vw - 578px, 40px); --curve: 6px; }
+  :root { --sheet-out: clamp(0px, 50vw - 578px, 40px); --curve: 3px; }
   .container:not(.container-wide) .page-header { padding-bottom: 80px; margin-bottom: 16px; }
   .container:not(.container-wide) .page-header::after {
     content: '';
