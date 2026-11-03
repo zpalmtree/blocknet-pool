@@ -30,6 +30,8 @@ pool.db
 *.sqlite3
 *.log
 data/
+# Generated frontend content that the build imports.
+!frontend/src/data/
 
 # --- Python tooling ---
 scripts/__pycache__/
