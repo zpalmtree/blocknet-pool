@@ -151,6 +151,8 @@
   "m489": "Bakiye aramaları şu anda başarısız oluyor, bu nedenle aşağıdaki değerler güncel olmayabilir. Paylarınız ve ödülleriniz etkilenmez; bu sayfa otomatik olarak yeniden dener.",
   "m490": "Bakiye aramaları şu anda başarısız oluyor. Paylarınız ve ödülleriniz etkilenmez; bu sayfa otomatik olarak yeniden dener.",
   "m492": "Tahmini Ödüller",
+  "estimateZeroLabel": "Neden 0?",
+  "estimateZeroHelp": "Havuzun henüz olgunlaşmamış bloklarındaki payınız. Havuz son paylarınızı içeren bir blok bulana kadar 0 kalır.",
   "m494": "Onaylanan Ödüller",
   "m496": "Ödenen Bakiye",
   "m503": "Red Oranı",

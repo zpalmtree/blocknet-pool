@@ -151,6 +151,8 @@
   "m489": "Le ricerche del saldo stanno fallendo in questo momento, quindi i valori sottostanti potrebbero non essere aggiornati. Le tue share e i tuoi premi non sono interessati; questa pagina riprova automaticamente.",
   "m490": "Le ricerche del saldo stanno fallendo in questo momento. Le tue share e i tuoi premi non sono interessati; questa pagina riprova automaticamente.",
   "m492": "Premi stimati",
+  "estimateZeroLabel": "Perché è 0?",
+  "estimateZeroHelp": "La tua quota dei blocchi del pool non ancora maturati. Resta a 0 finché il pool non trova un blocco che include le tue share recenti.",
   "m494": "Premi confermati",
   "m496": "Saldo pagato",
   "m503": "Tasso di rifiuto",

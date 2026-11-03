@@ -151,6 +151,8 @@
   "m489": "Saldoabfragen schlagen gerade fehl, daher können die folgenden Werte veraltet sein. Deine Shares und Belohnungen sind nicht betroffen; diese Seite wird automatisch erneut versucht.",
   "m490": "Saldoabfragen schlagen gerade fehl. Deine Shares und Belohnungen sind nicht betroffen; diese Seite wird automatisch erneut versucht.",
   "m492": "Geschätzte Belohnungen",
+  "estimateZeroLabel": "Warum ist das 0?",
+  "estimateZeroHelp": "Dein Anteil an Pool-Blöcken, die noch nicht gereift sind. Er bleibt bei 0, bis der Pool einen Block findet, der deine letzten Shares enthält.",
   "m494": "Bestätigte Belohnungen",
   "m496": "Ausgezahlter Saldo",
   "m503": "Ablehnungsrate",

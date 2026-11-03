@@ -151,6 +151,8 @@
   "m489": "As consultas de saldo estão falhando no momento, então os valores abaixo podem estar desatualizados. Suas shares e recompensas não são afetadas; esta página tenta novamente automaticamente.",
   "m490": "As consultas de saldo estão falhando no momento. Suas shares e recompensas não são afetadas; esta página tenta novamente automaticamente.",
   "m492": "Recompensas Estimadas",
+  "estimateZeroLabel": "Por que está em 0?",
+  "estimateZeroHelp": "Sua parte dos blocos do pool que ainda não maturaram. Fica em 0 até o pool encontrar um bloco que inclua seus shares recentes.",
   "m494": "Recompensas Confirmadas",
   "m496": "Saldo Pago",
   "m503": "Taxa de Rejeição",

@@ -151,6 +151,8 @@
   "m489": "Việc tra cứu số dư đang gặp sự cố, vì vậy các giá trị bên dưới có thể không còn chính xác. Phần thưởng và share của bạn không bị ảnh hưởng; trang này sẽ tự động thử lại.",
   "m490": "Việc tra cứu số dư đang gặp sự cố. Phần thưởng và share của bạn không bị ảnh hưởng; trang này sẽ tự động thử lại.",
   "m492": "Phần thưởng ước tính",
+  "estimateZeroLabel": "Vì sao là 0?",
+  "estimateZeroHelp": "Phần của bạn trong các khối của pool chưa đủ số xác nhận. Giá trị giữ ở 0 cho đến khi pool tìm được một khối có tính các share gần đây của bạn.",
   "m494": "Phần thưởng đã xác nhận",
   "m496": "Số dư đã thanh toán",
   "m503": "Tỷ lệ từ chối",

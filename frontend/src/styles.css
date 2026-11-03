@@ -2599,6 +2599,9 @@ html { scroll-padding-top: 72px; }
 .stats-summary-nums > div { min-width: 0; padding: 16px 28px; }
 .stats-summary-nums > div + div { border-inline-start: 1px solid var(--border); }
 .stats-summary-nums dt { font-size: 13px; color: var(--muted); }
+.stats-help { display: inline-grid; place-items: center; width: 18px; height: 18px; margin-inline-start: 6px; padding: 0; vertical-align: 1px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--accent-strong); font: 700 11px/1 'Manrope', sans-serif; cursor: pointer; }
+.stats-help:hover, .stats-help[aria-expanded='true'] { border-color: var(--accent); background: var(--accent-light); }
+.stats-help-note { margin: 8px 0 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .stats-summary-nums dd { margin: 4px 0 0; font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
 
 .miner-pay { display: grid; gap: 8px; min-width: 0; }
@@ -2618,7 +2621,8 @@ html { scroll-padding-top: 72px; }
 @media (max-width: 720px) {
   .stats-summary-top { grid-template-columns: 1fr; padding: 20px; }
   .stats-summary-nums { grid-template-columns: 1fr; }
-  .stats-summary-nums > div { padding: 12px 20px; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .stats-summary-nums > div { padding: 12px 20px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+  .stats-help-note { flex-basis: 100%; margin-top: 4px; }
   .stats-summary-nums > div + div { border-inline-start: 0; border-top: 1px solid var(--border); }
   .stats-summary-nums dd { margin: 0; font-size: 17px; }
 }

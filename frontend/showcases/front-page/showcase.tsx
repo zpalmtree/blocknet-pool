@@ -20,6 +20,7 @@ const STATES = {
   empty: 'New pool: no blocks or payouts yet',
   luck: 'Luck page with the Current Round card',
   stats: 'My Stats in the site-wide style',
+  'stats-new': 'My Stats: hashing, no estimated rewards yet',
   blocks: 'Blocks: effort and status columns',
   start: 'Get Started: the quick start steps',
   payouts: 'Payouts: recent pool payouts',
@@ -114,13 +115,13 @@ const miner: MinerResponse = {
   payouts: [{ amount: Math.round(1.84 * BNT), fee: 24_000, tx_hash: 'demo-miner-payout', timestamp: ts(recentPayout ? 240 : 2 * 86_400), confirmed: true }],
 };
 const confirmed = {
-  below: 0.42, stats: 0.42, ready: 1.84, queued: 1.84, paid: 0.03, 'no-workers': 0.42, exchange: 4.2, 'exchange-ready': 12.4,
+  below: 0.42, stats: 0.42, 'stats-new': 0, ready: 1.84, queued: 1.84, paid: 0.03, 'no-workers': 0.42, exchange: 4.2, 'exchange-ready': 12.4,
 }[state as string] ?? 0;
 const balance = {
   address: exchangeState ? 'memo:demo-account' : WALLET, min_payout_amount: exchangeState ? 10 : 1,
   balance: { pending_confirmed: Math.round(confirmed * BNT), pending_queued: state === 'queued' ? Math.round(1.84 * BNT) : 0,
     paid: Math.round((recentPayout ? 38.04 : 36.2) * BNT) },
-  pending_estimate: { estimated_pending: Math.round(0.08 * BNT), blocks: [] },
+  pending_estimate: { estimated_pending: state === 'stats-new' ? 0 : Math.round(0.08 * BNT), blocks: [] },
 };
 
 const insights = {
@@ -158,7 +159,7 @@ window.fetch = async (input, init) => {
 };
 
 // The app routes on the path; the showcase picks it, then App renders as on the live site.
-const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', blocks: '/blocks', start: '/start', payouts: '/payouts', checkpoints: '/checkpoints' };
+const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', 'stats-new': '/stats', blocks: '/blocks', start: '/start', payouts: '/payouts', checkpoints: '/checkpoints' };
 history.replaceState(null, '', `${ROUTES[state] ?? '/'}${location.search}`);
 
 function Bar() {

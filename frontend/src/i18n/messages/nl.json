@@ -151,6 +151,8 @@
   "m489": "Saldo-opvragingen falen op dit moment, dus de waarden hieronder zijn mogelijk verouderd. Uw shares en beloningen worden niet beïnvloed; deze pagina probeert automatisch opnieuw.",
   "m490": "Saldo-opvragingen falen op dit moment. Uw shares en beloningen worden niet beïnvloed; deze pagina probeert automatisch opnieuw.",
   "m492": "Geschatte beloningen",
+  "estimateZeroLabel": "Waarom is dit 0?",
+  "estimateZeroHelp": "Uw aandeel in poolblokken die nog niet gerijpt zijn. Het blijft 0 totdat de pool een blok vindt waarin uw recente shares meetellen.",
   "m494": "Bevestigde beloningen",
   "m496": "Betaald saldo",
   "m503": "Weigeringspercentage",

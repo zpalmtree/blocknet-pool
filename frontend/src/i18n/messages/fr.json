@@ -151,6 +151,8 @@
   "m489": "Les recherches de solde échouent actuellement, les valeurs ci-dessous peuvent donc être obsolètes. Vos parts et récompenses ne sont pas affectées ; cette page réessaie automatiquement.",
   "m490": "Les recherches de solde échouent actuellement. Vos parts et récompenses ne sont pas affectées ; cette page réessaie automatiquement.",
   "m492": "Récompenses estimées",
+  "estimateZeroLabel": "Pourquoi 0 ?",
+  "estimateZeroHelp": "Votre part des blocs du pool qui ne sont pas encore mûrs. Elle reste à 0 jusqu’à ce que le pool trouve un bloc qui inclut vos shares récentes.",
   "m494": "Récompenses confirmées",
   "m496": "Solde payé",
   "m503": "Taux de rejet",

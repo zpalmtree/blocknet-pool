@@ -151,6 +151,8 @@
   "m489": "Balance lookups are failing right now, so the values below may be out of date. Your shares and rewards are unaffected; this page retries automatically.",
   "m490": "Balance lookups are failing right now. Your shares and rewards are unaffected; this page retries automatically.",
   "m492": "Estimated Rewards",
+  "estimateZeroLabel": "Why is this 0?",
+  "estimateZeroHelp": "Your share of pool blocks that haven't matured yet. It stays at 0 until the pool finds a block that includes your recent shares.",
   "m494": "Confirmed Rewards",
   "m496": "Paid Balance",
   "m503": "Reject Rate",

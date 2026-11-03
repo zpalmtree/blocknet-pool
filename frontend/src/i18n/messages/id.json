@@ -151,6 +151,8 @@
   "m489": "Pencarian saldo sedang gagal saat ini, sehingga nilai di bawah mungkin sudah kedaluwarsa. Share dan reward Anda tidak terpengaruh; halaman ini akan mencoba lagi secara otomatis.",
   "m490": "Pencarian saldo sedang gagal saat ini. Share dan reward Anda tidak terpengaruh; halaman ini akan mencoba lagi secara otomatis.",
   "m492": "Reward Perkiraan",
+  "estimateZeroLabel": "Kenapa 0?",
+  "estimateZeroHelp": "Bagian Anda dari blok pool yang belum matang. Nilainya tetap 0 sampai pool menemukan blok yang mencakup share terbaru Anda.",
   "m494": "Reward Terkonfirmasi",
   "m496": "Saldo Dibayar",
   "m503": "Tingkat Penolakan",

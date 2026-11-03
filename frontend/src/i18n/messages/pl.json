@@ -151,6 +151,8 @@
   "m489": "Wyszukiwanie salda obecnie zawodzi, więc wartości poniżej mogą być nieaktualne. Twoje udziały i nagrody nie są dotknięte; ta strona ponawia próbę automatycznie.",
   "m490": "Wyszukiwanie salda obecnie zawodzi. Twoje udziały i nagrody nie są dotknięte; ta strona ponawia próbę automatycznie.",
   "m492": "Szacowane nagrody",
+  "estimateZeroLabel": "Dlaczego 0?",
+  "estimateZeroHelp": "Twoja część bloków puli, które jeszcze nie dojrzały. Pozostaje 0, dopóki pula nie znajdzie bloku obejmującego Twoje ostatnie udziały.",
   "m494": "Potwierdzone nagrody",
   "m496": "Wypłacone saldo",
   "m503": "Współczynnik odrzuceń",

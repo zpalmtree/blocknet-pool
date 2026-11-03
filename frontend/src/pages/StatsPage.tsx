@@ -76,6 +76,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [resolvedHandle, setResolvedHandle] = useState<string | null>(null);
   const [workersOffset, setWorkersOffset] = useState(0);
   const [payoutsOffset, setPayoutsOffset] = useState(0);
+  const [estimateHelpOpen, setEstimateHelpOpen] = useState(false);
 
   // A late registry response must not leave address-only results under a memo warning.
   useEffect(() => {
@@ -361,6 +362,8 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const showLookupResult = !(exchange && !memoInput) && !!minerAddress && (!!minerData || !!minerBalanceData || history.length > 0);
   const minerDetailLoading = lookupLoading && !minerData;
   const noHashrate = !!minerData && (!minerData.workers.length || liveHashrate <= 0);
+  // Hashing with nothing estimated yet: the pool has not found a block with these shares.
+  const estimateZero = !!minerBalanceData && pendingEstimated === 0 && liveHashrate > 0;
   const balanceValue = (amount: number) => minerBalanceData
     ? <span title={formatCoins(amount)}><bdi dir="ltr">{formatCompactCoins(amount)}</bdi></span>
     : '—';
@@ -468,7 +471,14 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               />
             </div>
             <dl className="stats-summary-nums">
-              <div><dt>{t("m492")}</dt><dd>{balanceValue(pendingEstimated)}</dd></div>
+              <div>
+                <dt>{t("m492")}{estimateZero && (
+                  <button type="button" className="stats-help" aria-expanded={estimateHelpOpen} aria-controls="estimate-help"
+                    aria-label={t('estimateZeroLabel')} title={t('estimateZeroLabel')} onClick={() => setEstimateHelpOpen((open) => !open)}>?</button>
+                )}</dt>
+                <dd>{balanceValue(pendingEstimated)}</dd>
+                {estimateZero && estimateHelpOpen && <p id="estimate-help" className="stats-help-note">{t('estimateZeroHelp')}</p>}
+              </div>
               <div><dt>{t("m494")}</dt><dd>{balanceValue(pendingConfirmed)}</dd></div>
               <div><dt>{t("m496")}</dt><dd>{balanceValue(livePaid)}</dd></div>
             </dl>
