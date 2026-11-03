@@ -322,6 +322,7 @@
   "yourAddress": "Η διεύθυνσή σας",
   "bandMiners": "miner σε σύνδεση",
   "bandHashrate": "hashrate του pool, {0} του δικτύου",
+  "bandNetwork": "hashrate του δικτύου",
   "bandPaid": "πληρώθηκαν στους miner",
   "recentBlocks": "Πρόσφατα Μπλοκ",
   "yourMiner": "Το miner σας",

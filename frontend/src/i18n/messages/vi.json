@@ -322,6 +322,7 @@
   "yourAddress": "Địa chỉ của bạn",
   "bandMiners": "máy đào trực tuyến",
   "bandHashrate": "hashrate của pool, {0} của mạng",
+  "bandNetwork": "hashrate của mạng",
   "bandPaid": "đã trả cho thợ đào",
   "recentBlocks": "Khối gần đây",
   "yourMiner": "Máy đào của bạn",

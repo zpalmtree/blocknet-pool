@@ -322,6 +322,7 @@
   "yourAddress": "Adresiniz",
   "bandMiners": "çevrimiçi madenci",
   "bandHashrate": "havuz hashrate'i, ağın {0} kadarı",
+  "bandNetwork": "ağ hashrate'i",
   "bandPaid": "madencilere ödendi",
   "recentBlocks": "Son Bloklar",
   "yourMiner": "Madenciniz",

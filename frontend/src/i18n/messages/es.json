@@ -322,6 +322,7 @@
   "yourAddress": "Tu dirección",
   "bandMiners": "mineros en línea",
   "bandHashrate": "hashrate del pool, {0} de la red",
+  "bandNetwork": "hashrate de la red",
   "bandPaid": "pagado a los mineros",
   "recentBlocks": "Bloques recientes",
   "yourMiner": "Tu minero",

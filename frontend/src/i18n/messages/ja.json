@@ -322,6 +322,7 @@
   "yourAddress": "あなたのアドレス",
   "bandMiners": "オンラインのマイナー",
   "bandHashrate": "プールのハッシュレート、ネットワークの{0}",
+  "bandNetwork": "ネットワークのハッシュレート",
   "bandPaid": "マイナーへの支払い総額",
   "recentBlocks": "最近のブロック",
   "yourMiner": "あなたのマイナー",

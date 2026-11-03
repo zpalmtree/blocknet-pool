@@ -322,6 +322,7 @@
   "yourAddress": "你的地址",
   "bandMiners": "在线矿工",
   "bandHashrate": "矿池算力，占全网 {0}",
+  "bandNetwork": "全网算力",
   "bandPaid": "已支付给矿工",
   "recentBlocks": "最近区块",
   "yourMiner": "你的矿机",

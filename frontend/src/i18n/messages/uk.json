@@ -322,6 +322,7 @@
   "yourAddress": "Ваша адреса",
   "bandMiners": "майнерів онлайн",
   "bandHashrate": "хешрейт пулу, {0} мережі",
+  "bandNetwork": "хешрейт мережі",
   "bandPaid": "виплачено майнерам",
   "recentBlocks": "Останні блоки",
   "yourMiner": "Ваш майнер",

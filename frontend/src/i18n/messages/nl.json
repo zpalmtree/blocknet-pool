@@ -322,6 +322,7 @@
   "yourAddress": "Je adres",
   "bandMiners": "miners online",
   "bandHashrate": "pool-hashrate, {0} van het netwerk",
+  "bandNetwork": "netwerk-hashrate",
   "bandPaid": "uitbetaald aan miners",
   "recentBlocks": "Recente Blokken",
   "yourMiner": "Je miner",

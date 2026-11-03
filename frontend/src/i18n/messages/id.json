@@ -322,6 +322,7 @@
   "yourAddress": "Alamat Anda",
   "bandMiners": "penambang online",
   "bandHashrate": "hashrate pool, {0} dari jaringan",
+  "bandNetwork": "hashrate jaringan",
   "bandPaid": "dibayarkan ke penambang",
   "recentBlocks": "Blok Terbaru",
   "yourMiner": "Penambang Anda",

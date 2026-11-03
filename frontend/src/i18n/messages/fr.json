@@ -322,6 +322,7 @@
   "yourAddress": "Votre adresse",
   "bandMiners": "mineurs en ligne",
   "bandHashrate": "hashrate du pool, {0} du réseau",
+  "bandNetwork": "hashrate du réseau",
   "bandPaid": "payés aux mineurs",
   "recentBlocks": "Blocs récents",
   "yourMiner": "Votre mineur",

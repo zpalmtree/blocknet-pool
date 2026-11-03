@@ -273,6 +273,10 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
           <span className="home-cap">{tx('bandHashrate', [<bdi key="share">{networkShare}</bdi>])}</span>
         </div>
         <div>
+          <span className="home-num" dir="ltr">{networkHashrate > 0 ? humanRate(networkHashrate) : '-'}</span>
+          <span className="home-cap">{t('bandNetwork')}</span>
+        </div>
+        <div>
           <span className="home-num" title={paidTotal != null ? formatCoins(paidTotal) : undefined}>{paidTotal != null ? formatCompactCoins(paidTotal) : '-'}</span>
           <span className="home-cap">{t('bandPaid')}</span>
         </div>

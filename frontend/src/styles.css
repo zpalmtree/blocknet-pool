@@ -593,7 +593,7 @@ html:lang(zh) .page-header h1 {
 
 .home-band {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   padding: 0 max(20px, calc((100% - 1080px) / 2));
   background: var(--hero);
   color: var(--hero-ink);
@@ -673,6 +673,13 @@ nav.nav-hero .pool-languages ul { background: #0b2a1f; }
 @media (max-width: 900px) {
   .home-hero-body { grid-template-columns: minmax(0, 1fr); }
   .home-steps { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Tablets: four numbers don't fit in one row, so the band goes two by two. */
+@media (min-width: 641px) and (max-width: 999px) {
+  .home-band { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home-band > div:nth-child(odd) { padding-inline-start: 0; border-inline-start: 0; }
+  .home-band > div:nth-child(n+3) { border-top: 1px solid var(--hero-line); }
 }
 
 @media (max-width: 640px) {
