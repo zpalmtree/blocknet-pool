@@ -76,6 +76,8 @@ pub struct DbBlock {
     pub orphaned: bool,
     pub paid_out: bool,
     pub effort_pct: Option<f64>,
+    /// Found by a solo connection: the finder alone is credited.
+    pub solo: bool,
 }
 
 #[derive(Debug, Clone)]

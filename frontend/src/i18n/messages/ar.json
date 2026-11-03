@@ -351,5 +351,8 @@
   "minerSettingsCpu": "CPU فقط، وإيقاف GPU",
   "minerSettingsThreads": "استخدام 4 خيوط CPU",
   "minerSettingsLead": "يعدّن seine افتراضيًا باستخدام CPU وبطاقات الرسوميات. لتغيير ذلك، أغلق seine وافتح الطرفية في مجلده، ثم شغّل أحد هذه الأوامر. في Windows استخدم PowerShell واكتب {0} بدلًا من {1}:",
-  "minerSettingsGuide": "إعدادات seine: الخيوط وCPU وGPU والمجمع"
+  "minerSettingsGuide": "إعدادات seine: الخيوط وCPU وGPU والمجمع",
+  "m619": "فردي",
+  "m620": "معدل التجزئة الفردي",
+  "m621": "يُكافأ فقط على الكتل التي يجدها"
 }

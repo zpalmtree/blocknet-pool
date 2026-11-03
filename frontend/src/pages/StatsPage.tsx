@@ -10,6 +10,7 @@ import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutProgress } from '../components/PayoutProgress';
 import { RangeTabs } from '../components/RangeTabs';
 import { StatCard } from '../components/StatCard';
+import { SoloBadge } from '../components/BlockStatusBadge';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
 import { knownExchange, validMemo } from '../lib/payout-destination';
 import { readDestination, rememberDestination } from '../lib/storage';
@@ -33,6 +34,11 @@ interface StatsPageProps {
 // Large farms report hundreds of rigs; page them so balance and history stay in reach.
 const WORKERS_PAGE_SIZE = 20;
 const PAYOUTS_PAGE_SIZE = 10;
+
+// Solo miners log in as solo:<address>; look up the address itself.
+function stripSoloLogin(raw: string): string {
+  return raw.replace(/^solo:\s*/i, '');
+}
 
 function looksLikeHandle(raw: string): boolean {
   return raw.startsWith('$') || raw.startsWith('@') || (raw.length < 25 && /^[$@]?[a-z0-9][a-z0-9_.\-]{0,62}$/i.test(raw));
@@ -154,7 +160,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const loadMinerLookup = useCallback(
     async (input?: string, memoOverride?: string) => {
       const memo = memoOverride ?? memoInput;
-      let addr = (input ?? minerInput).trim();
+      let addr = stripSoloLogin((input ?? minerInput).trim());
       let resolved: { address: string; handle: string } | null = null;
       if (!addr || !validMemo(memo)) return;
       if (knownExchange(poolInfo, addr) && !memo) { setMemoOpen(true); return; }
@@ -523,6 +529,9 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             <div className="stats-card-group-title">{t("m499")}</div>
             <div className="stats-card-group-grid">
               <StatCard label={t("m082")} value={humanRate(liveHashrate)} />
+              {!!minerData?.solo_hashrate && (
+                <StatCard label={t("m620")} value={humanRate(minerData.solo_hashrate)} meta={t("m621")} />
+              )}
               <StatCard label={t("m411")} value={minerData ? minerData.blocks_found : '...'} />
               <StatCard label={t("m500")} value={minerData ? minerOldestShareDate : '...'} />
             </div>
@@ -564,6 +573,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                         </td>
                         <td title={b.validation_detail || undefined}>
                           {b.credit_withheld ? t("m517") : b.validation_state === 'extra_verification' ? t("m518", [formatCoins(b.estimated_credit)]) : formatCoins(b.estimated_credit)}
+                          {b.solo && <> <SoloBadge /></>}
                         </td>
                         <td>{b.confirmations_remaining}</td>
                         <td title={timestampTitle(b.timestamp)}>{timeAgo(b.timestamp)}</td>

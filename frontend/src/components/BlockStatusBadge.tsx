@@ -4,3 +4,7 @@ export function BlockStatusBadge({ confirmed, orphaned }: { confirmed: boolean; 
   if (confirmed) return <span className="badge badge-confirmed">{t("m091")}</span>;
   return <span className="badge badge-pending">{t("m092")}</span>;
 }
+
+export function SoloBadge() {
+  return <span className="badge badge-solo">{t("m619")}</span>;
+}

@@ -1151,6 +1151,12 @@ tr:hover td {
   color: var(--status-orphaned-text);
 }
 
+.badge-solo {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
 .miner-update-banner {
   display: flex;
   align-items: center;

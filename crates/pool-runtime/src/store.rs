@@ -137,7 +137,12 @@ impl PoolStore {
         let provisional_delay = config.provisional_share_delay_duration();
         let mut window_shares = Vec::<DbShare>::new();
         let mut seen = HashSet::<i64>::new();
-        for block in self.get_unconfirmed_blocks()? {
+        // Solo blocks credit their finder without a PPLNS window to audit.
+        for block in self
+            .get_unconfirmed_blocks()?
+            .into_iter()
+            .filter(|block| !block.solo)
+        {
             let window_end = reward_window_end(self, &block)?;
             let start = window_end
                 .checked_sub(config.pplns_window_duration())
@@ -385,6 +390,7 @@ impl ShareStore for PoolStore {
             orphaned: false,
             paid_out: false,
             effort_pct: None,
+            solo: block.solo,
         };
 
         if self.inner.insert_block_if_absent(&candidate)? {
@@ -769,6 +775,7 @@ mod tests {
                 finder: "addr1".to_string(),
                 finder_worker: "w1".to_string(),
                 timestamp: SystemTime::now(),
+                solo: false,
             })
             .expect("insert found block");
 
@@ -810,6 +817,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("seed existing block");
         assert!(store
@@ -842,6 +850,7 @@ mod tests {
                 finder: "addr-new".to_string(),
                 finder_worker: "rig-new".to_string(),
                 timestamp: SystemTime::now(),
+                solo: false,
             })
             .expect("conflicting found block should replace archived orphan");
 
@@ -1165,6 +1174,7 @@ mod tests {
                     claimed_hash: None,
                     reject_reason: None,
                     created_at: SystemTime::now(),
+                    solo: false,
                 })
                 .unwrap();
         }

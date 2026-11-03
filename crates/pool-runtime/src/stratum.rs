@@ -201,6 +201,9 @@ struct QueuedJob {
 /// A logged-in connection as the job fanout sees it.
 struct FanoutConn {
     address: String,
+    /// Owner of the connection's job assignments (see
+    /// `pool_common::solo::assignment_owner`).
+    job_owner: String,
     /// The difficulty of the connection's latest job, shared with its
     /// connection task (which compares submit acks against it).
     difficulty: Arc<AtomicU64>,
@@ -1188,7 +1191,7 @@ impl StratumServer {
             requests.push(MinerJobRequest {
                 conn_id: conn_id.clone(),
                 share_difficulty: next,
-                assigned_miner: conn.address.clone(),
+                assigned_miner: conn.job_owner.clone(),
                 range_mode: AssignmentRangeMode::Fresh,
             });
             targets.push(conn);
@@ -1637,6 +1640,12 @@ impl StratumServer {
                 maybe_notification = rx_notifications.recv(), if logged_in.is_some() => {
                     match maybe_notification {
                         Ok(notification) => {
+                            // PPLNS block rewards do not reach solo miners.
+                            if is_pool_block_solved(&notification)
+                                && self.engine.session_is_solo(&conn_id)
+                            {
+                                continue;
+                            }
                             if let Err(err) = queue_json(&outbound, &notification) {
                                 run_result = Err(err);
                                 break;
@@ -1710,7 +1719,9 @@ impl StratumServer {
                             let login_engine = Arc::clone(&self.engine);
                             let shortname_resolver = Arc::clone(&self.shortname_resolver);
                             let login_conn_id = conn_id.clone();
-                            let login_address = params.address.trim().to_string();
+                            let (login_solo, login_address) =
+                                pool_common::solo::split_solo_login(&params.address);
+                            let login_address = login_address.to_string();
                             let login_worker = params.worker.clone();
                             let login_protocol_version = params.protocol_version;
                             let login_capabilities = params.capabilities.clone();
@@ -1728,6 +1739,7 @@ impl StratumServer {
                                     login_protocol_version,
                                     login_capabilities,
                                     login_hint,
+                                    login_solo,
                                 )?;
                                 Ok::<_, anyhow::Error>((result, login_address))
                             })
@@ -1735,6 +1747,8 @@ impl StratumServer {
 
                             match login {
                                 Ok(Ok((login_result, address))) => {
+                                    let job_owner =
+                                        pool_common::solo::assignment_owner(&address, login_solo);
                                     let worker =
                                         normalize_worker_name(params.worker.as_str());
                                     let difficulty =
@@ -1754,11 +1768,19 @@ impl StratumServer {
                                         run_result = Err(err);
                                         break;
                                     }
+                                    if login_solo {
+                                        let notice = solo_login_notice(self.engine.pool_fee_pct());
+                                        let notify = block_notification(NOTIFY_SOLO_MINING, &notice);
+                                        if let Err(err) = queue_json(&outbound, &notify) {
+                                            run_result = Err(err);
+                                            break;
+                                        }
+                                    }
 
                                     let login_template = match self.jobs.build_miner_job(
                                         &conn_id,
                                         difficulty,
-                                        &address,
+                                        &job_owner,
                                     ) {
                                         Some(miner_job) => {
                                             let template_id = miner_job.template_id.clone();
@@ -1780,6 +1802,7 @@ impl StratumServer {
                                         &conn_id,
                                         FanoutConn {
                                             address: address.clone(),
+                                            job_owner: job_owner.clone(),
                                             difficulty: Arc::clone(&shared),
                                             outbound: outbound.clone(),
                                             kick: Arc::clone(&kick),
@@ -1795,7 +1818,7 @@ impl StratumServer {
                                         .map(|job| job.template_id);
                                     if current_template.is_some() && current_template != login_template {
                                         if let Some(miner_job) =
-                                            self.jobs.build_miner_job(&conn_id, difficulty, &address)
+                                            self.jobs.build_miner_job(&conn_id, difficulty, &job_owner)
                                         {
                                             let notify = JobNotify {
                                                 method: "job",
@@ -2130,6 +2153,7 @@ impl StratumServer {
     ) -> Result<()> {
         match completion.outcome {
             SubmitCompletionOutcome::Finished(Ok(ack)) => {
+                let solo_finder = ack.block_accepted && self.engine.session_is_solo(conn_id);
                 let mut finder_address = None::<String>;
                 let mut finder_worker = None::<String>;
                 let mut response_difficulty = ack.next_difficulty;
@@ -2185,12 +2209,18 @@ impl StratumServer {
                     if ack.block_accepted {
                         let miner_notification = block_notification(
                             NOTIFY_MINER_BLOCK_FOUND,
-                            "great success: you found a block for the pool",
+                            if solo_finder {
+                                "great success: you found a solo block; its reward is yours once it confirms"
+                            } else {
+                                "great success: you found a block for the pool"
+                            },
                         );
                         queue_json(outbound, &miner_notification)?;
                     }
                 }
-                if ack.block_accepted {
+                // A solo block pays only its finder, so PPLNS miners are not told
+                // the pool solved it.
+                if ack.block_accepted && !solo_finder {
                     let pool_notification = block_notification(
                         NOTIFY_POOL_BLOCK_SOLVED,
                         "pool solved a block: share rewards are now pending confirmation",
@@ -2338,9 +2368,13 @@ impl StratumServer {
         } else {
             AssignmentRangeMode::Fresh
         };
+        let job_owner = self
+            .engine
+            .session_assignment_owner(conn_id)
+            .unwrap_or_else(|| address.to_string());
         if let Some(miner_job) = self
             .jobs
-            .build_miner_job_with_range_mode(conn_id, difficulty, address, range_mode)
+            .build_miner_job_with_range_mode(conn_id, difficulty, &job_owner, range_mode)
         {
             if let Some(outbound) = outbound {
                 let notify = StratumNotify {
@@ -2521,6 +2555,8 @@ fn sanitize_submit_metadata(value: &str) -> String {
 /// Notification kind for the once-per-connection upgrade notice. Seine prints
 /// unknown kinds as plain pool messages, so old versions show it too.
 pub const NOTIFY_MINER_UPDATE_AVAILABLE: &str = "miner_update_available";
+/// Confirms a `solo:` login; miners show it as a pool notice.
+pub const NOTIFY_SOLO_MINING: &str = "solo_mining";
 
 /// Aborts a background task when the owning future finishes or is dropped.
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
@@ -2810,6 +2846,33 @@ fn connection_limit_line() -> String {
     .expect("notification serializes")
 }
 
+fn is_pool_block_solved(notification: &StratumNotify) -> bool {
+    notification.method == METHOD_NOTIFICATION
+        && notification
+            .params
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            == Some(NOTIFY_POOL_BLOCK_SOLVED)
+}
+
+/// Sent once after a `solo:` login.
+fn solo_login_notice(pool_fee_pct: f64) -> String {
+    let fee = if pool_fee_pct > 0.0 {
+        format!(", less the {}% pool fee", format_fee_pct(pool_fee_pct))
+    } else {
+        String::new()
+    };
+    format!(
+        "solo mining: you are paid only for blocks this address finds, the full block reward{fee}. Remove the solo: prefix to share rewards with the pool (PPLNS)"
+    )
+}
+
+fn format_fee_pct(pct: f64) -> String {
+    let rounded = (pct * 100.0).round() / 100.0;
+    let text = format!("{rounded:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
 fn block_notification(kind: &str, message: &str) -> StratumNotify {
     StratumNotify {
         method: METHOD_NOTIFICATION.to_string(),
@@ -2834,6 +2897,7 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::ip_group_key;
+    use super::{block_notification, is_pool_block_solved, solo_login_notice, NOTIFY_SOLO_MINING};
     use super::{
         client_submit_ack_difficulty, log_rejection_at_info, miner_update_notice,
         nonempty_submit_metadata, parse_release_version, queue_job_json, queue_json,
@@ -2849,6 +2913,7 @@ mod tests {
     use crate::validation::ValidationEngine;
     use pool_common::pow::PowHasher;
     use pool_common::protocol::{StratumNotify, StratumRequest};
+    use pool_common::protocol::{METHOD_NOTIFICATION, NOTIFY_POOL_BLOCK_SOLVED};
     use serde::Serialize;
     use serde_json::{json, Value};
     use std::collections::HashMap;
@@ -2971,6 +3036,66 @@ mod tests {
             _ => panic!("missing test address for seed {seed:#x}"),
         }
         .to_string()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tcp_solo_login_gets_a_notice_and_solo_owned_jobs() {
+        use crate::engine::JobRepository;
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let address = test_miner_address(0x55);
+        write_json_line(
+            &mut writer,
+            &StratumRequest {
+                id: 1,
+                method: pool_common::protocol::METHOD_LOGIN.to_string(),
+                params: json!({
+                    "address": format!(" solo:{address}"),
+                    "worker": "rig",
+                    "protocol_version": 2,
+                    "capabilities": ["submit_claimed_hash"],
+                }),
+            },
+        )
+        .await;
+        let login = read_json_line(&mut reader).await;
+        assert_eq!(login["status"].as_str(), Some("ok"));
+        let notice = read_json_line(&mut reader).await;
+        assert_eq!(notice["method"].as_str(), Some(METHOD_NOTIFICATION));
+        assert_eq!(notice["params"]["kind"].as_str(), Some(NOTIFY_SOLO_MINING));
+        assert!(notice["params"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("solo mining:"));
+        let job = read_json_line(&mut reader).await;
+        assert_eq!(job["method"].as_str(), Some("job"));
+        let job: MinerJob = serde_json::from_value(job["params"].clone()).unwrap();
+        let binding = jobs
+            .resolve_submit_job(&job.job_id, Instant::now())
+            .unwrap();
+        assert_eq!(
+            binding.assigned_miner.as_deref(),
+            Some(format!("solo:{address}").as_str())
+        );
+        // Solo connections skip the PPLNS block broadcast.
+        assert!(is_pool_block_solved(&block_notification(
+            NOTIFY_POOL_BLOCK_SOLVED,
+            "pool solved a block"
+        )));
+        assert!(!is_pool_block_solved(&block_notification(
+            NOTIFY_SOLO_MINING,
+            "x"
+        )));
+        drop((reader, writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[test]
+    fn solo_login_notice_names_the_pool_fee() {
+        assert!(!solo_login_notice(0.0).contains('%'));
+        assert!(solo_login_notice(1.0).contains("less the 1% pool fee"));
+        assert!(solo_login_notice(0.5).contains("less the 0.5% pool fee"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

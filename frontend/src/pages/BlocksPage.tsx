@@ -2,7 +2,7 @@ import { t } from '../i18n';
 import { useCallback, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
-import { BlockStatusBadge } from '../components/BlockStatusBadge';
+import { BlockStatusBadge, SoloBadge } from '../components/BlockStatusBadge';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { ExplorerLink } from '../components/ExplorerLink';
 import { Pager } from '../components/Pager';
@@ -64,6 +64,7 @@ export function BlocksPage({ api, liveTick }: BlocksPageProps) {
                   <td>{b.duration_seconds == null ? '-' : fmtSeconds(b.duration_seconds)}</td>
                   <td>
                     <BlockStatusBadge confirmed={b.confirmed} orphaned={b.orphaned} />
+                    {b.solo && <> <SoloBadge /></>}
                   </td>
                   <td title={timestampTitle(b.timestamp)}>{timeAgo(b.timestamp)}</td>
                 </tr>

@@ -351,5 +351,8 @@
   "minerSettingsCpu": "Nur CPU, GPU aus",
   "minerSettingsThreads": "4 CPU-Threads nutzen",
   "minerSettingsLead": "Standardmäßig mint seine mit deiner CPU und deinen Grafikkarten. Um das zu ändern, schließe seine, öffne ein Terminal in seinem Ordner und führe einen dieser Befehle aus. Unter Windows nutzt du PowerShell und tippst {0} statt {1}:",
-  "minerSettingsGuide": "seine-Einstellungen ändern: Threads, CPU, GPU und Pool"
+  "minerSettingsGuide": "seine-Einstellungen ändern: Threads, CPU, GPU und Pool",
+  "m619": "solo",
+  "m620": "Solo-Hashrate",
+  "m621": "Nur für selbst gefundene Blöcke bezahlt"
 }

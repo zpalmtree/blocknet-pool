@@ -14,14 +14,14 @@ SELECT ready FROM share_read_state WHERE singleton FOR UPDATE \gset
 \else
 INSERT INTO share_read_miners(minute,miner,status,shares,work)
 SELECT created_at / 60 * 60,miner,
-       CASE WHEN status IN ('','verified','provisional') THEN status ELSE 'rejected' END,
+       CASE WHEN status NOT IN ('','verified','provisional') THEN CASE WHEN solo THEN 'solo_rejected' ELSE 'rejected' END WHEN solo THEN 'solo' ELSE status END,
        COUNT(*),SUM(difficulty)::bigint
 FROM shares GROUP BY 1,2,3;
 INSERT INTO share_read_minutes(minute,accepted,rejected,work)
 SELECT minute,
-       COALESCE(SUM(shares) FILTER (WHERE status IN ('verified','provisional')),0)::bigint,
-       COALESCE(SUM(shares) FILTER (WHERE status NOT IN ('verified','provisional')),0)::bigint,
-       COALESCE(SUM(work) FILTER (WHERE status IN ('verified','provisional')),0)::bigint
+       COALESCE(SUM(shares) FILTER (WHERE status IN ('verified','provisional','solo')),0)::bigint,
+       COALESCE(SUM(shares) FILTER (WHERE status NOT IN ('verified','provisional','solo')),0)::bigint,
+       COALESCE(SUM(work) FILTER (WHERE status IN ('verified','provisional','solo')),0)::bigint
 FROM share_read_miners GROUP BY minute;
 -- The same snapshot excludes any writes committed after the backfill began.
 DELETE FROM share_read_deltas;

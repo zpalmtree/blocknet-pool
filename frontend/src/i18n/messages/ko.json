@@ -351,5 +351,8 @@
   "minerSettingsCpu": "CPU만 사용, GPU 끔",
   "minerSettingsThreads": "CPU 스레드 4개 사용",
   "minerSettingsLead": "seine는 기본적으로 CPU와 그래픽 카드로 채굴합니다. 바꾸려면 seine를 닫고, 해당 폴더에서 터미널을 연 뒤 다음 명령 중 하나를 실행하세요. Windows에서는 PowerShell을 사용하고 {1} 대신 {0}를 입력하세요.",
-  "minerSettingsGuide": "seine 설정 바꾸기: 스레드, CPU, GPU, 풀"
+  "minerSettingsGuide": "seine 설정 바꾸기: 스레드, CPU, GPU, 풀",
+  "m619": "솔로",
+  "m620": "솔로 해시레이트",
+  "m621": "직접 찾은 블록에 대해서만 보상"
 }

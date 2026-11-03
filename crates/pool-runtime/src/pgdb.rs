@@ -1062,6 +1062,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              WHERE status IN ('verified', 'provisional')",
         )
         .context("ensure API read indexes")?;
+        // Checked first so a restart does not queue an exclusive lock on the
+        // hot shares table once the column exists.
+        conn.batch_execute(
+            "DO $solo$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'shares' AND column_name = 'solo'
+                ) THEN
+                    ALTER TABLE shares ADD COLUMN solo BOOLEAN NOT NULL DEFAULT FALSE;
+                END IF;
+             END $solo$;
+             ALTER TABLE blocks ADD COLUMN IF NOT EXISTS solo BOOLEAN NOT NULL DEFAULT FALSE;
+             ALTER TABLE archived_blocks ADD COLUMN IF NOT EXISTS solo BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .context("ensure solo mining columns")?;
         conn.batch_execute(include_str!("../sql/share_read_counts.sql"))
             .context("ensure exact miner share read counts")?;
         conn.batch_execute(include_str!("../sql/share_read_minutes.sql"))
@@ -1340,8 +1356,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         }
 
         let row = tx.query_one(
-            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, reject_reason, created_at, miner_version, backend)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, reject_reason, created_at, miner_version, backend, solo)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              RETURNING id",
             &[
                 &share.job_id,
@@ -1357,6 +1373,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &created,
                 &miner_version,
                 &backend,
+                &share.solo,
             ],
         )?;
         tx.commit()?;
@@ -1536,12 +1553,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(row.get::<_, Option<i64>>(0).map(from_unix))
     }
 
+    /// PPLNS shares in `[start, end]`. Solo shares are never part of a PPLNS
+    /// window.
     pub fn get_shares_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<DbShare>> {
         let start_ts = to_unix(start);
         let end_ts = to_unix(end);
         let rows = self.conn().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
-             FROM shares WHERE created_at >= $1 AND created_at <= $2",
+             FROM shares WHERE created_at >= $1 AND created_at <= $2 AND NOT solo",
             &[&start_ts, &end_ts],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
@@ -1597,7 +1616,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              ), summaries AS MATERIALIZED (
                 SELECT s.start_at,s.end_at,p.* FROM segments s
                 CROSS JOIN LATERAL share_read_address_window(s.start_at,s.end_at-1) p
-                WHERE s.end_at > s.start_at AND EXISTS (
+                WHERE p.share_status NOT IN ('solo','solo_rejected')
+                  AND s.end_at > s.start_at AND EXISTS (
                     SELECT 1 FROM windows w WHERE s.start_at >= w.start_at AND s.end_at <= w.end_at
                 )
              )
@@ -1661,7 +1681,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                       )
                 )::bigint AS provisional_shares_delayed
              FROM shares
-             WHERE created_at >= $1 AND created_at <= $2
+             WHERE created_at >= $1 AND created_at <= $2 AND NOT solo
              GROUP BY miner
              ORDER BY miner ASC",
             &[&start_ts, &end_ts, &ready_enabled, &ready_cutoff],
@@ -1730,6 +1750,34 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             count.max(0) as u64,
             oldest.map(from_unix),
             newest.map(from_unix),
+        ))
+    }
+
+    /// `(solo, all)` accepted work for `address` in whole minutes from
+    /// `since`, read from the minute projections. `(0, 0)` until they are
+    /// initialized.
+    pub fn miner_solo_work_split_since(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<(u64, u64)> {
+        let since_ts = to_unix(since);
+        let row = self.conn().query_one(
+            "SELECT COALESCE(SUM(work) FILTER (WHERE status = 'solo'),0)::bigint,
+                    COALESCE(SUM(work),0)::bigint
+             FROM (
+                SELECT status, work FROM share_read_miners
+                WHERE miner = $1 AND minute >= $2 AND status IN ('verified','provisional','solo')
+                UNION ALL
+                SELECT status, work FROM share_read_deltas
+                WHERE miner = $1 AND minute >= $2 AND status IN ('verified','provisional','solo')
+             ) x
+             WHERE COALESCE((SELECT ready FROM share_read_state WHERE singleton), FALSE)",
+            &[&address, &since_ts],
+        )?;
+        Ok((
+            row.get::<_, i64>(0).max(0) as u64,
+            row.get::<_, i64>(1).max(0) as u64,
         ))
     }
 
@@ -1831,8 +1879,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn add_block(&self, block: &DbBlock) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT(height) DO UPDATE SET
                  hash=EXCLUDED.hash,
                  difficulty=EXCLUDED.difficulty,
@@ -1843,7 +1891,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  confirmed=EXCLUDED.confirmed,
                  orphaned=EXCLUDED.orphaned,
                  paid_out=EXCLUDED.paid_out,
-                 effort_pct=EXCLUDED.effort_pct",
+                 effort_pct=EXCLUDED.effort_pct,
+                 solo=EXCLUDED.solo",
             &[
                 &u64_to_i64(block.height)?,
                 &block.hash,
@@ -1856,6 +1905,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &block.orphaned,
                 &block.paid_out,
                 &block.effort_pct,
+                &block.solo,
             ],
         )?;
         Ok(())
@@ -1863,8 +1913,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub(crate) fn insert_block_if_absent(&self, block: &DbBlock) -> Result<bool> {
         let inserted = self.conn().execute(
-            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT(height) DO NOTHING",
             &[
                 &u64_to_i64(block.height)?,
@@ -1878,6 +1928,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &block.orphaned,
                 &block.paid_out,
                 &block.effort_pct,
+                &block.solo,
             ],
         )?;
         Ok(inserted > 0)
@@ -1887,7 +1938,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut conn = self.conn();
         let mut tx = conn.transaction()?;
         let existing_row = tx.query_opt(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks
              WHERE height = $1
              FOR UPDATE",
@@ -1895,7 +1946,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
         let Some(existing_row) = existing_row else {
             tx.execute(
-                "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct)
+                "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 &[
                     &u64_to_i64(block.height)?,
@@ -1909,6 +1960,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     &block.orphaned,
                     &block.paid_out,
                     &block.effort_pct,
+                    &block.solo,
                 ],
             )?;
             tx.commit()?;
@@ -1945,7 +1997,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  confirmed = $8,
                  orphaned = $9,
                  paid_out = $10,
-                 effort_pct = $11
+                 effort_pct = $11,
+                 solo = $12
              WHERE height = $1",
             &[
                 &height_i64,
@@ -1959,6 +2012,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &block.orphaned,
                 &block.paid_out,
                 &block.effort_pct,
+                &block.solo,
             ],
         )?;
         tx.commit()?;
@@ -1981,9 +2035,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         tx.execute(
             "INSERT INTO archived_blocks (
                 height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed,
-                orphaned, paid_out, effort_pct, archived_at
+                orphaned, paid_out, effort_pct, archived_at, solo
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (height, hash) DO UPDATE SET
                  difficulty = EXCLUDED.difficulty,
                  finder = EXCLUDED.finder,
@@ -1994,7 +2048,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  orphaned = EXCLUDED.orphaned,
                  paid_out = EXCLUDED.paid_out,
                  effort_pct = EXCLUDED.effort_pct,
-                 archived_at = EXCLUDED.archived_at",
+                 archived_at = EXCLUDED.archived_at,
+                 solo = EXCLUDED.solo",
             &[
                 &height_i64,
                 &block.hash,
@@ -2008,6 +2063,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &block.paid_out,
                 &block.effort_pct,
                 &archived_at,
+                &block.solo,
             ],
         )?;
         tx.execute(
@@ -2083,7 +2139,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_block(&self, height: u64) -> Result<Option<DbBlock>> {
         let row = self.conn().query_opt(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks WHERE height = $1",
             &[&u64_to_i64(height)?],
         )?;
@@ -2096,7 +2152,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_recent_blocks(&self, limit: i64) -> Result<Vec<DbBlock>> {
         let rows = self.conn().query(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks ORDER BY height DESC LIMIT $1",
             &[&limit],
         )?;
@@ -2105,7 +2161,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_recent_blocks_up_to(&self, limit: i64, max_height: u64) -> Result<Vec<DbBlock>> {
         let rows = self.conn().query(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks
              WHERE height <= $1
              ORDER BY height DESC
@@ -2117,7 +2173,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_all_blocks(&self) -> Result<Vec<DbBlock>> {
         let rows = self.conn().query(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks ORDER BY height DESC",
             &[],
         )?;
@@ -2257,7 +2313,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let total: i64 = total_row.get(0);
 
         let rows = conn.query(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks
              WHERE height <= $1
                AND (
@@ -2277,7 +2333,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
         let rows = self.conn().query(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks WHERE confirmed = FALSE AND orphaned = FALSE ORDER BY height ASC",
             &[],
         )?;
@@ -2286,7 +2342,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub(crate) fn get_unpaid_blocks(&self) -> Result<Vec<DbBlock>> {
         let rows = self.conn().query(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks WHERE confirmed = TRUE AND orphaned = FALSE AND paid_out = FALSE ORDER BY height ASC",
             &[],
         )?;
@@ -3130,7 +3186,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         max_height: u64,
     ) -> Result<Option<DbBlock>> {
         let row = self.conn().query_opt(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks
              WHERE orphaned = FALSE AND height <= $1
              ORDER BY height DESC
@@ -3142,7 +3198,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub(crate) fn get_non_orphan_blocks_up_to(&self, max_height: u64) -> Result<Vec<DbBlock>> {
         let rows = self.conn().query(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks
              WHERE orphaned = FALSE AND height <= $1
              ORDER BY height DESC",
@@ -3153,7 +3209,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub(crate) fn get_orphaned_blocks_from_height(&self, min_height: u64) -> Result<Vec<DbBlock>> {
         let rows = self.conn().query(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks
              WHERE orphaned = TRUE AND height >= $1
              ORDER BY height ASC",
@@ -3202,7 +3258,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         min_height: u64,
     ) -> Result<Vec<DbBlock>> {
         let rows = self.conn().query(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks
              WHERE orphaned = FALSE AND height >= $1
              ORDER BY height ASC",
@@ -3410,7 +3466,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut tx = conn.transaction()?;
         let Some(block_row) = tx.query_opt(
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp,
-                    confirmed, orphaned, paid_out, effort_pct
+                    confirmed, orphaned, paid_out, effort_pct, solo
              FROM blocks
              WHERE height = $1
              FOR UPDATE",
@@ -6075,10 +6131,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             conn.query(
                 "SELECT bucket,SUM(work)::bigint,SUM(n)::bigint FROM (
                     SELECT (minute/$3)*$3 AS bucket,work,shares AS n FROM share_read_miners
-                    WHERE miner=$1 AND minute >= $4 AND status IN ('verified','provisional')
+                    WHERE miner=$1 AND minute >= $4 AND status IN ('verified','provisional','solo')
                     UNION ALL
                     SELECT (minute/$3)*$3,work,shares FROM share_read_deltas
-                    WHERE miner=$1 AND minute >= $4 AND status IN ('verified','provisional')
+                    WHERE miner=$1 AND minute >= $4 AND status IN ('verified','provisional','solo')
                     UNION ALL
                     SELECT (created_at/$3)*$3,difficulty,1 FROM shares
                     WHERE miner=$1 AND created_at >= $2 AND created_at < $4
@@ -6415,9 +6471,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              )
              INSERT INTO share_read_minutes(minute,accepted,rejected,work)
              SELECT minute,
-                    COALESCE(SUM(shares) FILTER (WHERE status IN ('verified','provisional')),0)::bigint,
-                    COALESCE(SUM(shares) FILTER (WHERE status NOT IN ('verified','provisional')),0)::bigint,
-                    COALESCE(SUM(work) FILTER (WHERE status IN ('verified','provisional')),0)::bigint
+                    COALESCE(SUM(shares) FILTER (WHERE status IN ('verified','provisional','solo')),0)::bigint,
+                    COALESCE(SUM(shares) FILTER (WHERE status NOT IN ('verified','provisional','solo')),0)::bigint,
+                    COALESCE(SUM(work) FILTER (WHERE status IN ('verified','provisional','solo')),0)::bigint
              FROM taken WHERE (SELECT COUNT(*) FROM applied) >= 0
              GROUP BY minute ORDER BY minute
              ON CONFLICT (minute) DO UPDATE SET
@@ -6640,6 +6696,7 @@ fn row_to_block(row: &postgres::Row) -> DbBlock {
         orphaned: row.get::<_, bool>(8),
         paid_out: row.get::<_, bool>(9),
         effort_pct: row.get::<_, Option<f64>>(10),
+        solo: row.get::<_, bool>(11),
     }
 }
 
@@ -6761,7 +6818,9 @@ fn drop_share_partition(
             &format!(
                 "WITH removed AS (
                     SELECT created_at / 60 * 60 AS minute, miner,
-                           CASE WHEN status IN ('','verified','provisional') THEN status ELSE 'rejected' END AS status,
+                           CASE WHEN status NOT IN ('','verified','provisional')
+                                     THEN CASE WHEN solo THEN 'solo_rejected' ELSE 'rejected' END
+                                WHEN solo THEN 'solo' ELSE status END AS status,
                            COUNT(*)::bigint AS n, SUM(difficulty)::bigint AS work
                     FROM {table}
                     GROUP BY 1, 2, 3
@@ -6771,8 +6830,8 @@ fn drop_share_partition(
                  ), count_deltas AS (
                     INSERT INTO miner_share_count_deltas(miner,accepted,rejected)
                     SELECT miner,
-                           -COALESCE(SUM(n) FILTER (WHERE status IN ('verified','provisional')), 0),
-                           -COALESCE(SUM(n) FILTER (WHERE status NOT IN ('verified','provisional')), 0)
+                           -COALESCE(SUM(n) FILTER (WHERE status IN ('verified','provisional','solo')), 0),
+                           -COALESCE(SUM(n) FILTER (WHERE status NOT IN ('verified','provisional','solo')), 0)
                     FROM removed GROUP BY miner
                  )
                  SELECT COALESCE(SUM(n), 0)::bigint FROM removed"
@@ -7324,13 +7383,58 @@ mod tests {
     }
 
     #[test]
+    fn solo_shares_count_as_work_but_never_enter_pplns_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at,solo) VALUES
+             ('split','split-miner','rig',3,1,'verified',TRUE,120,TRUE),
+             ('split','split-miner','rig',5,2,'provisional',FALSE,125,FALSE),
+             ('split','split-miner','rig',7,3,'invalid',FALSE,130,TRUE),
+             ('split','other-miner','rig',11,4,'verified',TRUE,130,TRUE);"
+        ).unwrap();
+        for phase in 0..2 {
+            if phase == 1 {
+                store.compact_share_read_minutes().unwrap();
+            }
+            assert_eq!(
+                store
+                    .miner_solo_work_split_since("split-miner", from_unix(60))
+                    .unwrap(),
+                (3, 8),
+                "phase {phase}"
+            );
+            let work: i64 = store
+                .conn()
+                .query_one("SELECT share_read_work(60,179)", &[])
+                .unwrap()
+                .get(0);
+            assert_eq!(work, 3 + 5 + 11, "phase {phase}");
+            let previews = store
+                .summarize_share_windows(&[(from_unix(60), from_unix(179))], None)
+                .unwrap();
+            assert_eq!(previews[0].len(), 1, "phase {phase}");
+            assert_eq!(previews[0][0].address, "split-miner");
+            assert_eq!(previews[0][0].seen_shares, 1);
+            assert_eq!(previews[0][0].verified_shares, 0);
+        }
+        let pplns = store
+            .get_shares_between(from_unix(0), from_unix(200))
+            .unwrap()
+            .into_iter()
+            .map(|share| share.nonce)
+            .collect::<Vec<_>>();
+        assert_eq!(pplns, vec![2]);
+        assert_share_projections_match_raw(&store);
+    }
+
+    #[test]
     fn batched_share_windows_match_raw_previews_and_legacy_status_postgres() {
         let Some(store) = test_store() else { return };
         store.conn().client.batch_execute(
-            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at,solo)
              SELECT 'preview','miner-'||(n % 3),'rig',n+1,n,
                     CASE n % 4 WHEN 0 THEN '' WHEN 1 THEN 'verified' WHEN 2 THEN 'provisional' ELSE 'invalid' END,
-                    FALSE,n FROM generate_series(0,600) n;"
+                    FALSE,n,n % 5 = 3 FROM generate_series(0,600) n;"
         ).unwrap();
         let windows = [
             (0, 120),
@@ -7350,6 +7454,7 @@ mod tests {
                 store.conn().client.batch_execute(
                     "UPDATE shares SET status='rejected',difficulty=difficulty+5 WHERE nonce % 7=0;
                      UPDATE shares SET miner='changed',created_at=created_at+60 WHERE nonce % 11=0;
+                     UPDATE shares SET solo=NOT solo WHERE nonce % 13=4;
                      DELETE FROM shares WHERE created_at < 10;"
                 ).unwrap();
             }
@@ -7395,10 +7500,10 @@ mod tests {
     fn minute_read_windows_match_raw_shares_before_and_after_mutations_postgres() {
         let Some(store) = test_store() else { return };
         store.conn().client.batch_execute(
-            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at,solo)
              SELECT 'minutes','minute-miner','rig',n+1,n,
                     CASE n % 3 WHEN 0 THEN 'verified' WHEN 1 THEN 'provisional' ELSE 'invalid' END,
-                    FALSE,n FROM generate_series(0,300) n;"
+                    FALSE,n,n % 5 = 0 FROM generate_series(0,300) n;"
         ).unwrap();
         let check = || {
             for start in [-1i64, 0, 1, 59, 60, 61, 119, 120, 121, 300, 301] {
@@ -7860,6 +7965,7 @@ mod tests {
                     claimed_hash: None,
                     reject_reason: None,
                     created_at: SystemTime::now(),
+                    solo: false,
                 },
                 None,
             )
@@ -7898,6 +8004,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: None,
                 created_at: SystemTime::now(),
+                solo: false,
             })
             .unwrap();
         // The header-scoped claim is not released after persistence, so the same
@@ -7922,6 +8029,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: Some("server busy".to_string()),
                 created_at: SystemTime::now(),
+                solo: false,
             })
             .unwrap();
         assert!(store.try_claim_share(&busy_assignment, &key, 8).unwrap());
@@ -7939,6 +8047,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: Some("duplicate share".to_string()),
                 created_at: SystemTime::now(),
+                solo: false,
             })
             .unwrap();
         assert!(store.try_claim_share(&busy_assignment, &key, 10).unwrap());
@@ -7963,6 +8072,7 @@ mod tests {
             claimed_hash: None,
             reject_reason: None,
             created_at,
+            solo: false,
         };
         let provisional = store
             .add_share_with_replay_and_id(share(1, "provisional"), None)
@@ -8042,6 +8152,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: None,
                 created_at: base,
+                solo: false,
             },
             ShareRecord {
                 job_id: format!("job-a-ready-{suffix}"),
@@ -8055,6 +8166,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(10),
+                solo: false,
             },
             ShareRecord {
                 job_id: format!("job-a-delayed-{suffix}"),
@@ -8068,6 +8180,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(50),
+                solo: false,
             },
             ShareRecord {
                 job_id: format!("job-b-reject-{suffix}"),
@@ -8081,6 +8194,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: Some("stale".to_string()),
                 created_at: base + Duration::from_secs(20),
+                solo: false,
             },
             ShareRecord {
                 job_id: format!("job-b-verified-{suffix}"),
@@ -8094,6 +8208,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(30),
+                solo: false,
             },
         ] {
             store.add_share(share).expect("add share");
@@ -8156,6 +8271,7 @@ mod tests {
             claimed_hash: None,
             reject_reason: None,
             created_at: base + Duration::from_secs(offset),
+            solo: false,
         };
 
         // rig-new reports versions; the newest share's version should win.
@@ -8258,6 +8374,7 @@ mod tests {
                         claimed_hash: None,
                         reject_reason: None,
                         created_at: base + Duration::from_secs(miner_idx * 5 + share_idx),
+                        solo: false,
                     })
                     .expect("add perf share");
             }
@@ -8308,6 +8425,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
 
@@ -8368,6 +8486,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
 
@@ -8421,6 +8540,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
         assert!(store
@@ -8475,6 +8595,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
         assert!(store
@@ -8540,6 +8661,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
         assert!(store
@@ -8614,6 +8736,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
         assert!(store
@@ -8690,6 +8813,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
         assert!(store
@@ -8766,6 +8890,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
 
@@ -8846,6 +8971,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
         assert!(store
@@ -8924,6 +9050,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
         assert!(store
@@ -8997,6 +9124,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
         let fee = PoolFeeRecord {
@@ -9082,6 +9210,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert canonical block");
 
@@ -9098,6 +9227,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert duplicate-prone orphan block");
         assert!(store
@@ -9133,6 +9263,7 @@ mod tests {
                 orphaned: true,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert archived-only orphan block");
         assert!(store
@@ -9148,6 +9279,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("replace archived-only orphan"));
 
@@ -9662,6 +9794,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
         store
@@ -9780,6 +9913,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert seed block");
         store
@@ -9826,6 +9960,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert consume block");
         store
@@ -9864,6 +9999,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert fresh block");
         store
@@ -9912,6 +10048,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert seed block");
         store
@@ -9942,6 +10079,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert pending block");
 
@@ -10126,6 +10264,7 @@ mod tests {
             claimed_hash: None,
             reject_reason: (status == "rejected").then(|| "low difficulty share".to_string()),
             created_at: from_unix(created_at),
+            solo: false,
         }
     }
 
@@ -10195,7 +10334,9 @@ mod tests {
                             SELECT minute, miner, status, shares, work FROM share_read_deltas
                             UNION ALL
                             SELECT created_at / 60 * 60, miner,
-                                   CASE WHEN status IN ('','verified','provisional') THEN status ELSE 'rejected' END,
+                                   CASE WHEN status NOT IN ('','verified','provisional')
+                                             THEN CASE WHEN solo THEN 'solo_rejected' ELSE 'rejected' END
+                                        WHEN solo THEN 'solo' ELSE status END,
                                    -COUNT(*), -SUM(difficulty)::bigint
                             FROM shares GROUP BY 1, 2, 3
                         ) x GROUP BY 1, 2, 3 HAVING SUM(n) <> 0 OR SUM(w) <> 0

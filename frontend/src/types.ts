@@ -78,6 +78,7 @@ export interface BlockItem {
   reward: number;
   confirmed: boolean;
   orphaned: boolean;
+  solo?: boolean;
   timestamp: UnixLike;
   effort_pct: number | null;
   duration_seconds: number | null;
@@ -121,6 +122,7 @@ interface MinerShare {
 interface MinerPendingBlockEstimate {
   height: number;
   hash: string;
+  solo?: boolean;
   estimated_credit: number;
   credit_withheld: boolean;
   validation_state: string;
@@ -182,6 +184,7 @@ export interface ActiveVerificationHold {
 
 export interface MinerResponse {
   hashrate: number;
+  solo_hashrate?: number;
   mining_since: UnixLike;
   workers: MinerWorker[];
   shares: MinerShare[];

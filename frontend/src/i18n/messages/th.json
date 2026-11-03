@@ -351,5 +351,8 @@
   "minerSettingsCpu": "ใช้เฉพาะ CPU ปิด GPU",
   "minerSettingsThreads": "ใช้เธรด CPU 4 เธรด",
   "minerSettingsLead": "โดยค่าเริ่มต้น seine ขุดด้วย CPU และการ์ดจอของคุณ หากต้องการเปลี่ยน ให้ปิด seine เปิดเทอร์มินัลในโฟลเดอร์ของ seine แล้วรันคำสั่งใดคำสั่งหนึ่งต่อไปนี้ บน Windows ให้ใช้ PowerShell และพิมพ์ {0} แทน {1}",
-  "minerSettingsGuide": "ตั้งค่า seine: เธรด CPU GPU และพูล"
+  "minerSettingsGuide": "ตั้งค่า seine: เธรด CPU GPU และพูล",
+  "m619": "โซโล",
+  "m620": "แฮชเรตแบบโซโล",
+  "m621": "ได้รับเฉพาะบล็อกที่ตนเองพบ"
 }

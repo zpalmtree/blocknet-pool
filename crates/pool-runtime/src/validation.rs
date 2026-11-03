@@ -5083,6 +5083,7 @@ mod tests {
                         claimed_hash: None,
                         reject_reason: None,
                         created_at: base + Duration::from_secs(offset),
+                        solo: false,
                     },
                     Some(ShareReplayData {
                         job_id: job_id.to_string(),
@@ -5106,6 +5107,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(2),
+                solo: false,
             })
             .expect("add verified share");
         store
@@ -5121,6 +5123,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("add unconfirmed block");
         store
@@ -5214,6 +5217,7 @@ mod tests {
                     claimed_hash: None,
                     reject_reason: None,
                     created_at: old_share_time,
+                    solo: false,
                 },
                 Some(ShareReplayData {
                     job_id: "backlog-prov".to_string(),
@@ -5236,6 +5240,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("add backlog block");
         store
@@ -5311,6 +5316,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: None,
                 created_at: base,
+                solo: false,
             })
             .expect("add verified share");
         for (job_id, nonce, offset) in [
@@ -5331,6 +5337,7 @@ mod tests {
                         claimed_hash: None,
                         reject_reason: None,
                         created_at: base + Duration::from_secs(offset),
+                        solo: false,
                     },
                     Some(ShareReplayData {
                         job_id: job_id.to_string(),
@@ -5354,6 +5361,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("add passive coverage block");
         store
@@ -5840,6 +5848,7 @@ mod tests {
                     claimed_hash: None,
                     reject_reason: None,
                     created_at,
+                    solo: false,
                 },
                 None,
             )

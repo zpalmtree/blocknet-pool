@@ -351,5 +351,8 @@
   "minerSettingsCpu": "Hanya CPU, GPU mati",
   "minerSettingsThreads": "Pakai 4 thread CPU",
   "minerSettingsLead": "Secara default, seine menambang dengan CPU dan kartu grafis Anda. Untuk mengubahnya, tutup seine, buka terminal di foldernya, lalu jalankan salah satu perintah ini. Di Windows, gunakan PowerShell dan ketik {0} sebagai pengganti {1}:",
-  "minerSettingsGuide": "Ubah pengaturan seine: thread, CPU, GPU, dan pool"
+  "minerSettingsGuide": "Ubah pengaturan seine: thread, CPU, GPU, dan pool",
+  "m619": "solo",
+  "m620": "Hashrate Solo",
+  "m621": "Hanya dibayar untuk blok yang ditemukan sendiri"
 }

@@ -953,7 +953,11 @@ impl PayoutProcessor {
                 .reward
                 .saturating_sub(fee_record.as_ref().map(|record| record.amount).unwrap_or(0));
 
-            let credits = self.build_pplns_credits(&block, distributable);
+            let credits = if block.solo {
+                solo_block_credits(&block, distributable)
+            } else {
+                self.build_pplns_credits(&block, distributable)
+            };
             let credits = match credits {
                 Ok(v) => v,
                 Err(err) => {
@@ -3870,6 +3874,17 @@ fn is_wallet_liquidity_error(err: &anyhow::Error) -> bool {
         || http_error_body_contains(err, 400, "no spendable outputs")
 }
 
+/// A solo block pays its finder alone. Solo shares never enter a PPLNS
+/// window, and PPLNS shares never earn from a solo block.
+fn solo_block_credits(block: &DbBlock, reward: u64) -> anyhow::Result<HashMap<String, u64>> {
+    if block.finder.trim().is_empty() {
+        anyhow::bail!("solo block {} has no finder", block.height);
+    }
+    let mut credits = HashMap::new();
+    add_credit(&mut credits, &block.finder, reward)?;
+    Ok(credits)
+}
+
 fn add_credit(
     credits: &mut HashMap<String, u64>,
     address: &str,
@@ -4339,6 +4354,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert completed payout block");
         assert!(store
@@ -4909,6 +4925,90 @@ mod tests {
     }
 
     #[test]
+    fn solo_blocks_pay_only_their_finder_and_solo_shares_stay_out_of_pplns() {
+        let store = require_test_store!();
+        let cfg = Config {
+            pplns_window_duration: "24h".to_string(),
+            provisional_share_delay: "0s".to_string(),
+            payout_min_verified_shares: 0,
+            pool_fee_pct: 1.0,
+            pool_fee_wallet_address: "pool-fee".to_string(),
+            ..Config::default()
+        };
+        let processor = PayoutProcessor::new(
+            cfg,
+            Arc::clone(&store),
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+        );
+
+        let share_time = UNIX_EPOCH + Duration::from_secs(6_000_000);
+        for (nonce, miner, solo) in [(1u64, "pplns-miner", false), (2, "solo-miner", true)] {
+            store
+                .add_share(crate::engine::ShareRecord {
+                    job_id: format!("solo-test-{nonce}"),
+                    miner: miner.to_string(),
+                    worker: "rig".to_string(),
+                    difficulty: 5,
+                    nonce,
+                    status: SHARE_STATUS_VERIFIED,
+                    was_sampled: true,
+                    block_hash: None,
+                    claimed_hash: None,
+                    reject_reason: None,
+                    created_at: share_time,
+                    solo,
+                })
+                .expect("add share");
+        }
+        let block = |height: u64, finder: &str, solo: bool| DbBlock {
+            height,
+            hash: format!("solo-test-block-{height}"),
+            difficulty: 1,
+            finder: finder.to_string(),
+            finder_worker: "rig".to_string(),
+            reward: 10_000,
+            timestamp: share_time + Duration::from_secs(30),
+            confirmed: true,
+            orphaned: false,
+            paid_out: false,
+            effort_pct: None,
+            solo,
+        };
+        // A PPLNS block found by the solo miner's address still pays PPLNS.
+        store
+            .add_block(&block(700, "solo-miner", false))
+            .expect("add pplns block");
+        store
+            .add_block(&block(701, "solo-miner", true))
+            .expect("add solo block");
+        assert!(store.get_block(701).expect("read").expect("block").solo);
+        assert!(!store.get_block(700).expect("read").expect("block").solo);
+
+        processor.distribute_rewards();
+
+        // PPLNS block: all 9,900 to the PPLNS share; the solo share earns nothing.
+        // Solo block: 9,900 to its finder.
+        assert_eq!(
+            store.get_balance("pplns-miner").expect("balance").pending,
+            9_900
+        );
+        assert_eq!(
+            store.get_balance("solo-miner").expect("balance").pending,
+            9_900
+        );
+        assert_eq!(store.get_balance("pool-fee").expect("balance").pending, 200);
+        for height in [700, 701] {
+            assert!(
+                store
+                    .get_block(height)
+                    .expect("read")
+                    .expect("block")
+                    .paid_out
+            );
+        }
+    }
+
+    #[test]
     fn build_pplns_credits_replays_zero_weight_window_and_persists_verification() {
         let store = require_test_store!();
         let cfg = Config {
@@ -4939,6 +5039,7 @@ mod tests {
                     claimed_hash: None,
                     reject_reason: None,
                     created_at: share_time,
+                    solo: false,
                 },
                 Some(ShareReplayData {
                     job_id: "replay-job".to_string(),
@@ -4963,6 +5064,7 @@ mod tests {
                     orphaned: false,
                     paid_out: false,
                     effort_pct: None,
+                    solo: false,
                 },
                 1_000,
             )
@@ -5009,6 +5111,7 @@ mod tests {
                 claimed_hash: None,
                 reject_reason: None,
                 created_at: share_time,
+                solo: false,
             })
             .expect("add provisional share");
 
@@ -5026,6 +5129,7 @@ mod tests {
                     orphaned: false,
                     paid_out: false,
                     effort_pct: None,
+                    solo: false,
                 },
                 1_000,
             )
@@ -5051,6 +5155,7 @@ mod tests {
                     claimed_hash: None,
                     reject_reason: None,
                     created_at: share_time,
+                    solo: false,
                 },
                 Some(ShareReplayData {
                     job_id: "candidate-replay-job".to_string(),
@@ -6771,6 +6876,7 @@ mod tests {
             orphaned: false,
             paid_out: false,
             effort_pct: None,
+            solo: false,
         };
 
         assert_eq!(
@@ -6891,6 +6997,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert common block");
         store
@@ -6906,6 +7013,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert diverged block");
         assert!(store
@@ -6986,6 +7094,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert block");
     }
@@ -7137,6 +7246,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert common block");
         store
@@ -7152,6 +7262,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert diverged block");
         store
@@ -7167,6 +7278,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert matching tip");
         assert!(store
@@ -7257,6 +7369,7 @@ mod tests {
             orphaned: false,
             paid_out: false,
             effort_pct: None,
+            solo: false,
         };
         let orphaned = DbBlock {
             height: orphaned_height,
@@ -7270,6 +7383,7 @@ mod tests {
             orphaned: true,
             paid_out: false,
             effort_pct: None,
+            solo: false,
         };
         let tip = DbBlock {
             height: tip_height,
@@ -7283,6 +7397,7 @@ mod tests {
             orphaned: false,
             paid_out: false,
             effort_pct: None,
+            solo: false,
         };
         store.add_block(&common).expect("insert common block");
         store
@@ -7343,6 +7458,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert common block");
         store
@@ -7358,6 +7474,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert diverged block");
         assert!(store
@@ -7497,6 +7614,7 @@ mod tests {
                 orphaned: false,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .expect("insert mature unconfirmed block");
 

@@ -169,6 +169,17 @@ fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     )
 }
 
+/// The part of a miner's recent accepted work mined solo, from 0 to 1.
+fn miner_solo_work_fraction(store: &PoolStore, address: &str) -> f64 {
+    let since = SystemTime::now()
+        .checked_sub(HASHRATE_WINDOW)
+        .unwrap_or(UNIX_EPOCH);
+    match store.miner_solo_work_split_since(address, since) {
+        Ok((solo, total)) if total > 0 => (solo as f64 / total as f64).clamp(0.0, 1.0),
+        _ => 0.0,
+    }
+}
+
 fn db_pool_hashrate(store: &PoolStore) -> f64 {
     let since = SystemTime::now()
         .checked_sub(HASHRATE_WINDOW)
@@ -806,6 +817,8 @@ struct MinerDetailResponse {
     shares: Vec<MinerShareResponse>,
     mining_since: Option<SystemTime>,
     hashrate: f64,
+    /// The part of `hashrate` mined through `solo:` logins.
+    solo_hashrate: f64,
     verification_hold: Option<MinerVerificationHold>,
     payouts: Vec<MinerPayoutResponse>,
     workers: Vec<MinerWorkerResponse>,
@@ -836,6 +849,8 @@ struct BlockPageItemResponse {
     timestamp: SystemTime,
     confirmed: bool,
     orphaned: bool,
+    /// Found by a solo miner; it paid its finder alone.
+    solo: bool,
     effort_pct: Option<f64>,
     duration_seconds: Option<u64>,
 }
@@ -2821,6 +2836,8 @@ async fn handle_miner_balance(
     Query(query): Query<MinerBalanceQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // A solo miner may look up the login they mine with.
+    let address = pool_common::solo::split_solo_login(&address).1.to_string();
     let include_pending_estimate = query.include_pending_estimate.unwrap_or(true);
     json_result(
         state
@@ -2834,6 +2851,8 @@ async fn handle_miner(
     Path(address): Path<String>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // A solo miner may look up the login they mine with.
+    let address = pool_common::solo::split_solo_login(&address).1.to_string();
     match state.cached_miner_detail_payload(&address).await {
         Ok(payload) => {
             if payload.found {
@@ -2852,6 +2871,8 @@ async fn handle_miner_hashrate(
     client: ClientIp,
     State(state): State<ApiState>,
 ) -> Response {
+    // A solo miner may look up the login they mine with.
+    let address = pool_common::solo::split_solo_login(&address).1.to_string();
     let label = normalized_range_label(query.range.as_deref());
     let key = format!("miner_hashrate:{label}:{address}");
     let task_state = state.clone();
@@ -3022,6 +3043,8 @@ async fn load_blocks_page(
 struct MinerPendingBlockEstimate {
     height: u64,
     hash: String,
+    /// Found by this miner's solo connection: the whole credit is theirs.
+    solo: bool,
     estimated_credit: u64,
     credit_withheld: bool,
     validation_state: PendingPreviewValidation,
@@ -3170,14 +3193,27 @@ fn prepare_pending_estimate_blocks(
         hydrate_provisional_block_reward(block);
     }
     blocks.retain(|block| block.reward > 0);
+    // Solo blocks pay their finder alone and have no PPLNS window to read.
+    let (solo_blocks, pplns_blocks): (Vec<_>, Vec<_>) =
+        blocks.into_iter().partition(|block| block.solo);
 
-    prepare_duration_pending_estimate_blocks(
+    let mut prepared = prepare_duration_pending_estimate_blocks(
         store,
-        blocks,
+        pplns_blocks,
         config.runtime.pplns_window_duration(),
         now.checked_sub(provisional_delay),
         chain_height,
-    )
+    )?;
+    prepared.extend(
+        solo_blocks
+            .into_iter()
+            .map(|block| PreparedPendingEstimateBlock {
+                confirmations: chain_height.saturating_sub(block.height),
+                block,
+                previews: Vec::new(),
+            }),
+    );
+    Ok(prepared)
 }
 
 fn preview_weight(
@@ -3402,6 +3438,25 @@ fn estimate_unconfirmed_pending_snapshot(
         let distributable = block
             .reward
             .saturating_sub(config.runtime.pool_fee(block.reward));
+        let confirmations_remaining =
+            pool_common::faraday::required_coinbase_depth(block.height, required_confirmations)
+                .saturating_sub(confirmations);
+        if block.solo {
+            let estimate = estimates.entry(block.finder.clone()).or_default();
+            estimate.estimated_pending = estimate.estimated_pending.saturating_add(distributable);
+            estimate.blocks.push(MinerPendingBlockEstimate {
+                height: block.height,
+                hash: block.hash.clone(),
+                solo: true,
+                estimated_credit: distributable,
+                credit_withheld: false,
+                validation_state: PendingPreviewValidation::Ready,
+                validation_detail: "Solo block: its full reward, less the pool fee, goes to the address that found it.".to_string(),
+                confirmations_remaining,
+                timestamp: block.timestamp,
+            });
+            continue;
+        }
         if previews.is_empty() {
             continue;
         }
@@ -3473,6 +3528,7 @@ fn estimate_unconfirmed_pending_snapshot(
             estimate.blocks.push(MinerPendingBlockEstimate {
                 height: block.height,
                 hash: block.hash.clone(),
+                solo: false,
                 estimated_credit,
                 credit_withheld: false,
                 validation_state,
@@ -3482,11 +3538,7 @@ fn estimate_unconfirmed_pending_snapshot(
                     trust_policy,
                     validation_state,
                 ),
-                confirmations_remaining: pool_common::faraday::required_coinbase_depth(
-                    block.height,
-                    required_confirmations,
-                )
-                .saturating_sub(confirmations),
+                confirmations_remaining,
                 timestamp: block.timestamp,
             });
         }
@@ -4230,6 +4282,7 @@ fn block_page_item_response(
         timestamp: block.timestamp,
         confirmed: block.confirmed,
         orphaned: block.orphaned,
+        solo: block.solo,
         effort_pct: luck.map(|row| row.effort_pct),
         duration_seconds: luck.map(|row| row.duration_seconds),
     }
@@ -5242,6 +5295,7 @@ impl ApiState {
                 let payouts = store
                     .get_recent_visible_payouts_for_address(&addr, MINER_PAYOUT_HISTORY_LIMIT)?;
                 let hr = db_miner_hashrate(&store, &addr);
+                let solo_fraction = miner_solo_work_fraction(&store, &addr);
                 let blocks_found = store.get_block_count_for_miner(&addr)?;
                 let risk_state = store.get_address_risk(&addr)?;
                 let validation_state = store.validation_hold_state(&addr, provisional_cutoff)?;
@@ -5254,6 +5308,7 @@ impl ApiState {
                     mining_since,
                     payouts,
                     hr,
+                    solo_fraction,
                     workers.totals,
                     workers.hashrate,
                     workers.versions,
@@ -5282,6 +5337,7 @@ impl ApiState {
             mining_since,
             payouts,
             hashrate,
+            solo_fraction,
             workers_raw,
             worker_hashrate_raw,
             worker_versions_raw,
@@ -5361,6 +5417,7 @@ impl ApiState {
             shares: share_rows,
             mining_since,
             hashrate,
+            solo_hashrate: hashrate * solo_fraction,
             verification_hold,
             payouts: payout_rows,
             workers: worker_rows,
@@ -6692,6 +6749,7 @@ mod tests {
                 orphaned: height == 5,
                 paid_out: false,
                 effort_pct: None,
+                solo: false,
             })
             .collect::<Vec<_>>();
         let looked_up = std::sync::Mutex::new(Vec::new());
@@ -7513,6 +7571,7 @@ mod tests {
             claimed_hash: None,
             reject_reason: None,
             created_at,
+            solo: false,
         }
     }
 
@@ -7545,6 +7604,7 @@ mod tests {
             orphaned,
             paid_out: false,
             effort_pct: None,
+            solo: false,
         }
     }
 
@@ -8493,6 +8553,63 @@ mod tests {
         assert_eq!(response.pending_confirmed, 250);
         assert_eq!(response.pending_queued, 100);
         assert_eq!(response.paid, 900);
+    }
+
+    #[test]
+    fn solo_blocks_estimate_the_full_reward_for_their_finder_only() {
+        let store = require_test_store!();
+        let cfg = pplns_test_config("24h");
+        let distributable = 1_000 - cfg.runtime.pool_fee(1_000);
+
+        let base = UNIX_EPOCH + Duration::from_secs(7_300_000);
+        let block_ts = base + Duration::from_secs(120);
+        add_test_shares(
+            &store,
+            &[("j-1", "solo-est-pplns", "wa", 100, 1, "verified", true, base)],
+        );
+        let mut solo_share = test_share((
+            "j-1",
+            "solo-est-solo",
+            "wb",
+            100,
+            2,
+            "verified",
+            base + Duration::from_secs(10),
+        ));
+        solo_share.solo = true;
+        store.add_share(solo_share).expect("add solo share");
+        add_test_block(
+            &store,
+            (9_901, "blk-solo-est-9901", "solo-est-pplns", "wa", 1_000, block_ts, false, false),
+        );
+        let mut solo_block = test_block((
+            9_902, "blk-solo-est-9902", "solo-est-solo", "wb", 1_000, block_ts, false, false,
+        ));
+        solo_block.solo = true;
+        store.add_block(&solo_block).expect("add solo block");
+
+        let estimate = |address: &str| {
+            estimate_unconfirmed_pending_for_miner(
+                &store,
+                address,
+                &cfg,
+                block_ts + Duration::from_secs(1),
+                9_903,
+            )
+            .expect("estimate")
+        };
+        let pplns = estimate("solo-est-pplns");
+        assert_eq!(pplns.estimated_pending, distributable);
+        assert_eq!(pplns.blocks.len(), 1);
+        assert_eq!(pplns.blocks[0].height, 9_901);
+        assert!(!pplns.blocks[0].solo);
+
+        let solo = estimate("solo-est-solo");
+        assert_eq!(solo.estimated_pending, distributable);
+        assert_eq!(solo.blocks.len(), 1);
+        assert_eq!(solo.blocks[0].height, 9_902);
+        assert!(solo.blocks[0].solo);
+        assert_eq!(solo.blocks[0].estimated_credit, distributable);
     }
 
     #[test]

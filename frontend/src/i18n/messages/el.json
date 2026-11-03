@@ -351,5 +351,8 @@
   "minerSettingsCpu": "Μόνο CPU, χωρίς GPU",
   "minerSettingsThreads": "Χρήση 4 νημάτων CPU",
   "minerSettingsLead": "Από προεπιλογή, το seine εξορύσσει με το CPU και τις κάρτες γραφικών σας. Για να το αλλάξετε, κλείστε το seine, ανοίξτε ένα τερματικό στον φάκελό του και εκτελέστε μία από αυτές τις εντολές. Στα Windows χρησιμοποιήστε το PowerShell και πληκτρολογήστε {0} αντί για {1}:",
-  "minerSettingsGuide": "Ρυθμίσεις seine: νήματα, CPU, GPU και pool"
+  "minerSettingsGuide": "Ρυθμίσεις seine: νήματα, CPU, GPU και pool",
+  "m619": "solo",
+  "m620": "Ταχύτητα υπολογισμού solo",
+  "m621": "Αμείβεται μόνο για τα μπλοκ που βρίσκει"
 }

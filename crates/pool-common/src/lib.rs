@@ -14,3 +14,5 @@ pub mod logging;
 pub mod pow;
 
 pub mod protocol;
+
+pub mod solo;

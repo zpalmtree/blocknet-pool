@@ -351,5 +351,8 @@
   "minerSettingsCpu": "Только CPU, GPU выключены",
   "minerSettingsThreads": "Использовать 4 потока CPU",
   "minerSettingsLead": "По умолчанию seine майнит на CPU и видеокартах. Чтобы это изменить, закройте seine, откройте терминал в его папке и выполните одну из этих команд. В Windows используйте PowerShell и вводите {0} вместо {1}:",
-  "minerSettingsGuide": "Настройки seine: потоки, CPU, GPU и пул"
+  "minerSettingsGuide": "Настройки seine: потоки, CPU, GPU и пул",
+  "m619": "соло",
+  "m620": "Соло-хешрейт",
+  "m621": "Оплачиваются только найденные им блоки"
 }

@@ -100,6 +100,8 @@ pub struct ShareRecord {
     pub claimed_hash: Option<String>,
     pub reject_reason: Option<String>,
     pub created_at: SystemTime,
+    /// Submitted by a solo connection: kept out of PPLNS.
+    pub solo: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -615,6 +617,8 @@ pub(crate) struct FoundBlockRecord {
     pub finder: String,
     pub finder_worker: String,
     pub timestamp: SystemTime,
+    /// Found by a solo connection: the finder alone is credited.
+    pub solo: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -627,6 +631,8 @@ struct FoundBlockOutboxRecord {
     finder: String,
     finder_worker: String,
     timestamp_unix: i64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    solo: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -661,6 +667,8 @@ fn admit_faraday_session(era: &DifficultyEra, session: &mut MinerSession) {
 struct MinerSession {
     address: String,
     worker: String,
+    /// Logged in as `solo:<address>`.
+    solo: bool,
     difficulty: u64,
     capabilities: BTreeSet<String>,
     /// Recent shares for the rate estimate: accepted shares plus submits the
@@ -673,6 +681,13 @@ struct MinerSession {
     last_difficulty_adjustment: Option<Instant>,
     last_difficulty_hint_write: Option<Instant>,
     source: SourceRef,
+}
+
+impl MinerSession {
+    /// The owner this session's job assignments are issued to.
+    fn assignment_owner(&self) -> String {
+        pool_common::solo::assignment_owner(&self.address, self.solo)
+    }
 }
 
 pub struct PoolEngine {
@@ -1169,14 +1184,16 @@ impl PoolEngine {
             .parse::<std::net::SocketAddr>()
             .ok()
             .map(|addr| addr.ip());
+        let (solo, address) = pool_common::solo::split_solo_login(&address);
         self.login_from_peer(
             conn_id,
             peer_ip,
-            address,
+            address.to_string(),
             worker,
             protocol_version,
             capabilities,
             difficulty_hint,
+            solo,
         )
     }
 
@@ -1216,6 +1233,7 @@ impl PoolEngine {
         protocol_version: u32,
         capabilities: Vec<String>,
         difficulty_hint: Option<u64>,
+        solo: bool,
     ) -> Result<pool_common::protocol::LoginResult> {
         let address = address.trim();
         if address.is_empty() || address.len() > 128 {
@@ -1322,6 +1340,7 @@ impl PoolEngine {
             MinerSession {
                 address: address.to_string(),
                 worker: worker.clone(),
+                solo,
                 difficulty,
                 capabilities: cap_set,
                 share_times: VecDeque::new(),
@@ -1462,7 +1481,9 @@ impl PoolEngine {
             .unwrap_or(session.difficulty)
             .max(1);
         if let Some(expected_miner) = submit_job.assigned_miner.as_ref() {
-            if expected_miner != &session.address {
+            // Solo assignments have their own owner, so work issued to one
+            // mode is never credited to the other.
+            if expected_miner != &session.assignment_owner() {
                 self.persist_rejected_share_for_error(
                     &session,
                     &job_id,
@@ -1804,6 +1825,7 @@ impl PoolEngine {
                                 finder: session.address.clone(),
                                 finder_worker: session.worker.clone(),
                                 timestamp: SystemTime::now(),
+                                solo: session.solo,
                             };
                             if let Err(err) = self.stage_found_block_submission(&staged_found) {
                                 release_claim_on_error = false;
@@ -1948,6 +1970,7 @@ impl PoolEngine {
                         claimed_hash: claimed_hash_hex.clone(),
                         reject_reason: None,
                         created_at,
+                        solo: session.solo,
                     },
                     Some(ShareReplayData {
                         job_id: job_id_for_share.clone(),
@@ -2036,6 +2059,7 @@ impl PoolEngine {
                     claimed_hash: claimed_hash_hex.clone(),
                     reject_reason: None,
                     created_at,
+                    solo: session.solo,
                 },
                 Some(ShareReplayData {
                     job_id: job_id_for_share.clone(),
@@ -2228,6 +2252,7 @@ impl PoolEngine {
                     .reject_reason
                     .map(|value| canonical_share_reject_reason(value).to_string()),
                 created_at: SystemTime::now(),
+                solo: session.solo,
             },
             evidence.replay,
             metadata,
@@ -2316,6 +2341,7 @@ impl PoolEngine {
             finder: session.address.clone(),
             finder_worker: session.worker.clone(),
             timestamp: SystemTime::now(),
+            solo: session.solo,
         };
         if let Err(err) = self.stage_found_block_submission(&staged) {
             tracing::warn!(error = %err, "failed staging early block submission");
@@ -2525,6 +2551,7 @@ impl PoolEngine {
                 finder: record.finder,
                 finder_worker: record.finder_worker,
                 timestamp: unix_to_system_time(record.timestamp_unix),
+                solo: record.solo,
             };
 
             if chain_height < found.height {
@@ -2819,6 +2846,26 @@ impl PoolEngine {
             session.worker = worker;
         }
         session
+    }
+
+    pub(crate) fn pool_fee_pct(&self) -> f64 {
+        self.cfg().pool_fee_pct
+    }
+
+    /// Whether the connection logged in as `solo:<address>`.
+    pub(crate) fn session_is_solo(&self, conn_id: &str) -> bool {
+        self.sessions
+            .lock()
+            .get(conn_id)
+            .is_some_and(|session| session.solo)
+    }
+
+    /// The owner the connection's job assignments are issued to.
+    pub(crate) fn session_assignment_owner(&self, conn_id: &str) -> Option<String> {
+        self.sessions
+            .lock()
+            .get(conn_id)
+            .map(MinerSession::assignment_owner)
     }
 
     pub(crate) fn session_supports_capability(&self, conn_id: &str, capability: &str) -> bool {
@@ -3318,6 +3365,7 @@ impl FoundBlockOutboxRecord {
             finder: found.finder.clone(),
             finder_worker: found.finder_worker.clone(),
             timestamp_unix: system_time_to_unix(found.timestamp),
+            solo: found.solo,
         }
     }
 
@@ -3329,6 +3377,7 @@ impl FoundBlockOutboxRecord {
             && self.finder == found.finder
             && self.finder_worker == found.finder_worker
             && self.timestamp_unix == system_time_to_unix(found.timestamp)
+            && self.solo == found.solo
     }
 }
 
@@ -5578,6 +5627,7 @@ mod tests {
                 claimed_hash: Some("ff".repeat(32)),
                 reject_reason: None,
                 created_at: now,
+                solo: false,
             },
         )
         .expect("seed provisional share");
@@ -7501,6 +7551,172 @@ mod tests {
             .expect_err("submit should fail for nonce outside assignment");
         assert!(err.to_string().contains("out of assigned range"));
     }
+    #[test]
+    fn solo_and_pplns_work_cannot_be_submitted_through_the_other_mode() {
+        let cfg = cfg();
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let address = test_miner_address();
+        jobs.insert_assignment("assign-pplns", "job1", 1, Some(address.clone()), 0, 999);
+        jobs.insert_assignment(
+            "assign-solo",
+            "job1",
+            1,
+            Some(pool_common::solo::assignment_owner(&address, true)),
+            1_000,
+            1_999,
+        );
+        let store = Arc::new(InMemoryStore::default());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        engine
+            .login("conn-pplns", address.clone(), "rig", 2, submit_hash_cap())
+            .expect("pplns login");
+        engine
+            .login(
+                "conn-solo",
+                format!("SOLO:{address}"),
+                "rig",
+                2,
+                submit_hash_cap(),
+            )
+            .expect("solo login");
+        assert!(engine.session_is_solo("conn-solo"));
+        assert!(!engine.session_is_solo("conn-pplns"));
+        assert_eq!(
+            engine.session_assignment_owner("conn-solo").as_deref(),
+            Some(format!("solo:{address}").as_str())
+        );
+
+        for (conn, job_id, nonce) in [
+            ("conn-solo", "assign-pplns", 42),
+            ("conn-pplns", "assign-solo", 1_042),
+        ] {
+            let err = engine
+                .submit(conn, job_id.to_string(), nonce, Some("ff".repeat(32)))
+                .expect_err("cross-mode submit must fail");
+            assert!(err.to_string().contains("job not assigned to this miner"));
+        }
+
+        for (conn, job_id, nonce) in [
+            ("conn-solo", "assign-solo", 1_042),
+            ("conn-pplns", "assign-pplns", 42),
+        ] {
+            let ack = engine
+                .submit(conn, job_id.to_string(), nonce, Some("ff".repeat(32)))
+                .expect("own-mode submit");
+            assert!(ack.accepted);
+        }
+        let accepted = store
+            .shares()
+            .into_iter()
+            .filter(|share| share.status != SHARE_STATUS_REJECTED)
+            .map(|share| (share.nonce, share.solo, share.miner))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            accepted,
+            vec![(1_042, true, address.clone()), (42, false, address)]
+        );
+    }
+
+    #[test]
+    fn found_block_outbox_keeps_the_solo_flag_and_reads_old_records() {
+        let old: FoundBlockOutboxRecord = serde_json::from_str(
+            r#"{"height":1,"hash":"aa","difficulty":1,"reward":0,"finder":"f","finder_worker":"w","timestamp_unix":5}"#,
+        )
+        .expect("old record");
+        assert!(!old.solo);
+        let found = FoundBlockRecord {
+            height: 1,
+            hash: "aa".to_string(),
+            difficulty: 1,
+            reward: 0,
+            finder: "f".to_string(),
+            finder_worker: "w".to_string(),
+            timestamp: unix_to_system_time(5),
+            solo: true,
+        };
+        let record = FoundBlockOutboxRecord::from_found(&found);
+        assert!(serde_json::to_string(&record)
+            .unwrap()
+            .contains(r#""solo":true"#));
+        assert!(record.matches_found(&found));
+        assert!(!old.matches_found(&found));
+        let pplns = FoundBlockRecord {
+            solo: false,
+            ..found
+        };
+        assert!(
+            !serde_json::to_string(&FoundBlockOutboxRecord::from_found(&pplns))
+                .unwrap()
+                .contains("solo")
+        );
+        assert!(old.matches_found(&pplns));
+    }
+
+    #[test]
+    fn solo_session_blocks_are_recorded_as_solo() {
+        struct CandidateHasher;
+        impl PowHasher for CandidateHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Ok([0x00; 32])
+            }
+        }
+
+        let mut cfg = cfg();
+        cfg.validation_mode = "full".to_string();
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(CandidateHasher),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(Job {
+            network_target: [0x01; 32],
+            ..job()
+        });
+        let store = Arc::new(InMemoryStore::default());
+        let node = Arc::new(InMemoryNode {
+            accepted: true,
+            ..InMemoryNode::default()
+        });
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::clone(&node) as Arc<dyn NodeApi>,
+        );
+        engine
+            .login(
+                "conn1",
+                format!("solo:{}", test_miner_address()),
+                "",
+                2,
+                submit_hash_cap(),
+            )
+            .expect("solo login");
+
+        let ack = engine
+            .submit("conn1", "job1".to_string(), 9, Some("00".repeat(32)))
+            .expect("submit candidate");
+
+        assert!(ack.block_accepted);
+        let blocks = store.blocks();
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].solo);
+        assert_eq!(blocks[0].finder, test_miner_address());
+        assert!(store.shares()[0].solo);
+    }
+
     #[test]
     fn exchange_rollout_default_preserves_legacy_login() {
         let Some(store) = crate::store::PoolStore::test_store() else {

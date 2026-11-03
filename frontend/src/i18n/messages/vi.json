@@ -351,5 +351,8 @@
   "minerSettingsCpu": "Chỉ CPU, tắt GPU",
   "minerSettingsThreads": "Dùng 4 luồng CPU",
   "minerSettingsLead": "Theo mặc định, seine đào bằng CPU và các card đồ họa của bạn. Để đổi, hãy đóng seine, mở terminal trong thư mục của nó và chạy một trong các lệnh sau. Trên Windows, dùng PowerShell và gõ {0} thay cho {1}:",
-  "minerSettingsGuide": "Đổi thiết lập seine: luồng, CPU, GPU và pool"
+  "minerSettingsGuide": "Đổi thiết lập seine: luồng, CPU, GPU và pool",
+  "m619": "solo",
+  "m620": "Tốc độ băm solo",
+  "m621": "Chỉ nhận thưởng cho khối tự tìm thấy"
 }

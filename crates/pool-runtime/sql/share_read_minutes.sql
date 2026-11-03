@@ -1,5 +1,8 @@
 -- Exact per-minute projections. Statement triggers aggregate bulk writes before
 -- enqueueing; readers combine committed summaries and unapplied deltas.
+-- Solo shares project into their own status buckets, 'solo' (accepted) and
+-- 'solo_rejected': hashrate readers count 'solo' as accepted work, and PPLNS
+-- previews skip both.
 CREATE TABLE IF NOT EXISTS share_read_miners (
     minute BIGINT NOT NULL, miner TEXT NOT NULL, status TEXT NOT NULL,
     shares BIGINT NOT NULL, work BIGINT NOT NULL,
@@ -37,13 +40,13 @@ BEGIN
     ELSIF TG_OP = 'INSERT' THEN
         INSERT INTO share_read_deltas(minute,miner,status,shares,work)
         SELECT created_at / 60 * 60,miner,
-               CASE WHEN status IN ('','verified','provisional') THEN status ELSE 'rejected' END,
+               CASE WHEN status NOT IN ('','verified','provisional') THEN CASE WHEN solo THEN 'solo_rejected' ELSE 'rejected' END WHEN solo THEN 'solo' ELSE status END,
                COUNT(*),SUM(difficulty)::bigint
         FROM new_share_rows GROUP BY 1,2,3;
     ELSIF TG_OP = 'DELETE' THEN
         INSERT INTO share_read_deltas(minute,miner,status,shares,work)
         SELECT created_at / 60 * 60,miner,
-               CASE WHEN status IN ('','verified','provisional') THEN status ELSE 'rejected' END,
+               CASE WHEN status NOT IN ('','verified','provisional') THEN CASE WHEN solo THEN 'solo_rejected' ELSE 'rejected' END WHEN solo THEN 'solo' ELSE status END,
                -COUNT(*),-SUM(difficulty)::bigint
         FROM old_share_rows GROUP BY 1,2,3;
     ELSE
@@ -51,11 +54,11 @@ BEGIN
         SELECT minute,miner,status,SUM(n)::bigint,SUM(work)::bigint
         FROM (
             SELECT created_at / 60 * 60 AS minute,miner,
-                   CASE WHEN status IN ('','verified','provisional') THEN status ELSE 'rejected' END AS status,
+                   CASE WHEN status NOT IN ('','verified','provisional') THEN CASE WHEN solo THEN 'solo_rejected' ELSE 'rejected' END WHEN solo THEN 'solo' ELSE status END AS status,
                    1 AS n,difficulty AS work FROM new_share_rows
             UNION ALL
             SELECT created_at / 60 * 60,miner,
-                   CASE WHEN status IN ('','verified','provisional') THEN status ELSE 'rejected' END,
+                   CASE WHEN status NOT IN ('','verified','provisional') THEN CASE WHEN solo THEN 'solo_rejected' ELSE 'rejected' END WHEN solo THEN 'solo' ELSE status END,
                    -1,-difficulty FROM old_share_rows
         ) changes GROUP BY minute,miner,status
         HAVING SUM(n) <> 0 OR SUM(work) <> 0;
@@ -119,9 +122,9 @@ BEGIN
         SELECT m.accepted AS a,m.rejected AS r,m.work AS w FROM share_read_minutes m
         WHERE minute >= full_start AND minute < full_end
         UNION ALL
-        SELECT CASE WHEN status IN ('verified','provisional') THEN d.shares ELSE 0 END,
-               CASE WHEN status NOT IN ('verified','provisional') THEN d.shares ELSE 0 END,
-               CASE WHEN status IN ('verified','provisional') THEN d.work ELSE 0 END
+        SELECT CASE WHEN status IN ('verified','provisional','solo') THEN d.shares ELSE 0 END,
+               CASE WHEN status NOT IN ('verified','provisional','solo') THEN d.shares ELSE 0 END,
+               CASE WHEN status IN ('verified','provisional','solo') THEN d.work ELSE 0 END
         FROM share_read_deltas d WHERE minute >= full_start AND minute < full_end
         UNION ALL
         SELECT COUNT(*) FILTER (WHERE status IN ('verified','provisional')),
@@ -149,7 +152,7 @@ BEGIN
     IF full_start >= full_end
        OR NOT COALESCE((SELECT ready FROM share_read_state WHERE singleton),FALSE) THEN
         RETURN QUERY SELECT s.miner,
-            CASE WHEN s.status IN ('','verified','provisional') THEN s.status ELSE 'rejected' END,
+            CASE WHEN s.status NOT IN ('','verified','provisional') THEN CASE WHEN s.solo THEN 'solo_rejected' ELSE 'rejected' END WHEN s.solo THEN 'solo' ELSE s.status END,
             COUNT(*),SUM(s.difficulty)::bigint
         FROM shares s WHERE s.created_at >= p_start AND s.created_at <= p_end
         GROUP BY 1,2;
@@ -164,12 +167,12 @@ BEGIN
         FROM share_read_deltas d WHERE d.minute >= full_start AND d.minute < full_end
         UNION ALL
         SELECT s.miner,
-               CASE WHEN s.status IN ('','verified','provisional') THEN s.status ELSE 'rejected' END,
+               CASE WHEN s.status NOT IN ('','verified','provisional') THEN CASE WHEN s.solo THEN 'solo_rejected' ELSE 'rejected' END WHEN s.solo THEN 'solo' ELSE s.status END,
                COUNT(*),SUM(s.difficulty)::bigint
         FROM shares s WHERE s.created_at >= p_start AND s.created_at < full_start GROUP BY 1,2
         UNION ALL
         SELECT s.miner,
-               CASE WHEN s.status IN ('','verified','provisional') THEN s.status ELSE 'rejected' END,
+               CASE WHEN s.status NOT IN ('','verified','provisional') THEN CASE WHEN s.solo THEN 'solo_rejected' ELSE 'rejected' END WHEN s.solo THEN 'solo' ELSE s.status END,
                COUNT(*),SUM(s.difficulty)::bigint
         FROM shares s WHERE s.created_at >= full_end AND s.created_at <= p_end GROUP BY 1,2
     ) x GROUP BY x.a,x.s HAVING SUM(x.n) > 0;
@@ -204,7 +207,7 @@ BEGIN
         SELECT work AS w FROM share_read_minutes WHERE minute >= full_start AND minute < full_end
         UNION ALL
         SELECT work FROM share_read_deltas WHERE minute >= full_start AND minute < full_end
-          AND status IN ('verified','provisional')
+          AND status IN ('verified','provisional','solo')
         UNION ALL
         SELECT difficulty FROM shares WHERE created_at >= p_start AND created_at < full_start
           AND status IN ('verified','provisional')

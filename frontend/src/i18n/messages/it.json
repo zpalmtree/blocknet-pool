@@ -351,5 +351,8 @@
   "minerSettingsCpu": "Solo CPU, GPU disattivata",
   "minerSettingsThreads": "Usa 4 thread CPU",
   "minerSettingsLead": "Per impostazione predefinita, seine mina con la tua CPU e le tue schede video. Per cambiarlo, chiudi seine, apri un terminale nella sua cartella ed esegui uno di questi comandi. Su Windows usa PowerShell e scrivi {0} al posto di {1}:",
-  "minerSettingsGuide": "Cambia le impostazioni di seine: thread, CPU, GPU e pool"
+  "minerSettingsGuide": "Cambia le impostazioni di seine: thread, CPU, GPU e pool",
+  "m619": "solo",
+  "m620": "Hashrate in solo",
+  "m621": "Pagato solo per i blocchi che trova"
 }

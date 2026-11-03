@@ -403,6 +403,31 @@ Daemon log stream details:
 - Every mining template has a hard two-minute content age cap, even when the mempool is unchanged. This bounds on-chain timestamp drift while preserving renewable leases and avoiding the old two-second refresh churn.
 - A successful SSE connection/reconnect forces a same-tip template rotation because daemon template IDs are process-local. Against older daemons without renewal support, the pool bounds polling-only restart detection with the same 30-second rotation cadence.
 
+## Solo Mining
+
+A miner selects solo mode per connection by logging in as `solo:<address>`, `solo:@name`
+or `solo:$name` (prefix in any letter case). Everything else about the connection is
+unchanged: same port, gateway, vardiff, verification, memos and payouts.
+
+- Solo shares are stored with `shares.solo = true` and never enter a PPLNS window, a
+  pending-reward preview or a PPLNS trust count. In the minute projections they land in
+  the `solo` and `solo_rejected` status buckets, so hashrate and pool-wide luck still
+  count solo work while PPLNS readers skip it.
+- A block found by a solo connection is stored with `blocks.solo = true`. Once it
+  confirms, its whole reward less `pool_fee_pct` is credited to the finder, then paid
+  through the normal payout path. PPLNS miners earn nothing from it.
+- A solo connection's jobs are assigned to the owner `solo:<address>`, so work issued
+  to one mode is rejected (`job not assigned to this miner`) if submitted through the
+  other, even from the same address.
+- After a solo login the pool sends a `solo_mining` notification that explains the
+  payout and the pool fee. Solo connections do not receive `pool_block_solved`
+  broadcasts, and a solo block is not announced to PPLNS miners.
+- Pool hashrate, round effort and luck are pool-wide: they include solo work, and solo
+  blocks end a round like any other block.
+- The API and stats page accept `solo:` lookups and show the miner's address. `GET
+  /api/blocks` items carry `solo`, `GET /api/miner/{address}` adds `solo_hashrate`, and
+  pending-estimate block rows carry `solo`.
+
 ## Payout Safeguards
 
 - Payout batches target at least 15 recipients when enough miners are eligible and
