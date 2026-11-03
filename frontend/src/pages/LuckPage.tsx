@@ -1,15 +1,16 @@
 import { t } from '../i18n';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
+import { CurrentRound } from '../components/CurrentRound';
 import { MiningType } from '../components/MiningType';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { ExplorerLink } from '../components/ExplorerLink';
 import { Pager } from '../components/Pager';
 import { fmtSeconds, formatPct, roundToneClass, timeAgo, timestampTitle } from '../lib/format';
 import { usePagedData } from '../lib/paging';
-import type { LuckRound } from '../types';
+import type { LuckRound, StatsInsightsResponse } from '../types';
 
 interface LuckPageProps {
   api: ApiClient;
@@ -19,6 +20,13 @@ interface LuckPageProps {
 export function LuckPage({ api, liveTick }: LuckPageProps) {
   const fetchLuck = useCallback((limit: number, offset: number) => api.getLuckHistory(limit, offset), [api]);
   const { items, pagerProps } = usePagedData<LuckRound>(liveTick, fetchLuck);
+  const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
+  const insightsTick = Math.floor(liveTick / 2);
+  useEffect(() => {
+    let active = true;
+    api.getStatsInsights().then((value) => { if (active) setInsights(value); }).catch(() => {});
+    return () => { active = false; };
+  }, [api, insightsTick]);
 
   return (
     <div id="page-luck">
@@ -27,6 +35,7 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
         <h1>{t("m442")}</h1>
         <p className="page-intro">{t("m443")}</p>
       </div>
+      <CurrentRound round={insights?.round} />
       <div className="card table-scroll">
         <table>
           <thead>

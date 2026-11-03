@@ -4,7 +4,7 @@ import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useS
 import { startSiteMetrics } from '../blog/site-metrics.mjs';
 import { createApiClient } from './api/client';
 import { LanguageControl } from './components/LanguageControl';
-import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
+import { API_KEY_STORAGE_KEY, rememberDestination } from './lib/storage';
 import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './lib/theme';
 import { metadataForPath, updatePageMetadata } from './lib/page-meta';
 import { pathForRoute, routeFromPathname, titleForRoute } from './lib/routes';
@@ -135,10 +135,9 @@ export function App() {
     localStorage.removeItem(API_KEY_STORAGE_KEY);
   }, []);
 
-  const onJumpToStats = useCallback((address: string) => {
-    if (address) {
-      localStorage.setItem(LAST_MINER_LOOKUP_KEY, address);
-    }
+  const onJumpToStats = useCallback((address: string, memo = '') => {
+    // My Stats restores the saved destination, so a new lookup must replace it.
+    if (address) rememberDestination({ address, memo });
     const path = pathForRoute('stats');
     window.history.pushState({}, '', path);
     setRoute('stats');
@@ -232,7 +231,7 @@ export function App() {
 
   return (
     <>
-      <nav className={mobileNavOpen ? 'is-open' : ''}>
+      <nav className={[mobileNavOpen ? 'is-open' : '', route === 'dashboard' ? 'nav-hero' : ''].filter(Boolean).join(' ')}>
         <a
           href={pathForRoute('dashboard')}
           className="nav-brand"
@@ -347,7 +346,7 @@ export function App() {
         {errorMsg}
       </div>
 
-      <div className={route === 'admin' ? 'container container-wide' : 'container'}>
+      <div className={route === 'admin' ? 'container container-wide' : route === 'dashboard' ? 'container-flush' : 'container'}>
         <PageBoundary key={route} route={route}>{currentPage}</PageBoundary>
       </div>
 

@@ -2,33 +2,33 @@ import { t, tx, localizePath, locale } from '../i18n';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
-import { BlockStatusBadge } from '../components/BlockStatusBadge';
-import { MiningType } from '../components/MiningType';
-import { EmptyTableRow } from '../components/EmptyTableRow';
 import { ExplorerLink } from '../components/ExplorerLink';
 import { HashrateChart } from '../components/HashrateChart';
-import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
-import { PayoutTxLinks } from '../components/PayoutTxLinks';
-import { RangeTabs } from '../components/RangeTabs';
+import { MiningType, POOL_ICON } from '../components/MiningType';
 import { PoolGuide } from '../components/PoolGuide';
-import { StatCard } from '../components/StatCard';
+import { RangeTabs } from '../components/RangeTabs';
 import {
+  formatCoinAmount,
   formatCoins,
   formatCompactCoins,
-  formatPct,
-  fmtSeconds,
+  formatExactCoins,
   humanRate,
-  roundToneClass,
+  shortAddr,
   stratumUrl,
   timestampTitle,
   timeAgo,
   timeUntil,
   toUnixMs,
 } from '../lib/format';
+import { knownExchange } from '../lib/payout-destination';
+import { heroPayout, minimumPayoutAtoms } from '../lib/payout-progress';
+import { readDestination, rememberDestination, type SavedDestination } from '../lib/storage';
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
   InfoResponse,
+  MinerBalancePayload,
+  MinerResponse,
   PayoutItem,
   Range,
   StatsInsightsResponse,
@@ -40,11 +40,63 @@ interface DashboardPageProps {
   poolInfo: InfoResponse | null;
   liveTick: number;
   theme: ThemeMode;
-  onJumpToStats: (address: string) => void;
+  onJumpToStats: (address: string, memo?: string) => void;
+}
+
+const RECENT_PAYOUT_MS = 60 * 60 * 1000;
+
+function hostOf(url: string | undefined): string {
+  try {
+    return url ? new URL(url).host : location.host;
+  } catch {
+    return location.host;
+  }
+}
+
+interface ReturningMiner {
+  status: 'loading' | 'ready' | 'failed';
+  miner: MinerResponse | null;
+  balance: MinerBalancePayload | null;
+}
+
+/** Loads the miner the visitor last looked up, so the front page can open on it. */
+function useReturningMiner(api: ApiClient, destination: SavedDestination, liveTick: number): ReturningMiner {
+  const [state, setState] = useState<ReturningMiner>({ status: destination.address ? 'loading' : 'failed', miner: null, balance: null });
+  const refresh = Math.floor(liveTick / 6);
+  useEffect(() => {
+    if (!destination.address) {
+      setState({ status: 'failed', miner: null, balance: null });
+      return;
+    }
+    let active = true;
+    void (async () => {
+      try {
+        // Exchange deposits share one address; the memo picks the account.
+        const account = destination.memo
+          ? (await api.resolvePayoutDestination(destination.address, destination.memo)).account
+          : destination.address;
+        const [miner, balance] = await Promise.allSettled([api.getMiner(account), api.getMinerBalance(account, false)]);
+        if (!active) return;
+        // Only well-formed responses count; anything else falls back to the first-visit view.
+        const minerValue = miner.status === 'fulfilled' && Array.isArray(miner.value?.workers) ? miner.value : null;
+        const balanceValue = balance.status === 'fulfilled' && typeof balance.value?.balance?.pending_confirmed === 'number'
+          ? balance.value : null;
+        setState((previous) => minerValue || balanceValue
+          ? { status: 'ready', miner: minerValue, balance: balanceValue }
+          // Keep the last good view through a failed refresh.
+          : previous.status === 'ready' ? previous : { status: 'failed', miner: null, balance: null });
+      } catch {
+        if (active) setState((previous) => previous.status === 'ready' ? previous : { status: 'failed', miner: null, balance: null });
+      }
+    })();
+    return () => { active = false; };
+  }, [api, destination, refresh]);
+  return state;
 }
 
 export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }: DashboardPageProps) {
-  const [lookupInput, setLookupInput] = useState('');
+  const [destination, setDestination] = useState<SavedDestination>(readDestination);
+  const [lookupInput, setLookupInput] = useState(destination.address);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
@@ -53,11 +105,12 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
   const [historyResult, setHistoryResult] = useState<{ range: Range; data: HashratePoint[] }>({ range, data: [] });
   const history = historyResult.range === range ? historyResult.data : [];
   const historyTick = Math.floor(liveTick / 6);
+  const returning = useReturningMiner(api, destination, liveTick);
+  const showMiner = !!destination.address && returning.status !== 'failed';
 
   const refreshStats = useCallback(async () => {
     try {
-      const d = await api.getStats();
-      setStats(d);
+      setStats(await api.getStats());
     } catch {
       // handled by api client
     }
@@ -65,8 +118,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
 
   const loadInsights = useCallback(async () => {
     try {
-      const d = await api.getStatsInsights();
-      setInsights(d);
+      setInsights(await api.getStatsInsights());
     } catch {
       setInsights(null);
     }
@@ -74,8 +126,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
 
   const loadPayouts = useCallback(async () => {
     try {
-      const d = await api.getRecentPayouts(5, 0);
-      setPayouts(d.items);
+      setPayouts((await api.getRecentPayouts(5, 0)).items);
     } catch {
       setPayouts([]);
     }
@@ -89,9 +140,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
 
   useEffect(() => {
     if (liveTick <= 0) return;
-    if (liveTick % 2 === 0) {
-      void refreshStats();
-    }
+    if (liveTick % 2 === 0) void refreshStats();
     if (liveTick % 6 === 0) {
       void loadInsights();
       void loadPayouts();
@@ -108,17 +157,13 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
     return () => { active = false; };
   }, [api, range, historyTick]);
 
-  const poolUrl = poolInfo ? stratumUrl(poolInfo.stratum_port, poolInfo.pool_url) : null;
-  const fee = poolInfo?.pool_fee_pct;
-  const feeLabel = fee != null && Number.isFinite(fee)
-    ? `${fee.toLocaleString(locale, { maximumFractionDigits: 20 })}%` : '-';
-
   useEffect(() => {
     if (copyState !== 'copied') return;
     const timer = window.setTimeout(() => setCopyState('idle'), 2000);
     return () => window.clearTimeout(timer);
   }, [copyState]);
 
+  const poolUrl = poolInfo ? stratumUrl(poolInfo.stratum_port, poolInfo.pool_url) : null;
   const copyStratum = useCallback(async () => {
     if (!poolUrl) return;
     try {
@@ -129,275 +174,251 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
     }
   }, [poolUrl]);
 
-  const round = insights?.round;
+  const forgetMiner = useCallback(() => {
+    rememberDestination(null);
+    setDestination({ address: '', memo: '' });
+    setLookupInput('');
+  }, []);
+
+  const fee = poolInfo?.pool_fee_pct;
+  const feeLabel = fee != null && Number.isFinite(fee) ? `${fee.toLocaleString(locale, { maximumFractionDigits: 20 })}%` : '-';
+  const coins = (amount: number) => `${new Intl.NumberFormat(locale, { numberingSystem: 'latn', maximumFractionDigits: 8 }).format(amount)} BNT`;
+  const minPayout = poolInfo ? coins(poolInfo.min_payout_amount) : '-';
+  const memoMinimum = poolInfo?.payout_memos_enabled && poolInfo.memo_min_payout_amount != null ? coins(poolInfo.memo_min_payout_amount) : null;
+  const poolHost = hostOf(poolInfo?.pool_url);
+  const pitchValues = [<bdi key="host" dir="ltr">{poolHost}</bdi>, <bdi key="window" dir="ltr">{poolInfo?.pplns_window_duration ?? '-'}</bdi>,
+    <bdi key="min" dir="ltr">{minPayout}</bdi>];
+
+  const poolHashrate = stats?.pool?.raw_hashrate ?? stats?.pool?.hashrate ?? 0;
+  const networkHashrate = stats?.chain.network_hashrate ?? 0;
+  const networkShare = networkHashrate > 0 && poolHashrate > 0
+    ? new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 }).format(poolHashrate / networkHashrate) : '-';
+  const paidTotal = stats?.pool?.paid_to_miners_total;
+
   const payoutEta = insights?.payout_eta;
-  const dashboardLuckHistory = (insights?.luck_history ?? []).filter((row) => !row.orphaned);
-  const hiddenOrphanRounds = Math.max(0, (insights?.luck_history.length ?? 0) - dashboardLuckHistory.length);
-  const latestSolvedBlock = dashboardLuckHistory[0];
-  // A sweep time in the past means the next payout run is due, not that something lapsed.
-  const nextSweepDue = payoutEta?.next_sweep_at != null && toUnixMs(payoutEta.next_sweep_at) <= Date.now();
-  const nextSweepLabel = !payoutEta?.next_sweep_at ? '-' : nextSweepDue ? t('dueNow') : timeUntil(payoutEta.next_sweep_at);
-  const payoutShortfall =
-    payoutEta?.wallet_spendable == null
-      ? 0
-      : Math.max(0, payoutEta.pending_total_amount - payoutEta.wallet_spendable);
+  const recentBlocks = (insights?.luck_history ?? []).filter((row) => !row.orphaned).slice(0, 5);
+  const payoutShortfall = payoutEta?.wallet_spendable == null ? 0 : Math.max(0, payoutEta.pending_total_amount - payoutEta.wallet_spendable);
   const payoutLiquidityConstrained = payoutEta != null && payoutEta.pending_total_amount > 0 && payoutShortfall > 0;
 
-  const roundEffortPct = round?.effort_pct;
-  const hasRoundEffort = roundEffortPct != null && Number.isFinite(roundEffortPct) && roundEffortPct >= 0;
-  // This is a work scale, not progress toward a guaranteed block. Keep the
-  // exact value above it even when a long round extends past the scale.
-  const roundScalePct = hasRoundEffort ? Math.min(roundEffortPct / 2, 100) : 0;
-  const averageBlockInterval = round?.expected_block_seconds;
   return (
-    <div id="page-dashboard">
-      <header className="dashboard-header">
-        <div className="dashboard-heading">
-          <span className="page-kicker">{t('m001')}</span>
-          <h1>{t('m399')}</h1>
-          <p className="page-intro">{t('dashboardIntro')}</p>
-        </div>
-        <div className="dashboard-fee">
-          <span className="dashboard-fee-label">{t('poolFee')}</span>
-          <strong id="s-pool-fee"><bdi>{feeLabel}</bdi></strong>
-        </div>
-        <div className="dashboard-actions page-actions">
-          <a className="btn btn-primary" href={localizePath('/start')}>{t('m002')}</a>
-          <a className="dashboard-calculator" href={localizePath('/blog/') + 'estimate-blocknet-mining-rewards/#mining-calculator'}>
-            {t('rewardsCalculator')}
-            <span aria-hidden="true">↗</span>
-          </a>
-        </div>
-        <div className="dashboard-connection">
-          <span className="dashboard-connection-label">{t('m402')}</span>
-          <div className="copy-field">
-            <code className="copy-field-value" id="stratum-url" dir="ltr">{poolUrl ?? '-'}</code>
-            <button
-              className={`copy-field-btn${copyState === 'copied' ? ' is-copied' : ''}`}
-              type="button"
-              onClick={copyStratum}
-              disabled={!poolUrl}
-              aria-label={t('m387')}
-            >
-              <span role="status">{copyState === 'copied' ? t('m386') : t('m392')}</span>
-            </button>
-          </div>
-          {copyState === 'error' && <p className="dashboard-copy-error" role="alert">{t('copyUnavailable')}</p>}
-          <label className="dashboard-connection-label" htmlFor="dashboard-lookup">{t('m005')}</label>
-          <form
-            className="copy-field"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const value = lookupInput.trim();
-              if (value) onJumpToStats(value);
-            }}
-          >
-            <input
-              id="dashboard-lookup"
-              className="copy-field-value copy-field-input"
-              type="text"
-              dir="ltr"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={t('m486')}
-              value={lookupInput}
-              onChange={(event) => setLookupInput(event.target.value)}
+    <div id="page-dashboard" className="home">
+      <section className="home-hero">
+        <div className="home-hero-body">
+          {showMiner ? (
+            <MinerHero
+              miner={returning.miner}
+              balance={returning.balance}
+              loading={returning.status === 'loading'}
+              destination={destination}
+              poolInfo={poolInfo}
+              insights={insights}
+              onForget={forgetMiner}
             />
-            <button className="copy-field-btn" type="submit" disabled={!lookupInput.trim()}>{t('m488')}</button>
-          </form>
-        </div>
-      </header>
-
-      <div className="stats-card-group">
-        <div className="stats-card-group-title">{t("m403")}</div>
-        <div className="stats-card-group-grid">
-          <StatCard label={t("m072")} value={stats?.pool?.miners ?? '-'} id="s-miners" />
-          <StatCard
-            label={t("m404")}
-            value={<bdi dir="ltr">{humanRate(stats?.pool?.raw_hashrate ?? stats?.pool?.hashrate ?? 0)}</bdi>}
-            id="s-hashrate"
-          />
-          <StatCard
-            label={t("m408")}
-            value={stats?.chain.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}
-            id="s-net-hashrate"
-          />
-        </div>
-      </div>
-
-      <div className="stats-card-group">
-        <div className="stats-card-group-title">{t("m003")}</div>
-        <div className="stats-card-group-grid">
-          <StatCard label={t("m409")} value={stats?.chain.current_job_height ?? '-'} id="s-current-block" mono />
-          <StatCard
-            label={t("m410")}
-            value={latestSolvedBlock?.block_height ?? '-'}
-            id="s-last-solved-block"
-            title={latestSolvedBlock ? timestampTitle(latestSolvedBlock.timestamp) : undefined}
-            mono
-          />
-          <StatCard label={t("m411")} value={stats?.pool?.blocks_found ?? '-'} id="s-blocks" />
-        </div>
-      </div>
-
-      <section className="section" aria-labelledby="current-round-title">
-        <div className="section-header">
-          <h2 id="current-round-title">{t('currentRound')}</h2>
-        </div>
-        <div className="card">
-          <div className="round-meta">
-            <div>
-              <span className="label">{t("m418")}</span>
-              <div className="value mono">{hasRoundEffort ? formatPct(roundEffortPct) : '-'}</div>
+          ) : (
+            <div className="home-pitch">
+              <h1 className="home-title">
+                <span className="home-kicker">{t('m399')}</span>
+                <span className="home-fee">{t('heroFee', [feeLabel])}</span>
+              </h1>
+              <p className="home-sub">{memoMinimum
+                ? tx('heroPitchExchange', [...pitchValues, <bdi key="memo" dir="ltr">{memoMinimum}</bdi>])
+                : tx('heroPitch', pitchValues)}</p>
+              <div className="home-cta">
+                <a className="home-btn" href={localizePath('/start')}>{t('m002')}</a>
+                <a className="home-link" href={localizePath('/blog/') + 'estimate-blocknet-mining-rewards/#mining-calculator'}>
+                  {t('rewardsCalculator')}<span aria-hidden="true"> ↗</span>
+                </a>
+              </div>
             </div>
-            <div>
-              <span className="label">{t("m421")}</span>
-              <div className="value mono">{round && Number.isFinite(round.elapsed_seconds) && round.elapsed_seconds >= 0 ? fmtSeconds(round.elapsed_seconds) : '-'}</div>
+          )}
+          <div className="home-connect">
+            <span className="home-label">{t('m402')}</span>
+            <div className="home-field">
+              <code id="stratum-url" dir="ltr">{poolUrl ?? '-'}</code>
+              <button type="button" onClick={copyStratum} disabled={!poolUrl} aria-label={t('m387')}>
+                <span role="status">{copyState === 'copied' ? t('m386') : t('m392')}</span>
+              </button>
             </div>
+            {copyState === 'error' && <p className="home-copy-error" role="alert">{t('copyUnavailable')}</p>}
+            <label className="home-label" htmlFor="dashboard-lookup">{showMiner ? t('yourAddress') : t('checkMiner')}</label>
+            <form
+              className="home-field"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const value = lookupInput.trim();
+                // Keep an exchange deposit's memo when the address is unchanged.
+                if (value) onJumpToStats(value, value === destination.address ? destination.memo : '');
+              }}
+            >
+              <input
+                id="dashboard-lookup"
+                type="text"
+                dir="ltr"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={t('m486')}
+                value={lookupInput}
+                onChange={(event) => setLookupInput(event.target.value)}
+              />
+              <button type="submit" disabled={!lookupInput.trim()}>{t('m488')}</button>
+            </form>
           </div>
-
-          <div className="round-effort-scale" dir="ltr" aria-hidden="true">
-            <div className="round-effort-track">
-              <div className="round-effort-fill" style={{ width: `${roundScalePct}%` }} />
-              <div className="round-effort-average" />
-            </div>
-            <div className="round-effort-labels">
-              <span>0%</span>
-              <span className="round-effort-reference"><bdi>100%</bdi><span dir="auto">{t('roundAverageWork')}</span></span>
-              <span>200%+</span>
-            </div>
-          </div>
-
-          <p className="round-note">{t('roundEffortExplanation')}</p>
-          <p className="round-interval">{tx('roundAverageInterval', [
-            <bdi className="mono" key="interval">{averageBlockInterval != null && Number.isFinite(averageBlockInterval) && averageBlockInterval > 0 ? fmtSeconds(Math.floor(averageBlockInterval)) : '-'}</bdi>,
-          ])}</p>
         </div>
       </section>
 
-      <div className="stats-card-group">
-        <div className="stats-card-group-title">{t("m004")}</div>
-        <div className="stats-card-group-grid">
-          <StatCard
-            label={t("m270")}
-            value={payoutEta ? formatCompactCoins(payoutEta.pending_total_amount) : '-'}
-            meta={payoutShortfall ? t("m423", [formatCompactCoins(payoutShortfall)]) : t("m424")}
-            mono
-            title={payoutEta ? t("m425", [formatCoins(payoutEta.pending_total_amount)]) : undefined}
-          />
-          <StatCard
-            label={t("m426")}
-            value={stats?.pool?.paid_to_miners_total != null ? formatCompactCoins(stats.pool.paid_to_miners_total) : '-'}
-            meta={stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : ''}
-            id="s-total-paid"
-            mono
-            title={stats?.pool?.paid_to_miners_total != null ? t("m427", [formatCoins(stats.pool.paid_to_miners_total)]) : undefined}
-          />
-          <StatCard
-            label={t("m428")}
-            value={nextSweepLabel}
-            valueTitle={timestampTitle(payoutEta?.next_sweep_at) || undefined}
-            mono
-          />
+      <section className="home-band" aria-label={t('m403')}>
+        <div><span className="home-num">{stats?.pool?.miners ?? '-'}</span><span className="home-cap">{t('bandMiners')}</span></div>
+        <div>
+          <span className="home-num" dir="ltr">{stats ? humanRate(poolHashrate) : '-'}</span>
+          <span className="home-cap">{tx('bandHashrate', [<bdi key="share">{networkShare}</bdi>])}</span>
         </div>
+        <div>
+          <span className="home-num" title={paidTotal != null ? formatCoins(paidTotal) : undefined}>{paidTotal != null ? formatCompactCoins(paidTotal) : '-'}</span>
+          <span className="home-cap">{t('bandPaid')}</span>
+        </div>
+      </section>
+
+      <div className="home-body">
+        {!showMiner && (
+          <section aria-labelledby="home-steps-title">
+            <div className="home-head"><h2 id="home-steps-title">{t('m450')}</h2><a href={localizePath('/start')}>{t('setupGuide')}</a></div>
+            <ol className="home-steps">
+              <li><b aria-hidden="true">1</b><div><strong>{t('walletStep')}</strong>
+                <span>{tx('walletStepBody', [<a key="wallet" href={`${localizePath('/start')}#wallet`}>{t('walletStepLink')}</a>])}</span></div></li>
+              <li><b aria-hidden="true">2</b><div><strong>{t('m452')}</strong>
+                <span>{tx('m453', [<a key="seine" href="https://seineminer.com/#download">seineminer.com</a>])}</span></div></li>
+              <li><b aria-hidden="true">3</b><div><strong>{t('m454')}</strong>
+                <span>{tx('launchBody', [<code key="exe" dir="ltr">seine.exe</code>, <code key="bin" dir="ltr">./seine</code>, <code key="at" dir="ltr">@name</code>, <code key="dollar" dir="ltr">$name</code>])}</span></div></li>
+            </ol>
+          </section>
+        )}
+
+        {payoutLiquidityConstrained && payoutEta && (
+          <div className="card home-notice">
+            {tx("m429", [<span className="mono" key="a">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>, <span className="mono" key="b">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>, <span className="mono" key="c">{formatCoins(payoutEta.pending_total_amount)}</span>, <span className="mono" key="d">{formatCoins(payoutShortfall)}</span>])}
+          </div>
+        )}
+
+        <div className="home-feeds">
+          <section aria-labelledby="home-blocks-title">
+            <div className="home-head"><h2 id="home-blocks-title">{t('recentBlocks')}</h2><a href={localizePath('/luck')}>{t('m431')}</a></div>
+            <ol className="home-list">
+              {!recentBlocks.length ? <li className="home-empty">{t('m436')}</li> : recentBlocks.map((row) => (
+                <li key={`${row.block_height}-${row.block_hash}`}>
+                  <ExplorerLink kind="block" value={row.block_hash}>{row.block_height}</ExplorerLink>
+                  <MiningType solo={row.solo} />
+                  <span className="home-dim" title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</span>
+                </li>
+              ))}
+            </ol>
+          </section>
+          <section aria-labelledby="home-payouts-title">
+            <div className="home-head"><h2 id="home-payouts-title">{t('m437')}</h2><a href={localizePath('/payouts')}>{t('m431')}</a></div>
+            <ol className="home-list">
+              {!payouts.length ? <li className="home-empty">{t('m440')}</li> : payouts.map((payout, index) => (
+                <li key={`${toUnixMs(payout.timestamp)}-${index}`}>
+                  {payout.tx_hashes[0]
+                    ? <ExplorerLink kind="tx" value={payout.tx_hashes[0]}>{formatCoins(payout.total_amount)}</ExplorerLink>
+                    : <span>{formatCoins(payout.total_amount)}</span>}
+                  <span className="home-recipients" title={t('m439')}>{POOL_ICON}<span className="sr-only">{t('m439')}: </span>{payout.recipient_count}</span>
+                  <span className="home-dim" title={timestampTitle(payout.timestamp)}>{timeAgo(payout.timestamp)}</span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </div>
+
+        <section aria-labelledby="home-chart-title">
+          <div className="home-head">
+            <h2 id="home-chart-title">{t('m404')}</h2>
+            <RangeTabs<Range> id="hashrate-ranges" options={['1h', '24h', '7d', '30d']} value={range} onChange={setRange} />
+          </div>
+          <HashrateChart data={history} range={range} theme={theme} />
+        </section>
+
+        <PoolGuide t={t} localizePath={localizePath} />
       </div>
+    </div>
+  );
+}
 
-      {payoutEta && payoutLiquidityConstrained && (<div
-          className="card"
-          style={{
-            marginTop: 18,
-            marginBottom: 24,
-            background: 'rgba(247, 180, 75, 0.12)',
-            borderColor: 'rgba(247, 180, 75, 0.45)',
-          }}
-        >
-          <div style={{ color: 'var(--text)', fontSize: 13 }}>{tx("m429", [<span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.pending_total_amount)}</span>, <span className="mono">{formatCoins(payoutShortfall)}</span>])}</div>
-        </div>)}
+interface MinerHeroProps {
+  miner: MinerResponse | null;
+  balance: MinerBalancePayload | null;
+  loading: boolean;
+  destination: SavedDestination;
+  poolInfo: InfoResponse | null;
+  insights: StatsInsightsResponse | null;
+  onForget: () => void;
+}
 
-      <div className="section">
-        <div className="section-header">
-          <h2>{t("m404")}</h2>
-          <RangeTabs<Range> id="hashrate-ranges" options={['1h', '24h', '7d', '30d']} value={range} onChange={setRange} />
+function MinerHero({ miner, balance, loading, destination, poolInfo, insights, onForget }: MinerHeroProps) {
+  const exchange = knownExchange(poolInfo, destination.address);
+  const memoAccount = !!destination.memo;
+  const who = exchange ? t('exchangeDeposit', [exchange.name]) : shortAddr(destination.address);
+  const workers = miner?.workers ?? [];
+  const lastShare = workers.reduce((latest, worker) => Math.max(latest, toUnixMs(worker.last_share_at)), 0);
+  // Exchange (memo) accounts have their own, higher minimum; the balance API reports it.
+  const accountMinimum = balance?.min_payout_amount ?? (memoAccount ? poolInfo?.memo_min_payout_amount : poolInfo?.min_payout_amount);
+  const minimum = minimumPayoutAtoms(accountMinimum);
+  const personalMinimum = memoAccount ? minimumPayoutAtoms(poolInfo?.min_payout_amount) : null;
+  const payout = balance ? heroPayout(minimum, balance.balance.pending_confirmed, balance.balance.pending_queued) : null;
+  const paid = balance?.balance.paid ?? 0;
+  const lastPayout = miner?.payouts?.[0];
+  const recentPayout = lastPayout && Date.now() - toUnixMs(lastPayout.timestamp) < RECENT_PAYOUT_MS ? lastPayout : null;
+  const nextSweepAt = insights?.payout_eta?.next_sweep_at;
+  const sweepLabel = !nextSweepAt ? null : toUnixMs(nextSweepAt) <= Date.now() ? t('dueNow') : timeUntil(nextSweepAt);
+  const paidLine = recentPayout
+    ? t('lastPayout', [formatCoins(recentPayout.amount), timeAgo(recentPayout.timestamp)])
+    : t('paidSoFar', [formatCoins(paid)]);
+
+  return (
+    <div className="home-pitch home-miner" aria-busy={loading}>
+      <p className="home-me-kicker">
+        <span>{t('yourMiner')} · <bdi dir="ltr">{who}</bdi></span>
+        <button type="button" className="home-link-button" onClick={onForget}>{t('notYou')}</button>
+      </p>
+      <h1 className="home-me-hr" dir="ltr">{miner ? humanRate(miner.hashrate) : '-'}</h1>
+      <p className="home-me-sub">
+        {miner && !workers.length
+          ? tx('noWorkersHelp', [<a key="help" href={`${localizePath('/blog/')}track-your-miner-on-bntpool/#zero-hashrate`}>{t('minerHelp')}</a>])
+          : <>{t('workersOnline', [workers.length])}{lastShare > 0 && <> · {t('lastShareAgo', [timeAgo(lastShare)])}</>}</>}
+      </p>
+
+      {payout && payout.state !== 'unavailable' && (
+        <div className="home-pay">
+          {payout.state === 'below' && <>
+            <div className="home-pay-top"><span>{t('nextPayout')}</span>
+              <span>{tx('payoutOf', [<strong key="have" dir="ltr">{formatCoinAmount(payout.confirmed)}</strong>, <bdi key="min" dir="ltr">{formatCoins(payout.minimum)}</bdi>])}</span></div>
+            <div className="home-bar"><div style={{ width: `${payout.fillPct}%` }} /></div>
+            <span className="home-pay-sub">{tx('statsPayoutRemaining', [<bdi key="left" dir="ltr">{formatExactCoins(payout.remaining)}</bdi>])} {paidLine}</span>
+          </>}
+          {payout.state === 'ready' && <>
+            <div className="home-pay-top"><span className="home-tag"><i aria-hidden="true" />{t('payoutReady')}</span>
+              <strong dir="ltr">{formatCoins(payout.amount)}</strong></div>
+            <div className="home-bar"><div style={{ width: '100%' }} /><i style={{ insetInlineStart: `${payout.minimumPct}%` }} aria-hidden="true" /></div>
+            <div className="home-bar-labels" aria-hidden="true"><span style={{ insetInlineStart: `${payout.minimumPct}%` }}>{tx('minimumTick', [<bdi key="min" dir="ltr">{formatCoins(payout.minimum)}</bdi>])}</span></div>
+            <span className="home-pay-sub">{sweepLabel ? t('payoutAtSweep', [sweepLabel]) : t('statsPayoutMet')} · {paidLine}</span>
+          </>}
+          {payout.state === 'queued' && <>
+            <div className="home-pay-top"><span className="home-tag"><i aria-hidden="true" />{t('payoutQueuedTag')}</span>
+              <strong dir="ltr">{formatCoins(payout.amount)}</strong></div>
+            <div className="home-bar"><div className="is-queued" style={{ width: '100%' }} /></div>
+            <span className="home-pay-sub">{t('payoutQueuedNote')}</span>
+          </>}
+          {personalMinimum != null && minimum != null && personalMinimum < minimum && (
+            <span className="home-pay-sub">{t('memoPersonalMinimum', [formatCoins(personalMinimum)])}</span>
+          )}
         </div>
-        <HashrateChart data={history} range={range} theme={theme} />
+      )}
+      {balance && payout?.state === 'unavailable' && <p className="home-me-sub">{t('statsPayoutBalanceUnavailable')}</p>}
+
+      <div className="home-cta">
+        <a className="home-btn" href={localizePath('/stats')}>{t('fullStats')}</a>
+        <a className="home-link" href={localizePath('/blog/') + 'estimate-blocknet-mining-rewards/#mining-calculator'}>
+          {t('rewardsCalculator')}<span aria-hidden="true"> ↗</span>
+        </a>
       </div>
-
-      <div className="section">
-        <div className="section-header">
-          <h2>{t("m430")}</h2>
-          <a href={localizePath("/luck")} className="view-all">{t("m431")}</a>
-        </div>
-        {hiddenOrphanRounds > 0 && (<div style={{ marginBottom: 12, color: 'var(--muted)', fontSize: 13 }}>{t('m609', [hiddenOrphanRounds])}</div>)}
-        <div className="card table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("m098")}</th>
-                <th>{t("m375")}</th>
-                <th>{t("m376")}</th>
-                <th>{t("typeColumn")}</th>
-                <th>{t("m006")}</th>
-                <th>{t("m435")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {!dashboardLuckHistory.length ? (<EmptyTableRow colSpan={6}>{t("m436")}</EmptyTableRow>) : (dashboardLuckHistory.map((row) => (
-                  <tr key={`${row.block_height}-${row.block_hash}`}>
-                    <td>
-                      <ExplorerLink kind="block" value={row.block_hash}>{row.block_height}</ExplorerLink>
-                    </td>
-                    <td>
-                      <span className={`round-chip ${roundToneClass(row.effort_pct)}`}>{formatPct(row.effort_pct)}</span>
-                    </td>
-                    <td>{fmtSeconds(row.duration_seconds)}</td>
-                    <td><MiningType solo={row.solo} /></td>
-                    <td>
-                      <BlockStatusBadge confirmed={row.confirmed} orphaned={row.orphaned} />
-                    </td>
-                    <td title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</td>
-                  </tr>
-                )))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-header">
-          <h2>{t("m437")}</h2>
-          <a href={localizePath("/payouts")} className="view-all">{t("m431")}</a>
-        </div>
-        <div className="card table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("m438")}</th>
-                <th>{t("m439")}</th>
-                <th>TX</th>
-                <th>{t("m006")}</th>
-                <th>{t("m377")}</th>
-              </tr>
-            </thead>
-            <tbody id="dash-payouts-body">
-              {!payouts.length ? (<EmptyTableRow colSpan={5}>{t("m440")}</EmptyTableRow>) : (payouts.map((p, idx) => (
-                  <tr key={`${toUnixMs(p.timestamp)}-${idx}`}>
-                    <td>{formatCoins(p.total_amount)}</td>
-                    <td>{p.recipient_count}</td>
-                    <td>
-                      <PayoutTxLinks hashes={p.tx_hashes} />
-                    </td>
-                    <td>
-                      <PayoutStatusBadge status={p.confirmed ? 'confirmed' : 'unconfirmed'} />
-                    </td>
-                    <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>
-                  </tr>
-                )))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <PoolGuide t={t} localizePath={localizePath} />
     </div>
   );
 }

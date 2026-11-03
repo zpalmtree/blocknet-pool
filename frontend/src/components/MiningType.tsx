@@ -1,7 +1,7 @@
 import { t } from '../i18n';
 
 // Group of miners for pool (PPLNS) work, one miner for solo.
-const POOL_ICON = (
+export const POOL_ICON = (
   <svg viewBox="0 0 16 16" aria-hidden="true">
     <circle cx="5" cy="6" r="2" />
     <circle cx="11" cy="6" r="2" />

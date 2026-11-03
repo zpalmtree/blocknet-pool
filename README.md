@@ -369,7 +369,9 @@ Daemon log stream details:
 
 ## Web UI
 
-- `GET /` (dashboard)
+- `GET /` (front page): the pool fee, Stratum address and a miner lookup for first visits; once a
+  miner has been looked up, the hero shows that miner's hashrate and progress to its own payout
+  minimum (exchange deposits use the higher memo minimum). Current Round lives on `/luck`.
 - Multi-tab WebUI includes:
   - pool + onboarding info (`/api/info`)
   - API key auth UX for protected routes
@@ -427,9 +429,10 @@ unchanged: same port, gateway, vardiff, verification, memos and payouts.
 - The API and stats page accept `solo:` lookups and show the miner's address. `GET
   /api/blocks` items and `GET /api/luck` rounds carry `solo`, `GET /api/miner/{address}`
   adds `solo_hashrate` and a `solo` flag on each worker (any solo share in the hashrate
-  window), and pending-estimate block rows carry `solo`. The blocks, luck and dashboard
-  tables show a Type column (Pool or Solo, with an icon) before Status; a miner with
-  solo work also gets it in pending estimates and the Workers table.
+  window), and pending-estimate block rows carry `solo`. The blocks and luck tables
+  show a Type column (Pool or Solo, with an icon) before Status, and the front page's
+  recent blocks show the same marker; a miner with solo work also gets it in pending
+  estimates and the Workers table.
 - Get Started has a "Mine solo" section with the `solo:` command, shown only when the
   latest seine release (`latest_miner_version` in `GET /api/info`) is newer than v0.3.1,
   because older seine versions reject the prefix. The rewards card explains the Solo
