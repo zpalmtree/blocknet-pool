@@ -430,9 +430,10 @@ unchanged: same port, gateway, vardiff, verification, memos and payouts.
   window), and pending-estimate block rows carry `solo`. The UI marks solo blocks with a
   badge on the blocks, luck and dashboard tables and in pending estimates, and marks
   solo rigs in the miner's Workers table.
-- Get Started has a "Mine solo" section with the `solo:` command, and the rewards card
-  explains the SOLO badge. Deploy it only once a seine release that accepts `solo:` is
-  out; older seine versions reject the prefix.
+- Get Started has a "Mine solo" section with the `solo:` command, shown only when the
+  latest seine release (`latest_miner_version` in `GET /api/info`) is newer than v0.3.1,
+  because older seine versions reject the prefix. The rewards card explains the SOLO
+  badge.
 
 ## Payout Safeguards
 

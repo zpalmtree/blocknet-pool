@@ -59,6 +59,7 @@ export interface InfoResponse {
   shared_exchange_addresses?: { address: string; name: string }[];
   blocks_before_payout: number;
   pplns_window_duration: string;
+  latest_miner_version?: string;
 }
 
 export interface CheckpointsResponse {

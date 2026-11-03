@@ -5,6 +5,7 @@ import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
 import { ExchangeSetup } from '../components/ExchangeSetup';
 import { SoloBadge } from '../components/BlockStatusBadge';
+import { seineSupportsSolo } from '../lib/solo';
 
 const minerSettings = [
   ['minerSettingsNvidia', '--backend nvidia'],
@@ -29,6 +30,8 @@ export function StartPage({ poolInfo }: StartPageProps) {
   const soloCommand = `./seine --pool-url ${poolUrl} --address solo:YOUR_BLOCKNET_ADDRESS`;
   const soloWindowsCommand = `.\\seine.exe --pool-url ${poolUrl} --address solo:YOUR_BLOCKNET_ADDRESS`;
   const pplnsWindowLabel = poolInfo?.pplns_window_duration;
+  // Show the solo guide once a Seine release that accepts solo: is out.
+  const soloGuide = seineSupportsSolo(poolInfo?.latest_miner_version);
 
   useEffect(() => {
     if (!copiedKey) return;
@@ -136,7 +139,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
           </table>
           <p className="quickstart-label"><a href={`${seineGuideBase}configure-seine-miner/`}>{t('minerSettingsGuide')}</a></p>
         </details>
-        <details className="command-option" id="solo-mining">
+        {soloGuide && <details className="command-option" id="solo-mining">
           <summary>{t('soloTitle')}</summary>
           <p className="quickstart-label">{t('soloLead', [poolFeeLabel])}</p>
           <p className="quickstart-label">{tx('soloHow', [<code className="mono inline-code">solo:</code>])}</p>
@@ -156,7 +159,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
           </div>
           <p className="quickstart-label">{t('soloFit')}</p>
           <p className="quickstart-label">{tx('soloTrack', [<a href={localizePath('/stats')}>{t('m005')}</a>, <code className="mono inline-code">solo:</code>])}</p>
-        </details>
+        </details>}
         <ExchangeSetup info={poolInfo} poolUrl={poolUrl} />
       </div>
 

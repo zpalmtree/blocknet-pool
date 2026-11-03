@@ -91,6 +91,7 @@ window.fetch = async (input, init) => {
 const info = {
   pool_url: 'https://bntpool.com', stratum_port: 3333, pool_fee_pct: 0, pplns_window_duration: '6h',
   min_payout_amount: 0.1, payout_memos_enabled: true, memo_min_payout_amount: 1,
+  latest_miner_version: '0.3.2',
 } as unknown as InfoResponse;
 
 function Showcase() {
