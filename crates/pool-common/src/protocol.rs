@@ -29,7 +29,10 @@ pub const CAP_SAME_TEMPLATE_REBIND_V1: &str = "same_template_rebind_v1";
 pub const CAP_SUBMIT_TIMING_V1: &str = "submit_timing_v1";
 /// The miner hashes Faraday BLAKE2b work. Required only for jobs at or past the
 /// fork height and never listed in `required_capabilities`, which older miners
-/// reject when they do not know a capability.
+/// reject when they do not know a capability. The name identifies the parameter
+/// set the pool checks shares with (`faraday::BLAKE2B_POW_PERSONAL_MAINNET`,
+/// `FARADAY_HEADER_BASE_LEN`): Seine mines with these before they are final,
+/// so a parameter change needs a new name here and in Seine.
 pub const CAP_POW_BLAKE2B_V1: &str = "pow_blake2b_v1";
 /// The pool answers `refill` requests. Never required: older miners reject
 /// required capabilities they do not know.
