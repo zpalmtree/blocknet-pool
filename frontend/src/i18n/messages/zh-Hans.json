@@ -207,8 +207,6 @@
   "m599": "份额验证问题",
   "m600": "当前保留期即将到期",
   "m606": "暂无数据",
-  "m607": "正在运行旧版本的矿工：{0}。",
-  "m608": "版本未知的矿工：{0}。",
   "m609": "仅显示标准轮次。隐藏的孤立轮次：{0}。",
   "m610": "原因：{0}。等待完全验证的临时份额：{1}。",
   "payoutUnconfirmed": "未确认",
@@ -317,5 +315,9 @@
   "lastPayout": "上次支付 {0}，{1}。",
   "payoutReady": "可以支付",
   "payoutQueuedTag": "支付已排队",
-  "fullStats": "完整统计"
+  "fullStats": "完整统计",
+  "workersOutdatedOne": "1 台矿工正在运行旧版 seine。",
+  "workersOutdatedMany": "{0} 台矿工正在运行旧版 seine。",
+  "workersUnknownOne": "1 台矿工未上报版本。",
+  "workersUnknownMany": "{0} 台矿工未上报版本。"
 }

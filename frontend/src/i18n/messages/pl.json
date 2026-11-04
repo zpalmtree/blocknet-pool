@@ -207,8 +207,6 @@
   "m599": "problem z walidacją share'a",
   "m600": "bieżący hold wygasa",
   "m606": "Brak danych",
-  "m607": "Pracownicy korzystający ze starszej wersji: {0}. ",
-  "m608": "Pracownicy o nieznanej wersji: {0}. ",
   "m609": "Wyświetlane są tylko kanoniczne rundy. Ukryte osierocone rundy: {0}.",
   "m610": " Powód: {0}. Tymczasowe udziały oczekujące na pełną weryfikację: {1}.",
   "payoutUnconfirmed": "niepotwierdzone",
@@ -317,5 +315,9 @@
   "lastPayout": "Ostatnia wypłata {0}, {1}.",
   "payoutReady": "Gotowe do wypłaty",
   "payoutQueuedTag": "Wypłata w kolejce",
-  "fullStats": "Pełne statystyki"
+  "fullStats": "Pełne statystyki",
+  "workersOutdatedOne": "1 worker korzysta ze starszej wersji seine.",
+  "workersOutdatedMany": "Starsza wersja seine działa na {0} workerach.",
+  "workersUnknownOne": "1 worker nie zgłasza wersji minera.",
+  "workersUnknownMany": "Na {0} workerach nie można ustalić wersji minera."
 }

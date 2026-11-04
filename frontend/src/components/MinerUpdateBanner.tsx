@@ -3,6 +3,12 @@ import type { MinerResponse } from '../types';
 
 const SEINE_RELEASES_URL = 'https://github.com/zpalmtree/seine/releases';
 
+// Each locale words its own singular and plural sentence, so no grammar is assembled here.
+function countSentence(count: number, one: string, many: string): string | null {
+  if (count <= 0) return null;
+  return count === 1 ? t(one) : t(many, [count]);
+}
+
 export function MinerUpdateBanner({ miner }: { miner: MinerResponse | null }) {
   const version = miner?.latest_miner_version?.trim();
   if (!version || !miner) return null;
@@ -19,7 +25,11 @@ export function MinerUpdateBanner({ miner }: { miner: MinerResponse | null }) {
       <div className="miner-update-banner__copy">
         <span className="miner-update-banner__eyebrow">{outdated ? t("m579") : t("m580")}</span>
         <h3 id="miner-update-title">{tx("m581", [<bdi dir="ltr">{version}</bdi>])}</h3>
-        <p>{tx("m586", [outdated > 0 && t('m607', [outdated]), unknown > 0 && t('m608', [unknown]), outdated ? t("m584") : t("m585")])}</p>
+        <p>{tx("m586", [
+          countSentence(outdated, 'workersOutdatedOne', 'workersOutdatedMany'),
+          countSentence(unknown, 'workersUnknownOne', 'workersUnknownMany'),
+          outdated ? t("m584") : t("m585"),
+        ])}</p>
       </div>
       <div className="miner-update-banner__actions">
         <a className="btn btn-primary" href={SEINE_RELEASES_URL} target="_blank" rel="noopener noreferrer">{tx("m587", [<span aria-hidden="true">↗</span>])}</a>

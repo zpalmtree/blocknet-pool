@@ -207,8 +207,6 @@
   "m599": "problème de validation de share",
   "m600": "l'expiration actuelle du hold",
   "m606": "Pas encore de données",
-  "m607": "Travailleurs exécutant une version plus ancienne : {0}. ",
-  "m608": "Travailleurs avec une version inconnue : {0}. ",
   "m609": "Affichage des tours canoniques uniquement. Tours orphelins masqués : {0}.",
   "m610": " Raison : {0}. Parts provisoires en attente de vérification complète : {1}.",
   "payoutUnconfirmed": "non confirmé",
@@ -317,5 +315,9 @@
   "lastPayout": "Dernier paiement {0}, {1}.",
   "payoutReady": "Prêt pour le paiement",
   "payoutQueuedTag": "Paiement en file d’attente",
-  "fullStats": "Statistiques complètes"
+  "fullStats": "Statistiques complètes",
+  "workersOutdatedOne": "1 travailleur utilise une ancienne version de seine.",
+  "workersOutdatedMany": "{0} travailleurs utilisent une ancienne version de seine.",
+  "workersUnknownOne": "1 travailleur n'indique pas sa version du mineur.",
+  "workersUnknownMany": "{0} travailleurs n'indiquent pas leur version du mineur."
 }

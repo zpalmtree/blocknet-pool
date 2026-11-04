@@ -207,8 +207,6 @@
   "m599": "share validation issue",
   "m600": "the current hold expires",
   "m606": "No data yet",
-  "m607": "Workers running an older version: {0}. ",
-  "m608": "Workers with an unknown version: {0}. ",
   "m609": "Showing canonical rounds only. Hidden orphaned rounds: {0}.",
   "m610": " Reason: {0}. Provisional shares awaiting full verification: {1}.",
   "payoutUnconfirmed": "unconfirmed",
@@ -317,5 +315,9 @@
   "lastPayout": "Last payout {0}, {1}.",
   "payoutReady": "Ready for payout",
   "payoutQueuedTag": "Payout queued",
-  "fullStats": "Full stats"
+  "fullStats": "Full stats",
+  "workersOutdatedOne": "1 worker is running an older version of seine.",
+  "workersOutdatedMany": "{0} workers are running an older version of seine.",
+  "workersUnknownOne": "1 worker isn't reporting its miner version.",
+  "workersUnknownMany": "{0} workers aren't reporting their miner version."
 }

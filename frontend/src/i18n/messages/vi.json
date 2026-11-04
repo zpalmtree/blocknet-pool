@@ -207,8 +207,6 @@
   "m599": "vấn đề xác thực share",
   "m600": "thời hạn giữ hiện tại hết hạn",
   "m606": "Chưa có dữ liệu",
-  "m607": "Các worker đang chạy phiên bản cũ: {0}. ",
-  "m608": "Các worker có phiên bản không xác định: {0}. ",
   "m609": "Chỉ hiển thị các vòng chính thức. Các vòng mồ côi bị ẩn: {0}.",
   "m610": " Lý do: {0}. Các share tạm thời chờ xác minh đầy đủ: {1}.",
   "payoutUnconfirmed": "chưa xác nhận",
@@ -317,5 +315,9 @@
   "lastPayout": "Lần thanh toán gần nhất {0}, {1}.",
   "payoutReady": "Sẵn sàng thanh toán",
   "payoutQueuedTag": "Thanh toán đang xếp hàng",
-  "fullStats": "Thống kê đầy đủ"
+  "fullStats": "Thống kê đầy đủ",
+  "workersOutdatedOne": "1 công nhân đang chạy phiên bản seine cũ.",
+  "workersOutdatedMany": "{0} công nhân đang chạy phiên bản seine cũ.",
+  "workersUnknownOne": "1 công nhân không báo cáo phiên bản miner.",
+  "workersUnknownMany": "{0} công nhân không báo cáo phiên bản miner."
 }

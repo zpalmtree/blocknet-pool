@@ -207,8 +207,6 @@
   "m599": "masalah validasi share",
   "m600": "hold saat ini kedaluwarsa",
   "m606": "Belum ada data",
-  "m607": "Worker menjalankan versi lama: {0}. ",
-  "m608": "Worker dengan versi tidak diketahui: {0}. ",
   "m609": "Menampilkan hanya round kanonik. Round yatim tersembunyi: {0}.",
   "m610": " Alasan: {0}. Share sementara menunggu verifikasi penuh: {1}.",
   "payoutUnconfirmed": "belum dikonfirmasi",
@@ -317,5 +315,9 @@
   "lastPayout": "Pembayaran terakhir {0}, {1}.",
   "payoutReady": "Siap dibayar",
   "payoutQueuedTag": "Pembayaran dalam antrean",
-  "fullStats": "Statistik lengkap"
+  "fullStats": "Statistik lengkap",
+  "workersOutdatedOne": "1 worker menjalankan versi seine yang lebih lama.",
+  "workersOutdatedMany": "{0} worker menjalankan versi seine yang lebih lama.",
+  "workersUnknownOne": "1 worker tidak melaporkan versi miner.",
+  "workersUnknownMany": "{0} worker tidak melaporkan versi miner."
 }

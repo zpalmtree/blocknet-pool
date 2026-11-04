@@ -207,8 +207,6 @@
   "m599": "股份驗證問題",
   "m600": "目前的保留期將到期",
   "m606": "尚無數據",
-  "m607": "運行舊版本的工作者：{0}。",
-  "m608": "版本未知的工作者：{0}。",
   "m609": "僅顯示正規輪次。隱藏的孤兒輪次：{0}。",
   "m610": "原因：{0}。等待完整驗證的暫定股份：{1}。",
   "payoutUnconfirmed": "未確認",
@@ -317,5 +315,9 @@
   "lastPayout": "上次支付 {0}，{1}。",
   "payoutReady": "可以支付",
   "payoutQueuedTag": "支付已排隊",
-  "fullStats": "完整統計"
+  "fullStats": "完整統計",
+  "workersOutdatedOne": "1 個工作節點正在執行舊版 seine。",
+  "workersOutdatedMany": "{0} 個工作節點正在執行舊版 seine。",
+  "workersUnknownOne": "1 個工作節點未回報版本。",
+  "workersUnknownMany": "{0} 個工作節點未回報版本。"
 }

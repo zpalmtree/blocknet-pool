@@ -207,8 +207,6 @@
   "m599": "problema di validazione della share",
   "m600": "la ritenzione corrente scade",
   "m606": "Nessun dato disponibile",
-  "m607": "Worker che eseguono una versione precedente: {0}. ",
-  "m608": "Worker con versione sconosciuta: {0}. ",
   "m609": "Mostrando solo round canonici. Round orfani nascosti: {0}.",
   "m610": " Motivo: {0}. Share provvisorie in attesa di verifica completa: {1}.",
   "payoutUnconfirmed": "non confermato",
@@ -317,5 +315,9 @@
   "lastPayout": "Ultimo pagamento {0}, {1}.",
   "payoutReady": "Pronto per il pagamento",
   "payoutQueuedTag": "Pagamento in coda",
-  "fullStats": "Statistiche complete"
+  "fullStats": "Statistiche complete",
+  "workersOutdatedOne": "1 worker usa una versione precedente di seine.",
+  "workersOutdatedMany": "{0} worker usano una versione precedente di seine.",
+  "workersUnknownOne": "1 worker non comunica la versione del miner.",
+  "workersUnknownMany": "{0} worker non comunicano la versione del miner."
 }

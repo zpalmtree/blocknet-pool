@@ -207,8 +207,6 @@
   "m599": "쉐어 검증 문제",
   "m600": "현재 홀드 만료",
   "m606": "데이터 없음",
-  "m607": "구버전을 실행 중인 워커: {0}. ",
-  "m608": "버전이 알려지지 않은 워커: {0}. ",
   "m609": "정규 라운드만 표시 중. 숨겨진 고아 라운드: {0}.",
   "m610": " 이유: {0}. 전체 검증 대기 중인 임시 셰어: {1}.",
   "payoutUnconfirmed": "미확인",
@@ -317,5 +315,9 @@
   "lastPayout": "마지막 지급 {0}, {1}.",
   "payoutReady": "지급 준비 완료",
   "payoutQueuedTag": "지급 대기 중",
-  "fullStats": "전체 통계"
+  "fullStats": "전체 통계",
+  "workersOutdatedOne": "워커 1대가 이전 버전의 seine을 실행 중입니다.",
+  "workersOutdatedMany": "워커 {0}대가 이전 버전의 seine을 실행 중입니다.",
+  "workersUnknownOne": "워커 1대가 마이너 버전을 보고하지 않습니다.",
+  "workersUnknownMany": "워커 {0}대가 마이너 버전을 보고하지 않습니다."
 }

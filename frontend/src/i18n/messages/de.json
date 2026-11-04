@@ -207,8 +207,6 @@
   "m599": "Problem bei der Share-Validierung",
   "m600": "die aktuelle Haltefrist abläuft",
   "m606": "Noch keine Daten",
-  "m607": "Worker mit einer älteren Version: {0}. ",
-  "m608": "Worker mit unbekannter Version: {0}. ",
   "m609": "Es werden nur Runden der Hauptkette angezeigt. Ausgeblendete verwaiste Runden: {0}.",
   "m610": " Grund: {0}. Vorläufige Shares, deren vollständige Prüfung noch aussteht: {1}.",
   "payoutUnconfirmed": "unbestätigt",
@@ -317,5 +315,9 @@
   "lastPayout": "Letzte Auszahlung {0}, {1}.",
   "payoutReady": "Bereit zur Auszahlung",
   "payoutQueuedTag": "Auszahlung vorgemerkt",
-  "fullStats": "Alle Statistiken"
+  "fullStats": "Alle Statistiken",
+  "workersOutdatedOne": "1 Worker nutzt eine ältere seine-Version.",
+  "workersOutdatedMany": "{0} Worker nutzen eine ältere seine-Version.",
+  "workersUnknownOne": "1 Worker meldet keine Miner-Version.",
+  "workersUnknownMany": "{0} Worker melden keine Miner-Version."
 }

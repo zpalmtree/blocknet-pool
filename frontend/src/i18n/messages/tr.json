@@ -207,8 +207,6 @@
   "m599": "pay doğrulama sorunu",
   "m600": "mevcut bekleme süresi doluyor",
   "m606": "Henüz veri yok",
-  "m607": "Eski bir sürüm çalıştıran işçiler: {0}. ",
-  "m608": "Sürümü bilinmeyen işçiler: {0}. ",
   "m609": "Yalnızca kanonik turlar gösteriliyor. Gizli yetim turlar: {0}.",
   "m610": " Neden: {0}. Tam doğrulama bekleyen geçici paylar: {1}.",
   "payoutUnconfirmed": "onaylanmamış",
@@ -317,5 +315,9 @@
   "lastPayout": "Son ödeme {0}, {1}.",
   "payoutReady": "Ödemeye hazır",
   "payoutQueuedTag": "Ödeme sırada",
-  "fullStats": "Tüm istatistikler"
+  "fullStats": "Tüm istatistikler",
+  "workersOutdatedOne": "1 çalışan eski bir seine sürümü kullanıyor.",
+  "workersOutdatedMany": "{0} çalışan eski bir seine sürümü kullanıyor.",
+  "workersUnknownOne": "1 çalışan madencilik yazılımı sürümünü bildirmiyor.",
+  "workersUnknownMany": "{0} çalışan madencilik yazılımı sürümünü bildirmiyor."
 }
