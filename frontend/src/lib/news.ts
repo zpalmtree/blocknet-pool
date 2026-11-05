@@ -5,6 +5,8 @@ export interface NewsItem {
   date: string;
   titleKey: string;
   bodyKey: string;
+  /** One short sentence for the news strip under the menu. */
+  shortKey: string;
   linkKey: string;
   href: string;
   /** The tab this item announces; it carries a "new" dot until opened. */
@@ -14,19 +16,17 @@ export interface NewsItem {
 export type Feature = 'settings';
 
 export const NEWS: readonly NewsItem[] = [
-  { date: '2026-11-04', titleKey: 'newsSettingsTitle', bodyKey: 'newsSettingsBody', linkKey: 'newsSettingsLink',
+  { date: '2026-11-04', titleKey: 'newsSettingsTitle', bodyKey: 'newsSettingsBody', shortKey: 'newsSettingsShort', linkKey: 'newsSettingsLink',
     href: '/stats#settings', feature: 'settings' },
-  { date: '2026-11-04', titleKey: 'newsSoloTitle', bodyKey: 'newsSoloBody', linkKey: 'newsSoloLink',
+  { date: '2026-11-04', titleKey: 'newsSoloTitle', bodyKey: 'newsSoloBody', shortKey: 'newsSoloShort', linkKey: 'newsSoloLink',
     href: '/blog/solo-mine-blocknet-on-bntpool/' },
-  { date: '2026-11-02', titleKey: 'newsMinPayoutTitle', bodyKey: 'newsMinPayoutBody', linkKey: 'newsMinPayoutLink',
+  { date: '2026-11-02', titleKey: 'newsMinPayoutTitle', bodyKey: 'newsMinPayoutBody', shortKey: 'newsMinPayoutShort', linkKey: 'newsMinPayoutLink',
     href: '/info#minimum-payout' },
 ];
 
 const DAY_MS = 86_400_000;
-/** Days an item stays on the front page and keeps its "New" marks. */
+/** Days an item stays in the news strip and keeps its "New" marks. */
 export const NEWS_FRESH_DAYS = 30;
-/** Most items the front page lists at once. */
-export const FRONT_PAGE_LIMIT = 3;
 
 const DISMISSED_KEY = 'pool_news_dismissed_v1';
 const SEEN_KEY = (feature: Feature) => `pool_news_seen_${feature}_v1`;
@@ -46,14 +46,13 @@ export function publishedNews(now = Date.now(), items: readonly NewsItem[] = NEW
 }
 
 /**
- * Items for the front page: fresh ones published after the day the visitor last dismissed the
- * section, newest first, at most FRONT_PAGE_LIMIT.
+ * The item the news strip shows: the newest fresh one published after the day the visitor last
+ * dismissed the strip, or null.
  */
-export function frontPageNews(now = Date.now(), dismissedThrough: string | null = readDismissed(),
-  items: readonly NewsItem[] = NEWS): NewsItem[] {
+export function stripNews(now = Date.now(), dismissedThrough: string | null = readDismissed(),
+  items: readonly NewsItem[] = NEWS): NewsItem | null {
   return publishedNews(now, items)
-    .filter((item) => isFresh(item, now) && (dismissedThrough == null || item.date > dismissedThrough))
-    .slice(0, FRONT_PAGE_LIMIT);
+    .find((item) => isFresh(item, now) && (dismissedThrough == null || item.date > dismissedThrough)) ?? null;
 }
 
 function storageGet(key: string): string | null {
@@ -77,10 +76,9 @@ function readDismissed(): string | null {
   return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
 
-/** Hides everything currently shown; a later item brings the section back. */
-export function dismissFrontPageNews(shown: readonly NewsItem[]) {
-  const newest = shown.reduce<string | null>((latest, item) => (latest == null || item.date > latest ? item.date : latest), null);
-  if (newest) storageSet(DISMISSED_KEY, newest);
+/** Hides the strip until an item newer than the dismissed one is published. */
+export function dismissStripNews(item: NewsItem) {
+  storageSet(DISMISSED_KEY, item.date);
 }
 
 /** Whether a tab should carry the "new" dot: a fresh item announces it and it hasn't been opened since. */

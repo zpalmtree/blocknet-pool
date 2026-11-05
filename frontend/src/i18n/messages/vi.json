@@ -406,11 +406,14 @@
   "newsEmpty": "Chưa có tin nào.",
   "newsSettingsTitle": "Cài đặt trong Thống kê của tôi",
   "newsSettingsBody": "Khóa tài khoản bằng mật khẩu, rồi tự chọn mức thanh toán tối thiểu, đào solo theo mặc định hoặc ẩn tên worker khỏi các trang công khai.",
+  "newsSettingsShort": "Mật khẩu, thanh toán tối thiểu, mặc định đào solo và ẩn tên worker.",
   "newsSettingsLink": "Mở Thống kê của tôi",
   "newsSoloTitle": "Đào solo",
   "newsSoloBody": "Thêm {0} trước địa chỉ của bạn trong seine v0.3.1 trở lên và giữ toàn bộ phần thưởng của mỗi khối máy đào của bạn tìm thấy. Không cần chạy node.",
+  "newsSoloShort": "Giữ toàn bộ phần thưởng của mỗi khối máy đào của bạn tìm thấy.",
   "newsSoloLink": "Hướng dẫn đào solo",
   "newsMinPayoutTitle": "Thanh toán tối thiểu 1 BNT",
   "newsMinPayoutBody": "Thanh toán giờ bắt đầu từ 1 BNT vào ví của bạn, hoặc 10 BNT vào địa chỉ nạp của sàn.",
+  "newsMinPayoutShort": "Thanh toán giờ bắt đầu từ 1 BNT.",
   "newsMinPayoutLink": "Cách bạn được thanh toán"
 }

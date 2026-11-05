@@ -406,11 +406,14 @@
   "newsEmpty": "Henüz haber yok.",
   "newsSettingsTitle": "İstatistiklerim'de ayarlar",
   "newsSettingsBody": "Hesabınızı bir şifreyle kilitleyin, ardından kendi minimum ödemenizi seçin, varsayılan olarak solo kazın ya da worker adlarınızı herkese açık sayfalarda gizleyin.",
+  "newsSettingsShort": "Şifre, minimum ödeme, varsayılan solo ve gizli worker adları.",
   "newsSettingsLink": "İstatistiklerim'i aç",
   "newsSoloTitle": "Solo madencilik",
   "newsSoloBody": "seine v0.3.1 veya daha yenisinde adresinizin önüne {0} ekleyin ve rig'lerinizin bulduğu her bloğun ödülünün tamamını alın. Düğüm çalıştırmanız gerekmez.",
+  "newsSoloShort": "Rig'lerinizin bulduğu her bloğun ödülünün tamamını alın.",
   "newsSoloLink": "Solo madencilik rehberi",
   "newsMinPayoutTitle": "1 BNT minimum ödeme",
   "newsMinPayoutBody": "Ödemeler artık kendi cüzdanınıza 1 BNT'den, bir borsa yatırma adresine ise 10 BNT'den başlıyor.",
+  "newsMinPayoutShort": "Ödemeler artık 1 BNT'den başlıyor.",
   "newsMinPayoutLink": "Nasıl ödeme alırsınız"
 }

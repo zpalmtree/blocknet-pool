@@ -406,11 +406,14 @@
   "newsEmpty": "尚無動態。",
   "newsSettingsTitle": "我的統計新增設定",
   "newsSettingsBody": "用密碼鎖定帳戶後，可以自選最低派款、預設單人挖礦，或在公開頁面隱藏礦機名稱。",
+  "newsSettingsShort": "密碼、最低派款、預設單人挖礦和隱藏礦機名稱。",
   "newsSettingsLink": "開啟我的統計",
   "newsSoloTitle": "單人挖礦",
   "newsSoloBody": "在 seine v0.3.1 或更新版本中，在地址前加上 {0}，您的礦機找到的每個區塊的全部獎勵都歸您。無需執行節點。",
+  "newsSoloShort": "您的礦機找到的每個區塊的全部獎勵都歸您。",
   "newsSoloLink": "單人挖礦指南",
   "newsMinPayoutTitle": "最低派款 1 BNT",
   "newsMinPayoutBody": "現在派款到您自己的錢包最低 1 BNT，派款到交易所入金地址最低 10 BNT。",
+  "newsMinPayoutShort": "現在最低 1 BNT 即可派款。",
   "newsMinPayoutLink": "派款方式"
 }
