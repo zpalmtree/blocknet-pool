@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from '../../src/App';
 import { initializeLanguage } from '../../src/i18n';
 import { applyTheme } from '../../src/lib/theme';
+import { DISMISSED_KEY, NEWS } from '../../src/lib/news';
 import type { BlockItem, CheckpointsResponse, InfoResponse, LuckRound, MinerResponse, PayoutItem } from '../../src/types';
 import '../../src/styles.css';
 
@@ -38,9 +39,9 @@ applyTheme(theme);
 // Pool news: `news=on` shows the recent items and the Settings tab dot as a first-time visitor
 // sees them; otherwise every state shows the page as it looks once the news is dismissed.
 const newsOn = params.get('news') === 'on';
-for (const key of ['pool_news_dismissed_v1', 'pool_news_seen_settings_v1']) {
+for (const key of [DISMISSED_KEY, 'pool_news_seen_settings_v1']) {
   if (newsOn) localStorage.removeItem(key);
-  else localStorage.setItem(key, '9999-12-31');
+  else localStorage.setItem(key, key === DISMISSED_KEY ? JSON.stringify(NEWS.map((item) => item.titleKey)) : '9999-12-31');
 }
 
 const WALLET = 'demo-miner-not-a-real-wallet';
