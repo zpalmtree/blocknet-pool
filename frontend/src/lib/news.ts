@@ -46,11 +46,17 @@ export function publishedNews(now = Date.now(), items: readonly NewsItem[] = NEW
   return items.filter((item) => newsTime(item) <= now);
 }
 
-/** The items the news strip shows: fresh ones the visitor hasn't dismissed, newest first, at most STRIP_LIMIT. */
+/**
+ * The items the news strip shows: fresh ones the visitor hasn't dismissed and that aren't older than
+ * the newest dismissed item, newest first, at most STRIP_LIMIT. Dismissing never brings older news up.
+ */
 export function stripNews(now = Date.now(), dismissed: readonly string[] = readDismissed(),
   items: readonly NewsItem[] = NEWS): NewsItem[] {
+  const newestDismissed = items.reduce<string | null>((latest, item) =>
+    dismissed.includes(item.titleKey) && (latest == null || item.date > latest) ? item.date : latest, null);
   return publishedNews(now, items)
-    .filter((item) => isFresh(item, now) && !dismissed.includes(item.titleKey))
+    .filter((item) => isFresh(item, now) && !dismissed.includes(item.titleKey)
+      && (newestDismissed == null || item.date >= newestDismissed))
     .slice(0, STRIP_LIMIT);
 }
 
@@ -80,12 +86,13 @@ function readDismissed(): string[] {
 }
 
 /**
- * Hides every item the strip shows; items published later still appear. Keys of items no longer
- * in the catalog are dropped so the list stays short.
+ * Hides every item published so far, shown or not; only items published later appear. Keys of items
+ * no longer in the catalog are dropped so the list stays short.
  */
-export function dismissStripNews(shown: readonly NewsItem[]) {
-  const known = new Set(NEWS.map((item) => item.titleKey));
-  const keys = new Set([...readDismissed().filter((key) => known.has(key)), ...shown.map((item) => item.titleKey)]);
+export function dismissStripNews(now = Date.now(), items: readonly NewsItem[] = NEWS) {
+  const known = new Set(items.map((item) => item.titleKey));
+  const keys = new Set([...readDismissed().filter((key) => known.has(key)),
+    ...publishedNews(now, items).map((item) => item.titleKey)]);
   storageSet(DISMISSED_KEY, JSON.stringify([...keys]));
 }
 
