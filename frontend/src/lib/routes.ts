@@ -6,6 +6,7 @@ const ROUTES = {
   dashboard: ['/', 'm399'],
   start: ['/start', 'm611'],
   info: ['/info', 'infoTitle'],
+  news: ['/news', 'newsTitle'],
   checkpoints: ['/checkpoints', 'm612'],
   luck: ['/luck', 'm613'],
   blocks: ['/blocks', 'm614'],

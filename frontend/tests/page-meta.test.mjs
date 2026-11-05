@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { metadataForPath } from '../src/lib/page-meta.ts';
 
 test('each public route has distinct metadata and a normalized canonical', () => {
-  const paths = ['/', '/start', '/blocks', '/payouts', '/info', '/stats', '/luck', '/checkpoints'];
+  const paths = ['/', '/start', '/blocks', '/payouts', '/info', '/news', '/stats', '/luck', '/checkpoints'];
   const titles = new Set(), descriptions = new Set();
   for (const path of paths) {
     const meta = metadataForPath(path === '/' ? path : path + '/', 'https://bntpool.com');

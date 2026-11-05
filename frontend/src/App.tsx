@@ -15,6 +15,7 @@ import { LuckPage } from './pages/LuckPage';
 import { PayoutsPage } from './pages/PayoutsPage';
 import { StartPage } from './pages/StartPage';
 import { InfoPage } from './pages/InfoPage';
+import { NewsPage } from './components/News';
 import { AdminPage, StatsPage, WalletPage, PageBoundary, preloadPage } from './components/DeferredPages';
 import type { InfoResponse, Route } from './types';
 
@@ -27,8 +28,10 @@ export function App() {
     { route: 'payouts', label: t("m004") },
     { route: 'info', label: t('infoNav') },
   ];
-  // Node operators and the pool operator need these, miners rarely do.
+  // The news archive (the front page shows recent items), then pages node operators and the
+  // pool operator need and miners rarely do.
   const FOOTER_ITEMS: { route: Route; label: string }[] = [
+    { route: 'news', label: t('newsNav') },
     { route: 'checkpoints', label: t("m007") },
     { route: 'admin', label: t("m008") },
   ];
@@ -194,6 +197,8 @@ export function App() {
     currentPage = <WalletPage />;
   } else if (route === 'start') {
     currentPage = <StartPage poolInfo={poolInfo} />;
+  } else if (route === 'news') {
+    currentPage = <NewsPage />;
   } else if (route === 'info') {
     currentPage = <InfoPage poolInfo={poolInfo} />;
   } else if (route === 'checkpoints') {

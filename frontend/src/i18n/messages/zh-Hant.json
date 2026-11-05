@@ -396,5 +396,21 @@
   "settingsError": "設定暫時無法使用。請稍後再試。",
   "settingsMinPayoutInvalid": "請輸入 {0} 至 {1} BNT 之間的最低派款。",
   "settingsAlreadyClaimed": "剛剛有人設定了密碼。請輸入該密碼，或透過礦機收回此地址。",
-  "settingsLockedAgain": "設定已重新鎖定。解鎖後才能儲存。"
+  "settingsLockedAgain": "設定已重新鎖定。解鎖後才能儲存。",
+  "newsNav": "最新動態",
+  "newsTitle": "bntpool.com 最新動態",
+  "newsDescription": "Blocknet 礦池 bntpool.com 的新功能與變更，最新的排在前面：單人挖礦、礦工設定、派款等。",
+  "newsAll": "全部動態",
+  "newsDismiss": "隱藏動態",
+  "newsNew": "新",
+  "newsEmpty": "尚無動態。",
+  "newsSettingsTitle": "我的統計新增設定",
+  "newsSettingsBody": "用密碼鎖定帳戶後，可以自選最低派款、預設單人挖礦，或在公開頁面隱藏礦機名稱。",
+  "newsSettingsLink": "開啟我的統計",
+  "newsSoloTitle": "單人挖礦",
+  "newsSoloBody": "在 seine v0.3.1 或更新版本中，在地址前加上 {0}，您的礦機找到的每個區塊的全部獎勵都歸您。無需執行節點。",
+  "newsSoloLink": "單人挖礦指南",
+  "newsMinPayoutTitle": "最低派款 1 BNT",
+  "newsMinPayoutBody": "現在派款到您自己的錢包最低 1 BNT，派款到交易所入金地址最低 10 BNT。",
+  "newsMinPayoutLink": "派款方式"
 }

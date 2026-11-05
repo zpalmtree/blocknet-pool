@@ -396,5 +396,21 @@
   "settingsError": "Ayarlar şu anda kullanılamıyor. Birazdan tekrar deneyin.",
   "settingsMinPayoutInvalid": "{0} ile {1} BNT arasında bir minimum ödeme girin.",
   "settingsAlreadyClaimed": "Biri az önce bir şifre belirledi. Şifreyi girin ya da adresi bir rig ile geri alın.",
-  "settingsLockedAgain": "Ayarlar yeniden kilitlendi. Kaydetmek için kilidi açın."
+  "settingsLockedAgain": "Ayarlar yeniden kilitlendi. Kaydetmek için kilidi açın.",
+  "newsNav": "Yenilikler",
+  "newsTitle": "bntpool.com'daki yenilikler",
+  "newsDescription": "Blocknet madencilik havuzu bntpool.com'daki yeni özellikler ve değişiklikler, en yenisi önce: solo madencilik, madenci ayarları, ödemeler ve daha fazlası.",
+  "newsAll": "Tüm haberler",
+  "newsDismiss": "Haberleri gizle",
+  "newsNew": "Yeni",
+  "newsEmpty": "Henüz haber yok.",
+  "newsSettingsTitle": "İstatistiklerim'de ayarlar",
+  "newsSettingsBody": "Hesabınızı bir şifreyle kilitleyin, ardından kendi minimum ödemenizi seçin, varsayılan olarak solo kazın ya da worker adlarınızı herkese açık sayfalarda gizleyin.",
+  "newsSettingsLink": "İstatistiklerim'i aç",
+  "newsSoloTitle": "Solo madencilik",
+  "newsSoloBody": "seine v0.3.1 veya daha yenisinde adresinizin önüne {0} ekleyin ve rig'lerinizin bulduğu her bloğun ödülünün tamamını alın. Düğüm çalıştırmanız gerekmez.",
+  "newsSoloLink": "Solo madencilik rehberi",
+  "newsMinPayoutTitle": "1 BNT minimum ödeme",
+  "newsMinPayoutBody": "Ödemeler artık kendi cüzdanınıza 1 BNT'den, bir borsa yatırma adresine ise 10 BNT'den başlıyor.",
+  "newsMinPayoutLink": "Nasıl ödeme alırsınız"
 }

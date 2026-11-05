@@ -396,5 +396,21 @@
   "settingsError": "Instellingen zijn nu niet beschikbaar. Probeer het zo opnieuw.",
   "settingsMinPayoutInvalid": "Voer een minimale uitbetaling in van {0} tot {1} BNT.",
   "settingsAlreadyClaimed": "Iemand heeft zojuist een wachtwoord ingesteld. Voer het in of haal het adres terug via een rig.",
-  "settingsLockedAgain": "Instellingen weer vergrendeld. Ontgrendel ze om op te slaan."
+  "settingsLockedAgain": "Instellingen weer vergrendeld. Ontgrendel ze om op te slaan.",
+  "newsNav": "Nieuw",
+  "newsTitle": "Nieuw op bntpool.com",
+  "newsDescription": "Nieuwe functies en wijzigingen in de Blocknet-miningpool bntpool.com, nieuwste eerst: solo-minen, minerinstellingen, uitbetalingen en meer.",
+  "newsAll": "Al het nieuws",
+  "newsDismiss": "Nieuws verbergen",
+  "newsNew": "Nieuw",
+  "newsEmpty": "Nog geen nieuws.",
+  "newsSettingsTitle": "Instellingen in Mijn statistieken",
+  "newsSettingsBody": "Beveilig je account met een wachtwoord en kies daarna je eigen minimale uitbetaling, standaard solo-minen of verberg je workernamen op openbare pagina's.",
+  "newsSettingsLink": "Mijn statistieken openen",
+  "newsSoloTitle": "Solo-minen",
+  "newsSoloBody": "Zet {0} voor je adres in seine v0.3.1 of nieuwer en houd de volledige beloning van elk blok dat je rigs vinden. Geen eigen node nodig.",
+  "newsSoloLink": "Gids voor solo-minen",
+  "newsMinPayoutTitle": "Minimale uitbetaling van 1 BNT",
+  "newsMinPayoutBody": "Uitbetalingen beginnen nu bij 1 BNT naar je eigen wallet, of bij 10 BNT naar een stortingsadres van een exchange.",
+  "newsMinPayoutLink": "Zo word je betaald"
 }

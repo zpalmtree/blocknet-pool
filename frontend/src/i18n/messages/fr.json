@@ -396,5 +396,21 @@
   "settingsError": "Les paramètres sont indisponibles pour le moment. Réessayez dans un instant.",
   "settingsMinPayoutInvalid": "Saisissez un paiement minimum de {0} à {1} BNT.",
   "settingsAlreadyClaimed": "Quelqu’un vient de définir un mot de passe. Saisissez-le ou récupérez l’adresse depuis une machine.",
-  "settingsLockedAgain": "Paramètres de nouveau verrouillés. Déverrouillez-les pour enregistrer."
+  "settingsLockedAgain": "Paramètres de nouveau verrouillés. Déverrouillez-les pour enregistrer.",
+  "newsNav": "Nouveautés",
+  "newsTitle": "Nouveautés sur bntpool.com",
+  "newsDescription": "Nouvelles fonctions et changements du pool de minage Blocknet bntpool.com, les plus récents d’abord : minage solo, réglages du mineur, paiements et plus.",
+  "newsAll": "Toutes les nouveautés",
+  "newsDismiss": "Masquer les nouveautés",
+  "newsNew": "Nouveau",
+  "newsEmpty": "Aucune nouveauté pour l’instant.",
+  "newsSettingsTitle": "Paramètres dans Mes statistiques",
+  "newsSettingsBody": "Protégez votre compte par un mot de passe, puis choisissez votre propre paiement minimum, le minage solo par défaut ou masquez les noms de vos workers sur les pages publiques.",
+  "newsSettingsLink": "Ouvrir Mes statistiques",
+  "newsSoloTitle": "Minage solo",
+  "newsSoloBody": "Ajoutez {0} devant votre adresse dans seine v0.3.1 ou plus récent et gardez la récompense entière de chaque bloc trouvé par vos machines. Aucun nœud à faire tourner.",
+  "newsSoloLink": "Guide du minage solo",
+  "newsMinPayoutTitle": "Paiement minimum de 1 BNT",
+  "newsMinPayoutBody": "Les paiements commencent désormais à 1 BNT vers votre propre portefeuille, ou à 10 BNT vers un dépôt sur une plateforme d’échange.",
+  "newsMinPayoutLink": "Comment vous êtes payé"
 }

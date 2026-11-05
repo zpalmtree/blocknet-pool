@@ -396,5 +396,21 @@
   "settingsError": "设置暂时不可用。请稍后重试。",
   "settingsMinPayoutInvalid": "请输入 {0} 至 {1} BNT 之间的最低付款额。",
   "settingsAlreadyClaimed": "刚刚有人设置了密码。请输入该密码，或通过矿机收回此地址。",
-  "settingsLockedAgain": "设置已重新锁定。解锁后才能保存。"
+  "settingsLockedAgain": "设置已重新锁定。解锁后才能保存。",
+  "newsNav": "最新动态",
+  "newsTitle": "bntpool.com 最新动态",
+  "newsDescription": "Blocknet 矿池 bntpool.com 的新功能和变更，最新的排在前面：单人挖矿、矿工设置、付款等。",
+  "newsAll": "全部动态",
+  "newsDismiss": "隐藏动态",
+  "newsNew": "新",
+  "newsEmpty": "暂无动态。",
+  "newsSettingsTitle": "我的统计新增设置",
+  "newsSettingsBody": "用密码锁定账户后，可以自选最低付款额、默认单人挖矿，或在公开页面隐藏矿机名称。",
+  "newsSettingsLink": "打开我的统计",
+  "newsSoloTitle": "单人挖矿",
+  "newsSoloBody": "在 seine v0.3.1 或更高版本中，在地址前加上 {0}，您的矿机找到的每个区块的全部奖励都归您。无需运行节点。",
+  "newsSoloLink": "单人挖矿指南",
+  "newsMinPayoutTitle": "最低付款额 1 BNT",
+  "newsMinPayoutBody": "现在付款到您自己的钱包最低 1 BNT，付款到交易所充值地址最低 10 BNT。",
+  "newsMinPayoutLink": "付款方式"
 }

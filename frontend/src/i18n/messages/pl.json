@@ -396,5 +396,21 @@
   "settingsError": "Ustawienia są teraz niedostępne. Spróbuj ponownie za chwilę.",
   "settingsMinPayoutInvalid": "Wpisz minimalną wypłatę od {0} do {1} BNT.",
   "settingsAlreadyClaimed": "Ktoś przed chwilą ustawił hasło. Wpisz je albo odzyskaj adres przez koparkę.",
-  "settingsLockedAgain": "Ustawienia znów zablokowane. Odblokuj je, aby zapisać."
+  "settingsLockedAgain": "Ustawienia znów zablokowane. Odblokuj je, aby zapisać.",
+  "newsNav": "Co nowego",
+  "newsTitle": "Co nowego na bntpool.com",
+  "newsDescription": "Nowe funkcje i zmiany w puli wydobywczej Blocknet bntpool.com, od najnowszych: kopanie solo, ustawienia górnika, wypłaty i nie tylko.",
+  "newsAll": "Wszystkie wiadomości",
+  "newsDismiss": "Ukryj wiadomości",
+  "newsNew": "Nowe",
+  "newsEmpty": "Nie ma jeszcze wiadomości.",
+  "newsSettingsTitle": "Ustawienia w Moich statystykach",
+  "newsSettingsBody": "Zabezpiecz konto hasłem, a potem wybierz własną minimalną wypłatę, domyślne kopanie solo albo ukryj nazwy swoich workerów na stronach publicznych.",
+  "newsSettingsLink": "Otwórz Moje statystyki",
+  "newsSoloTitle": "Kopanie solo",
+  "newsSoloBody": "Dodaj {0} przed adresem w seine v0.3.1 lub nowszym i zatrzymaj całą nagrodę za każdy blok znaleziony przez twoje koparki. Bez własnego węzła.",
+  "newsSoloLink": "Poradnik kopania solo",
+  "newsMinPayoutTitle": "Minimalna wypłata 1 BNT",
+  "newsMinPayoutBody": "Wypłaty zaczynają się teraz od 1 BNT na własny portfel albo od 10 BNT na depozyt giełdowy.",
+  "newsMinPayoutLink": "Jak otrzymujesz wypłaty"
 }

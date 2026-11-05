@@ -1,3 +1,4 @@
+import { NewsSection } from '../components/News';
 import { t, tx, localizePath, locale } from '../i18n';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -266,6 +267,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
       </section>
 
       <div className="home-body">
+        <NewsSection />
         {!showMiner && (
           <section aria-labelledby="home-steps-title">
             <div className="home-head"><h2 id="home-steps-title">{t('m450')}</h2><a href={localizePath('/start')}>{t('setupGuide')}</a></div>
