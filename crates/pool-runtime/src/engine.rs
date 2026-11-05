@@ -1419,7 +1419,6 @@ impl PoolEngine {
             });
             result.min_payout_atomic = Some(crate::miner_settings::effective_min_payout(
                 atomic(self.cfg().payout_minimum(address)),
-                atomic(self.cfg().payout_floor()),
                 chosen,
             ));
         }
@@ -7909,7 +7908,7 @@ mod tests {
     }
 
     #[test]
-    fn exchange_logins_report_a_minimum_chosen_below_the_exchange_default() {
+    fn exchange_logins_report_a_chosen_minimum_but_never_below_the_exchange_floor() {
         let Some(store) = crate::store::PoolStore::test_store() else {
             return;
         };
@@ -7934,28 +7933,40 @@ mod tests {
         ];
         let address = test_miner_address();
         let chosen = engine
+            .prepare_payout_destination(&address, Some("HIGH001"), &caps)
+            .unwrap();
+        let too_low = engine
             .prepare_payout_destination(&address, Some("LOW001"), &caps)
             .unwrap();
         let untouched = engine
             .prepare_payout_destination(&address, Some("DEF001"), &caps)
             .unwrap();
         let now = SystemTime::now();
-        assert!(store
-            .claim_miner_settings(&chosen, "hash", "203.0.113.1", now)
-            .unwrap());
-        assert!(store
-            .update_miner_settings(
-                &chosen,
-                (Some("hash"), "203.0.113.1"),
-                &crate::miner_settings::MinerSettings {
-                    min_payout: Some(200_000_000),
-                    ..Default::default()
-                },
-                now,
-            )
-            .unwrap());
-        let ack = engine.login("low", chosen, "rig", 2, caps.clone()).unwrap();
-        assert_eq!(ack.min_payout_atomic, Some(200_000_000));
+        for (account, minimum) in [(&chosen, 2_000_000_000), (&too_low, 200_000_000)] {
+            assert!(store
+                .claim_miner_settings(account, "hash", "203.0.113.1", now)
+                .unwrap());
+            assert!(store
+                .update_miner_settings(
+                    account,
+                    (Some("hash"), "203.0.113.1"),
+                    &crate::miner_settings::MinerSettings {
+                        min_payout: Some(minimum),
+                        ..Default::default()
+                    },
+                    now,
+                )
+                .unwrap());
+        }
+        let ack = engine
+            .login("high", chosen, "rig", 2, caps.clone())
+            .unwrap();
+        assert_eq!(ack.min_payout_atomic, Some(2_000_000_000));
+        // A stored minimum below the exchange floor still reports the floor.
+        let ack = engine
+            .login("low", too_low, "rig", 2, caps.clone())
+            .unwrap();
+        assert_eq!(ack.min_payout_atomic, Some(1_000_000_000));
         let ack = engine.login("default", untouched, "rig", 2, caps).unwrap();
         assert_eq!(ack.min_payout_atomic, Some(1_000_000_000));
     }

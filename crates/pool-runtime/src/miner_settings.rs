@@ -95,11 +95,11 @@ pub fn validate_min_payout(requested: u64, pool_minimum: u64, maximum: u64) -> R
     Ok(requested)
 }
 
-/// The minimum payout that applies: the miner's choice, never below `floor`
-/// (the pool's regular minimum), or the account's default without one
-/// (higher than the floor for exchange accounts).
-pub fn effective_min_payout(default: u64, floor: u64, chosen: Option<u64>) -> u64 {
-    chosen.map_or(default, |chosen| chosen.max(floor))
+/// The minimum payout that applies: the miner's choice, never below the
+/// account's pool minimum. Exchange (memo) accounts keep their higher pool
+/// minimum as a floor so an exchange is not sent many small deposits.
+pub fn effective_min_payout(pool_minimum: u64, chosen: Option<u64>) -> u64 {
+    chosen.map_or(pool_minimum, |chosen| chosen.max(pool_minimum))
 }
 
 fn format_bnt(atomic: u64) -> String {
@@ -284,16 +284,13 @@ mod tests {
         // A pool minimum above the limit (exchange accounts) still validates.
         let memo = 150 * bnt;
         assert_eq!(validate_min_payout(memo, memo, 100 * bnt), Ok(memo));
-        assert_eq!(effective_min_payout(pool, pool, None), pool);
-        assert_eq!(effective_min_payout(pool, pool, Some(5 * pool)), 5 * pool);
-        assert_eq!(effective_min_payout(pool, pool, Some(pool / 2)), pool);
-        // Exchange accounts default higher but may choose down to the floor.
-        assert_eq!(effective_min_payout(10 * pool, pool, None), 10 * pool);
-        assert_eq!(
-            effective_min_payout(10 * pool, pool, Some(2 * pool)),
-            2 * pool
-        );
-        assert_eq!(effective_min_payout(10 * pool, pool, Some(pool / 2)), pool);
+        assert_eq!(effective_min_payout(pool, None), pool);
+        assert_eq!(effective_min_payout(pool, Some(5 * pool)), 5 * pool);
+        assert_eq!(effective_min_payout(pool, Some(pool / 2)), pool);
+        // Exchange accounts never go below their own (higher) minimum.
+        assert_eq!(effective_min_payout(10 * pool, None), 10 * pool);
+        assert_eq!(effective_min_payout(10 * pool, Some(20 * pool)), 20 * pool);
+        assert_eq!(effective_min_payout(10 * pool, Some(2 * pool)), 10 * pool);
     }
 
     #[test]

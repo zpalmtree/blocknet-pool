@@ -17,8 +17,8 @@ real pool. The demo password is `correct horse`; the rig IP that wins a take-bac
   `solo:`, and hiding worker names, each with a ? note for the first two linking to Pool info.
   Saving a new minimum updates the payout bar on the Stats tab.
 - `custom`: unlocked with a 5 BNT minimum, solo and hidden names.
-- `exchange`: an exchange (memo) account, 10 BNT by default, which may be lowered to the
-  regular 1 BNT minimum.
+- `exchange`: an exchange (memo) account, whose 10 BNT minimum can be raised but not
+  lowered, so the exchange is not sent many small deposits.
 - `no-password`: another browser took the address back and has not set a password yet.
 - `public-hidden`: the Stats tab as a visitor sees it when names are hidden (Rig 1, Rig 2).
 - `loading`, `error`: settings still loading, and the settings API failing.

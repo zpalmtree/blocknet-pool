@@ -530,7 +530,7 @@ export interface MinerSettingsState {
   has_password: boolean;
   unlocked: boolean;
   changed_at: number | null;
-  /** Lowest minimum any account may choose (BNT). */
+  /** This account's pool minimum, the lowest its miner may choose (BNT). */
   pool_min_payout: number;
   /** This account's minimum without a choice; higher for exchange accounts. */
   default_min_payout: number;

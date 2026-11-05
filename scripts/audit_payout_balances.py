@@ -70,7 +70,7 @@ def audit(database, config_path, include_addresses):
     has_destinations = subprocess.run(psql, input="SELECT to_regclass('payout_destinations') IS NOT NULL;", text=True, capture_output=True, check=True, timeout=20).stdout.strip() == "t"
     destination_fields = ", 'destination',d.address,'memo',d.memo" if has_destinations else ""
     destination_join = "LEFT JOIN payout_destinations d ON d.account_id=b.address" if has_destinations else ""
-    # Minimums miners chose on My Stats (never below the regular minimum).
+    # Minimums miners chose on My Stats (never below the account's own minimum).
     has_settings = subprocess.run(psql, input="SELECT to_regclass('miner_settings') IS NOT NULL;", text=True, capture_output=True, check=True, timeout=20).stdout.strip() == "t"
     settings_fields = ", 'chosen_minimum',s.min_payout" if has_settings else ""
     settings_join = "LEFT JOIN miner_settings s ON s.account=b.address" if has_settings else ""
@@ -99,7 +99,7 @@ COMMIT;"""
         else:
             account_minimum = memo_minimum if row["address"].startswith("memo:") else minimum
             if row.get("chosen_minimum") is not None:
-                account_minimum = max(minimum, row["chosen_minimum"])
+                account_minimum = max(account_minimum, row["chosen_minimum"])
             bucket = "eligible" if row["pending"] >= account_minimum else "below_minimum"
             report[bucket + "_count"] += 1
             report[bucket + "_atomic"] += row["pending"]

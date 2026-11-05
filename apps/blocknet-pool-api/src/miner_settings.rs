@@ -361,15 +361,11 @@ impl MinerSettingsService {
         }
     }
 
-    /// An account's minimum payout unless its miner chose another
-    /// (higher for exchange accounts).
+    /// An account's minimum payout, and the lowest its miner may choose:
+    /// exchange (memo) accounts keep the higher memo minimum so the exchange
+    /// is not sent many small deposits.
     fn default_minimum(&self, account: &str) -> u64 {
         (self.runtime.payout_minimum(account) * ATOMIC_PER_BNT as f64).round() as u64
-    }
-
-    /// The lowest minimum payout any account may choose.
-    fn floor_minimum(&self) -> u64 {
-        (self.runtime.payout_floor() * ATOMIC_PER_BNT as f64).round() as u64
     }
 
     /// Highest minimum payout the account may choose: what one payout may send.
@@ -383,7 +379,7 @@ impl MinerSettingsService {
     }
 
     fn effective_minimum(&self, account: &str, chosen: Option<u64>) -> u64 {
-        effective_min_payout(self.default_minimum(account), self.floor_minimum(), chosen)
+        effective_min_payout(self.default_minimum(account), chosen)
     }
 
     /// The minimum payout that applies to an account, in BNT.
@@ -590,7 +586,7 @@ impl MinerSettingsService {
             "has_password": record.is_some_and(|record| record.password_hash.is_some()),
             "unlocked": unlocked,
             "changed_at": record.map(|record| to_unix(record.changed_at)),
-            "pool_min_payout": coins(self.floor_minimum()),
+            "pool_min_payout": coins(self.default_minimum(&caller.account)),
             "default_min_payout": coins(self.default_minimum(&caller.account)),
             "max_min_payout": coins(self.max_min_payout(&caller.account)),
             "your_ip": caller.client,
@@ -919,7 +915,6 @@ impl MinerSettingsService {
     async fn save(&self, caller: Caller, request: SettingsRequest) -> ApiResult {
         let record = self.require_unlocked(&caller).await?;
         let default_minimum = self.default_minimum(&caller.account);
-        let floor = self.floor_minimum();
         let min_payout = match request.min_payout {
             None => None,
             Some(value) if value.is_finite() && value > 0.0 => {
@@ -932,12 +927,11 @@ impl MinerSettingsService {
                     ));
                 }
                 let maximum = self.max_min_payout(&caller.account);
-                let atomic =
-                    validate_min_payout(atomic as u64, floor, maximum).map_err(|message| {
-                        ApiError::new(StatusCode::BAD_REQUEST, "invalid_settings", &message)
-                    })?;
-                // The account's default (10 BNT for exchange accounts on
-                // bntpool) is stored as "no choice", so it follows the pool.
+                let atomic = validate_min_payout(atomic as u64, default_minimum, maximum).map_err(
+                    |message| ApiError::new(StatusCode::BAD_REQUEST, "invalid_settings", &message),
+                )?;
+                // The account's own minimum is stored as "no choice", so it
+                // follows the pool if that changes.
                 (atomic != default_minimum).then_some(atomic)
             }
             Some(_) => {

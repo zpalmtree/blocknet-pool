@@ -20,6 +20,8 @@ Enabling admissions requires `enforce_shared_exchange_memos: true`. First set `m
 existing regular-wallet minimum (**1 BNT** at the pre-release audit); do not
 replace it with the example configuration’s default. These are pool policies,
 not exchange requirements.
+Miners may raise an exchange account's minimum on My Stats but never lower it below
+`memo_min_payout_amount`, so the exchange is not sent many small deposits.
 Ensure any `payout_max_per_recipient` and `payout_max_total_per_tick` caps can
 accommodate this minimum. Amount reduction for wallet liquidity never goes below
 the account's minimum. The API, setup UI, stats and Seine login report the floor.
