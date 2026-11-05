@@ -1,5 +1,5 @@
-// Seine releases after v0.3.1 accept `solo:` logins; older ones reject them.
-const LAST_RELEASE_WITHOUT_SOLO: readonly number[] = [0, 3, 1];
+// Seine releases from v0.3.1 on accept `solo:` logins; older ones reject them.
+const LAST_RELEASE_WITHOUT_SOLO: readonly number[] = [0, 3, 0];
 
 /** Whether the latest Seine release accepts `solo:` addresses. */
 export function seineSupportsSolo(latestVersion: string | null | undefined): boolean {
