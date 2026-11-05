@@ -264,7 +264,7 @@ window.fetch = async (input, init) => {
   return json({});
 };
 
-const tab = state === 'public-hidden' || state === 'public-private' ? '' : '#settings';
+const tab = state === 'public-hidden' || state === 'public-private' || params.get('tab') === 'stats' ? '' : '#settings';
 const linkToken = 'c'.repeat(64);
 if (state === 'link-confirm' || state === 'link-expired') {
   history.replaceState(null, '', `/alerts?confirm=${linkToken}&${params}`);

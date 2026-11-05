@@ -2,7 +2,8 @@
 
 Run `npm --prefix frontend run showcase:settings` from the repository root.
 Open http://localhost:5204/showcases/miner-settings/?state=locked. Add `theme=dark` for dark mode
-and `chrome=off` to hide the state picker.
+and `chrome=off` to hide the state picker. `tab=stats` opens the Stats tab instead, for example
+`state=unlocked&tab=stats` for an owner still signed in from an earlier visit (open lock).
 
 The real App opens My Stats on its Settings tab against synthetic API responses and an
 in-memory stand-in for `/api/miner-settings/*` that follows the API's rules. Nothing reaches a

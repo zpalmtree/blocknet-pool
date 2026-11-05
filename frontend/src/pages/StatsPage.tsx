@@ -304,7 +304,18 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   // Unlocking (or signing out) changes what the server returns for a private
   // account, so reload the stats instead of waiting for the next refresh.
   const unlockedRef = useRef(false);
-  useEffect(() => { unlockedRef.current = false; }, [minerAddress]);
+  // Show the open lock when this browser is still signed in from an
+  // earlier visit; the stats were already loaded with that session.
+  useEffect(() => {
+    unlockedRef.current = false;
+    if (!minerAddress) return;
+    const addr = minerAddress;
+    api.minerSettings.get(addr).then((state) => {
+      if (minerAddressRef.current !== addr || !state.unlocked || unlockedRef.current) return;
+      unlockedRef.current = true;
+      setSettingsUnlocked(true);
+    }).catch(() => {});
+  }, [api, minerAddress]);
   const handleUnlockedChange = useCallback((unlocked: boolean) => {
     setSettingsUnlocked(unlocked);
     if (unlockedRef.current === unlocked) return;
