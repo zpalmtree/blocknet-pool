@@ -396,5 +396,21 @@
   "settingsError": "Pengaturan sedang tidak tersedia. Coba lagi sebentar lagi.",
   "settingsMinPayoutInvalid": "Masukkan pembayaran minimum dari {0} hingga {1} BNT.",
   "settingsAlreadyClaimed": "Seseorang baru saja menetapkan kata sandi. Masukkan kata sandi itu, atau ambil kembali alamat ini dari rig.",
-  "settingsLockedAgain": "Pengaturan terkunci lagi. Buka kuncinya untuk menyimpan."
+  "settingsLockedAgain": "Pengaturan terkunci lagi. Buka kuncinya untuk menyimpan.",
+  "newsNav": "Yang baru",
+  "newsTitle": "Yang baru di bntpool.com",
+  "newsDescription": "Fitur dan perubahan baru di pool penambangan Blocknet bntpool.com, terbaru lebih dulu: penambangan solo, pengaturan penambang, pembayaran, dan lainnya.",
+  "newsAll": "Semua berita",
+  "newsDismiss": "Sembunyikan berita",
+  "newsNew": "Baru",
+  "newsEmpty": "Belum ada berita.",
+  "newsSettingsTitle": "Pengaturan di Statistik saya",
+  "newsSettingsBody": "Kunci akun Anda dengan kata sandi, lalu pilih pembayaran minimum sendiri, tambang solo secara default, atau sembunyikan nama worker Anda dari halaman publik.",
+  "newsSettingsLink": "Buka Statistik saya",
+  "newsSoloTitle": "Penambangan solo",
+  "newsSoloBody": "Tambahkan {0} di depan alamat Anda di seine v0.3.1 atau yang lebih baru dan simpan seluruh hadiah setiap blok yang ditemukan rig Anda. Tanpa menjalankan node.",
+  "newsSoloLink": "Panduan penambangan solo",
+  "newsMinPayoutTitle": "Pembayaran minimum 1 BNT",
+  "newsMinPayoutBody": "Pembayaran kini mulai dari 1 BNT ke dompet Anda sendiri, atau 10 BNT ke deposit exchange.",
+  "newsMinPayoutLink": "Cara Anda dibayar"
 }

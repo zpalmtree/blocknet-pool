@@ -396,5 +396,21 @@
   "settingsError": "As configurações não estão disponíveis agora. Tente de novo em instantes.",
   "settingsMinPayoutInvalid": "Digite um pagamento mínimo de {0} a {1} BNT.",
   "settingsAlreadyClaimed": "Alguém acabou de definir uma senha. Digite-a ou recupere o endereço a partir de um rig.",
-  "settingsLockedAgain": "Configurações bloqueadas de novo. Desbloqueie para salvar."
+  "settingsLockedAgain": "Configurações bloqueadas de novo. Desbloqueie para salvar.",
+  "newsNav": "Novidades",
+  "newsTitle": "Novidades do bntpool.com",
+  "newsDescription": "Novos recursos e mudanças no pool de mineração Blocknet bntpool.com, os mais recentes primeiro: mineração solo, configurações do minerador, pagamentos e mais.",
+  "newsAll": "Todas as novidades",
+  "newsDismiss": "Ocultar novidades",
+  "newsNew": "Novo",
+  "newsEmpty": "Ainda não há novidades.",
+  "newsSettingsTitle": "Configurações em Minhas estatísticas",
+  "newsSettingsBody": "Proteja sua conta com uma senha e depois escolha seu próprio pagamento mínimo, minere solo por padrão ou oculte os nomes dos seus workers nas páginas públicas.",
+  "newsSettingsLink": "Abrir Minhas estatísticas",
+  "newsSoloTitle": "Mineração solo",
+  "newsSoloBody": "Coloque {0} antes do seu endereço no seine v0.3.1 ou mais recente e fique com a recompensa inteira de cada bloco que seus rigs encontrarem. Sem rodar um nó.",
+  "newsSoloLink": "Guia de mineração solo",
+  "newsMinPayoutTitle": "Pagamento mínimo de 1 BNT",
+  "newsMinPayoutBody": "Os pagamentos agora começam em 1 BNT para sua própria carteira, ou 10 BNT para um depósito em exchange.",
+  "newsMinPayoutLink": "Como você recebe"
 }

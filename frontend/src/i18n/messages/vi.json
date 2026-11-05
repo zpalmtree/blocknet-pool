@@ -396,5 +396,21 @@
   "settingsError": "Cài đặt hiện không khả dụng. Hãy thử lại sau ít phút.",
   "settingsMinPayoutInvalid": "Nhập mức thanh toán tối thiểu từ {0} đến {1} BNT.",
   "settingsAlreadyClaimed": "Ai đó vừa đặt mật khẩu. Hãy nhập mật khẩu đó, hoặc lấy lại địa chỉ từ một máy đào.",
-  "settingsLockedAgain": "Cài đặt đã khóa lại. Hãy mở khóa để lưu."
+  "settingsLockedAgain": "Cài đặt đã khóa lại. Hãy mở khóa để lưu.",
+  "newsNav": "Có gì mới",
+  "newsTitle": "Có gì mới trên bntpool.com",
+  "newsDescription": "Tính năng và thay đổi mới của pool đào Blocknet bntpool.com, mới nhất trước: đào solo, cài đặt thợ đào, thanh toán và hơn thế nữa.",
+  "newsAll": "Tất cả tin",
+  "newsDismiss": "Ẩn tin",
+  "newsNew": "Mới",
+  "newsEmpty": "Chưa có tin nào.",
+  "newsSettingsTitle": "Cài đặt trong Thống kê của tôi",
+  "newsSettingsBody": "Khóa tài khoản bằng mật khẩu, rồi tự chọn mức thanh toán tối thiểu, đào solo theo mặc định hoặc ẩn tên worker khỏi các trang công khai.",
+  "newsSettingsLink": "Mở Thống kê của tôi",
+  "newsSoloTitle": "Đào solo",
+  "newsSoloBody": "Thêm {0} trước địa chỉ của bạn trong seine v0.3.1 trở lên và giữ toàn bộ phần thưởng của mỗi khối máy đào của bạn tìm thấy. Không cần chạy node.",
+  "newsSoloLink": "Hướng dẫn đào solo",
+  "newsMinPayoutTitle": "Thanh toán tối thiểu 1 BNT",
+  "newsMinPayoutBody": "Thanh toán giờ bắt đầu từ 1 BNT vào ví của bạn, hoặc 10 BNT vào địa chỉ nạp của sàn.",
+  "newsMinPayoutLink": "Cách bạn được thanh toán"
 }

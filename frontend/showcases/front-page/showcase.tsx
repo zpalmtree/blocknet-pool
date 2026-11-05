@@ -25,6 +25,7 @@ const STATES = {
   start: 'Get Started: the quick start steps',
   payouts: 'Payouts: recent pool payouts',
   checkpoints: 'Checkpoints: the published checkpoint file',
+  news: 'What\'s new: the news archive',
 } as const;
 type State = keyof typeof STATES;
 
@@ -34,11 +35,19 @@ const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
 localStorage.setItem('pool_theme', theme);
 applyTheme(theme);
 
+// Pool news: `news=on` shows the recent items and the Settings tab dot as a first-time visitor
+// sees them; otherwise every state shows the page as it looks once the news is dismissed.
+const newsOn = params.get('news') === 'on';
+for (const key of ['pool_news_dismissed_v1', 'pool_news_seen_settings_v1']) {
+  if (newsOn) localStorage.removeItem(key);
+  else localStorage.setItem(key, '9999-12-31');
+}
+
 const WALLET = 'demo-miner-not-a-real-wallet';
 const EXCHANGE = 'demo-shared-exchange-deposit-address';
 const exchangeState = state === 'exchange' || state === 'exchange-ready';
 localStorage.removeItem('pool_last_miner_lookup_address');
-if (state === 'first' || state === 'loading' || state === 'empty' || state === 'luck' || state === 'blocks' || state === 'start' || state === 'payouts' || state === 'checkpoints') {
+if (state === 'first' || state === 'loading' || state === 'empty' || state === 'luck' || state === 'blocks' || state === 'start' || state === 'payouts' || state === 'checkpoints' || state === 'news') {
   localStorage.removeItem('pool_payout_destination_v1');
 } else {
   localStorage.setItem('pool_payout_destination_v1', JSON.stringify({
@@ -159,7 +168,7 @@ window.fetch = async (input, init) => {
 };
 
 // The app routes on the path; the showcase picks it, then App renders as on the live site.
-const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', 'stats-new': '/stats', blocks: '/blocks', start: '/start', payouts: '/payouts', checkpoints: '/checkpoints' };
+const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', 'stats-new': '/stats', blocks: '/blocks', start: '/start', payouts: '/payouts', checkpoints: '/checkpoints', news: '/news' };
 history.replaceState(null, '', `${ROUTES[state] ?? '/'}${location.search}`);
 
 function Bar() {

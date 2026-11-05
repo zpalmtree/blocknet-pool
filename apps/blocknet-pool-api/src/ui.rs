@@ -401,6 +401,7 @@ const SITEMAP_PATHS: &[&str] = &[
     "/blocks",
     "/payouts",
     "/info",
+    "/news",
     "/stats",
     "/luck",
     "/checkpoints",
@@ -979,6 +980,7 @@ mod tests {
             "/blocks",
             "/payouts",
             "/info",
+            "/news",
             "/stats",
             "/admin",
         ] {

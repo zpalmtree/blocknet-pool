@@ -396,5 +396,21 @@
   "settingsError": "Einstellungen sind gerade nicht verfügbar. Versuche es gleich noch einmal.",
   "settingsMinPayoutInvalid": "Gib eine Mindestauszahlung von {0} bis {1} BNT ein.",
   "settingsAlreadyClaimed": "Gerade hat jemand ein Passwort festgelegt. Gib es ein oder hol dir die Adresse über ein Rig zurück.",
-  "settingsLockedAgain": "Einstellungen wieder gesperrt. Entsperre sie, um zu speichern."
+  "settingsLockedAgain": "Einstellungen wieder gesperrt. Entsperre sie, um zu speichern.",
+  "newsNav": "Neuigkeiten",
+  "newsTitle": "Neuigkeiten auf bntpool.com",
+  "newsDescription": "Neue Funktionen und Änderungen im Blocknet-Mining-Pool bntpool.com, das Neueste zuerst: Solo-Mining, Miner-Einstellungen, Auszahlungen und mehr.",
+  "newsAll": "Alle Neuigkeiten",
+  "newsDismiss": "Neuigkeiten ausblenden",
+  "newsNew": "Neu",
+  "newsEmpty": "Noch keine Neuigkeiten.",
+  "newsSettingsTitle": "Einstellungen in Meine Statistiken",
+  "newsSettingsBody": "Sichere dein Konto mit einem Passwort und wähle dann deine eigene Mindestauszahlung, Solo-Mining als Standard oder blende deine Worker-Namen auf öffentlichen Seiten aus.",
+  "newsSettingsLink": "Meine Statistiken öffnen",
+  "newsSoloTitle": "Solo-Mining",
+  "newsSoloBody": "Setze {0} vor deine Adresse in seine v0.3.1 oder neuer und behalte die gesamte Belohnung jedes Blocks, den deine Rigs finden. Kein eigener Node nötig.",
+  "newsSoloLink": "Anleitung zum Solo-Mining",
+  "newsMinPayoutTitle": "1 BNT Mindestauszahlung",
+  "newsMinPayoutBody": "Auszahlungen beginnen jetzt bei 1 BNT an deine eigene Wallet oder bei 10 BNT an eine Börseneinzahlung.",
+  "newsMinPayoutLink": "So wirst du bezahlt"
 }

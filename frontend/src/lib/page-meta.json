@@ -135,6 +135,26 @@
     "descriptionKey": "infoDescription",
     "labelKey": "infoNav"
   },
+  "/news": {
+    "title": "What's New on bntpool.com",
+    "description": "New features and changes on the bntpool.com Blocknet mining pool, newest first: solo mining, miner settings, payouts and more.",
+    "image": "og-dashboard.png",
+    "index": true,
+    "label": "What's new",
+    "guides": [
+      {
+        "href": "/blog/solo-mine-blocknet-on-bntpool/",
+        "label": "Solo mining on bntpool.com"
+      },
+      {
+        "href": "/blog/track-your-miner-on-bntpool/",
+        "label": "Track your miner on bntpool.com"
+      }
+    ],
+    "titleKey": "newsTitle",
+    "descriptionKey": "newsDescription",
+    "labelKey": "newsNav"
+  },
   "/stats": {
     "title": "Blocknet Miner Stats",
     "description": "Look up your Blocknet miner hashrate, shares, and balance.",

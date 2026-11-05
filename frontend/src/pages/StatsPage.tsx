@@ -12,6 +12,7 @@ import { RangeTabs } from '../components/RangeTabs';
 import { MiningType } from '../components/MiningType';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
 import { MinerSettings, SettingsLockIcon } from '../components/MinerSettings';
+import { featureIsNew, markFeatureSeen } from '../lib/news';
 import { knownExchange, validMemo } from '../lib/payout-destination';
 import { readDestination, rememberDestination } from '../lib/storage';
 import { formatCoins, formatCompactCoins, formatFee, humanRate, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
@@ -81,6 +82,8 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [view, setView] = useState<'stats' | 'settings'>(() =>
     typeof location !== 'undefined' && location.hash === '#settings' ? 'settings' : 'stats');
   const [settingsUnlocked, setSettingsUnlocked] = useState(false);
+  // A dot on the Settings tab while news announces it, until the miner opens it once.
+  const [settingsNew, setSettingsNew] = useState(() => featureIsNew('settings'));
   const tabsRef = useRef<HTMLDivElement>(null);
   const [panelMinHeight, setPanelMinHeight] = useState(0);
   // A short panel replacing a long one would shrink the page under the
@@ -379,6 +382,12 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const payoutsStart = minerData && payoutsOffset < minerData.payouts.length ? payoutsOffset : 0;
   const showLookupResult = !(exchange && !memoInput) && !!minerAddress && (!!minerData || !!minerBalanceData || history.length > 0);
   const minerDetailLoading = lookupLoading && !minerData;
+  const settingsOpen = showLookupResult && view === 'settings';
+  useEffect(() => {
+    if (!settingsOpen || !settingsNew) return;
+    markFeatureSeen('settings');
+    setSettingsNew(false);
+  }, [settingsOpen, settingsNew]);
   const noHashrate = !!minerData && (!minerData.workers.length || liveHashrate <= 0);
   // Hashing with nothing estimated yet: the pool has not found a block with these shares.
   const estimateZero = !!minerBalanceData && pendingEstimated === 0 && liveHashrate > 0;
@@ -461,7 +470,8 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             className={view === 'stats' ? 'active' : ''} onClick={() => switchView('stats')}>{t('statsTab')}</button>
           <button type="button" role="tab" id="stats-tab-settings" aria-selected={view === 'settings'} aria-controls="miner-settings"
             className={view === 'settings' ? 'active' : ''} onClick={() => switchView('settings')}>
-            <SettingsLockIcon open={settingsUnlocked} />{t('settingsTab')}</button>
+            <SettingsLockIcon open={settingsUnlocked} />{t('settingsTab')}
+            {settingsNew && <span className="tab-new-dot"><span className="sr-only">{t('newsNew')}</span></span>}</button>
         </div>)}
 
       {showLookupResult && view === 'settings' && (<div id="miner-settings" role="tabpanel" aria-labelledby="stats-tab-settings"

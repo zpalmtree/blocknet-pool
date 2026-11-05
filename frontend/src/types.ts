@@ -3,6 +3,7 @@ export type Route =
   | "dashboard"
   | "start"
   | "info"
+  | "news"
   | "checkpoints"
   | "luck"
   | "blocks"

@@ -31,6 +31,13 @@ pool, explorer or analytics endpoint. States:
   Action drawn as text from seine's own renderer (setup prompts and the mining dashboard).
 - `payouts`: Payouts, with the public data table layout.
 - `checkpoints`: Checkpoints, with a synthetic checkpoint file.
+- `news`: What's new, the news archive linked from the footer, newest first, with a New chip on items
+  from the last 30 days.
+
+Add `news=on` to any state to see pool news as a visitor who hasn't dismissed it: a What's new section at
+the top of the front page (up to three items from the last 30 days, with All news and a dismiss button) and
+a dot on the My Stats Settings tab until Settings is opened once. Without it every state shows the page as it
+looks once the news is dismissed. News captures live in `../pool-news/captures/`.
 
 Every page shares the front page's style: a Mint page under the dark green nav and a deep green
 title band whose bottom edge the page rises into as one sheet (slightly curved inside corners on
