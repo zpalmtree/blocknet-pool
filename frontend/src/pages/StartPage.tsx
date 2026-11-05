@@ -1,5 +1,5 @@
 import { t, tx, localizePath, locale, localeInfo } from '../i18n';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
@@ -8,6 +8,7 @@ import { MiningType } from '../components/MiningType';
 import { SeineScreen, type TerminalCapture } from '../components/SeineScreen';
 import seineScreensData from '../data/seine-screens.json';
 import { seineSupportsSolo } from '../lib/solo';
+import { shellQuote } from '../lib/payout-destination';
 
 // seine v0.3.1's own renderer with example data; regenerate with frontend/scripts/seine-screens-export.rs.
 const seineScreens = seineScreensData as unknown as Record<string, TerminalCapture>;
@@ -19,24 +20,77 @@ const minerSettings = [
   ['minerSettingsThreads', '--threads 4'],
 ] as const;
 
+type Platform = 'windows' | 'mac' | 'linux';
+const PLATFORMS: readonly [Platform, string][] = [['windows', 'Windows'], ['mac', 'macOS'], ['linux', 'Linux']];
+const RELEASE_DOWNLOAD = 'https://github.com/zpalmtree/seine/releases/latest/download/';
+const DOWNLOADS: Record<Platform, string> = {
+  windows: `${RELEASE_DOWNLOAD}seine-windows-x86_64.zip`,
+  mac: `${RELEASE_DOWNLOAD}seine-macos-aarch64.tar.gz`,
+  linux: `${RELEASE_DOWNLOAD}seine-linux-x86_64.tar.gz`,
+};
+const RUN_KEYS: Record<Platform, string> = { windows: 'runWindows', mac: 'runMac', linux: 'runLinux' };
+
+function detectPlatform(): Platform {
+  const agent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+  if (/Mac/i.test(agent) && !/iPhone|iPad/i.test(agent)) return 'mac';
+  if (/Linux|X11|CrOS/i.test(agent) && !/Android/i.test(agent)) return 'linux';
+  return 'windows';
+}
+
+/** Addresses and plain @names pass to the shell as they are; anything else is quoted. */
+function shellArg(value: string, powershell: boolean) {
+  return /^[A-Za-z0-9@._:-]+$/.test(value) ? value : shellQuote(value, powershell);
+}
+
+function Choice<T extends string>({ label, value, options, onChange }: {
+  label: string; value: T; options: readonly (readonly [T, string])[]; onChange: (value: T) => void;
+}) {
+  return (
+    <div className="start-choice" role="group" aria-label={label}>
+      {options.map(([key, text]) => (
+        <button key={key} type="button" aria-pressed={value === key} className={value === key ? 'active' : ''} onClick={() => onChange(key)}>{text}</button>
+      ))}
+    </div>
+  );
+}
+
+function Step({ number, id, title, children }: { number: number; id?: string; title: string; children: ReactNode }) {
+  return (
+    <li id={id}>
+      <span className="start-step-number" aria-hidden="true">{number}</span>
+      <div className="start-step-body">
+        <h2>{title}</h2>
+        {children}
+      </div>
+    </li>
+  );
+}
+
 interface StartPageProps {
   poolInfo: InfoResponse | null;
 }
 
 export function StartPage({ poolInfo }: StartPageProps) {
   const [copiedKey, setCopiedKey] = useState('');
+  const [platform, setPlatform] = useState<Platform>(detectPlatform);
+  const [address, setAddress] = useState('');
+  const [solo, setSolo] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(() => typeof location !== 'undefined' && location.hash === '#solo-mining');
   const poolFeePct = poolInfo?.pool_fee_pct;
-  const poolFeeLabel = poolFeePct == null || !Number.isFinite(poolFeePct) ? '-'
+  const feeKnown = poolFeePct != null && Number.isFinite(poolFeePct);
+  const poolFeeLabel = !feeKnown ? '-'
     : poolFeePct === 0 ? t('m598')
     : `${poolFeePct.toLocaleString(locale, { maximumFractionDigits: 20 })}%`;
+  const poolFeeShort = feeKnown ? `${poolFeePct.toLocaleString(locale, { maximumFractionDigits: 20 })}%` : '-';
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
-  const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
-  const windowsCommand = `.\\seine.exe --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
-  const soloCommand = `./seine --pool-url ${poolUrl} --address solo:YOUR_BLOCKNET_ADDRESS`;
-  const soloWindowsCommand = `.\\seine.exe --pool-url ${poolUrl} --address solo:YOUR_BLOCKNET_ADDRESS`;
   const pplnsWindowLabel = poolInfo?.pplns_window_duration;
-  // Show the solo guide once a Seine release that accepts solo: is out.
-  const soloGuide = seineSupportsSolo(poolInfo?.latest_miner_version);
+  // Solo needs a Seine release that accepts solo: logins.
+  const soloAvailable = seineSupportsSolo(poolInfo?.latest_miner_version);
+  const mineSolo = solo && soloAvailable;
+  const powershell = platform === 'windows';
+  const destination = `${mineSolo ? 'solo:' : ''}${address.trim() || 'YOUR_BLOCKNET_ADDRESS'}`;
+  const command = `${powershell ? '.\\seine.exe' : './seine'} --pool-url ${poolUrl} --address ${shellArg(destination, powershell)}`;
+  const platformName = PLATFORMS.find(([key]) => key === platform)![1];
 
   useEffect(() => {
     if (!copiedKey) return;
@@ -44,247 +98,150 @@ export function StartPage({ poolInfo }: StartPageProps) {
     return () => window.clearTimeout(timer);
   }, [copiedKey]);
 
+  useEffect(() => {
+    const openFromHash = () => { if (location.hash === '#solo-mining') setCommandOpen(true); };
+    window.addEventListener('hashchange', openFromHash);
+    return () => window.removeEventListener('hashchange', openFromHash);
+  }, []);
+
   const copyToClipboard = useCallback((value: string, key: string) => {
     if (!navigator.clipboard?.writeText) return;
     void navigator.clipboard.writeText(value).then(() => setCopiedKey(key)).catch(() => {});
   }, []);
 
-  const setupPoolUrlKey = 'pool-url-quickstart';
-
-  const seineGuideBase = `https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ""}blog/`;
+  const seineSite = `https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ''}`;
+  const seineGuideBase = `${seineSite}blog/`;
+  const platformChoice = <Choice<Platform> label={t('systemLabel')} value={platform} options={PLATFORMS} onChange={setPlatform} />;
 
   return (
     <div id="page-start">
       <div className="page-header">
         <span className="page-kicker">{t("m466")}</span>
         <h1>{t("m467")}</h1>
-        <p className="page-intro">{t("m468")}</p>
+        <p className="page-intro">{feeKnown ? t('startIntro', [poolFeeShort]) : t('startIntroPlain')}</p>
       </div>
 
       <div className="card section">
-        <div className="section-header">
-          <div>
-            <h3>{t("m450")}</h3>
-            <p className="section-lead">{t("m451")}</p>
-          </div>
-        </div>
+        <ol className="start-steps">
+          <Step number={1} id="wallet" title={t('walletStep')}>
+            <p>{t('walletStepShort')}</p>
+            <div className="start-actions">
+              <a className="btn btn-secondary" href="https://github.com/blocknetprivacy/blocknet-gui/releases/latest" target="_blank" rel="noopener">{t('walletDesktopDownload')}</a>
+              <a href="https://github.com/blocknetprivacy/blocknet/releases/latest" target="_blank" rel="noopener">{t('walletCli')}</a>
+              <a href={`${seineGuideBase}blocknet-wallet-for-mining/`}>{t('walletGuide')}</a>
+            </div>
+            <p className="start-note">{t('walletSeed')}</p>
+          </Step>
 
-        <ol className="quickstart-grid">
-          <li className="quickstart-card">
-            <span className="quickstart-step">1</span>
-            <div className="quickstart-text">
-              <strong>{t("walletStep")}</strong>
-              <p>{tx("walletStepBody", [<a href="#wallet">{t("walletStepLink")}</a>])}</p>
+          <Step number={2} title={t('m452')}>
+            {platformChoice}
+            <div className="start-actions">
+              <a className="btn btn-primary" href={DOWNLOADS[platform]}>{t('downloadFor', [platformName])}</a>
+              <a href={`${seineSite}#download`} target="_blank" rel="noopener">{t('otherDownloads')}</a>
+              <a href={`${seineGuideBase}mine-blocknet-on-${platform}/`}>{t('setupGuide')}</a>
             </div>
-          </li>
+          </Step>
 
-          <li className="quickstart-card">
-            <span className="quickstart-step">2</span>
-            <div className="quickstart-text">
-              <strong>{t("m452")}</strong>
-              <p>{tx("m453", [<a href={`https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ''}#download`} target="_blank" rel="noopener">
-                  seineminer.com
-                </a>])}</p>
-            </div>
-            <div className="quickstart-action">
-              <span className="quickstart-inline-label">{t('setupGuide')}</span>
-              <span className="quickstart-guides">
-                {['windows', 'mac', 'linux'].map((platform, index) => <a key={platform} href={`${seineGuideBase}mine-blocknet-on-${platform}/`}>{['Windows', 'macOS', 'Linux'][index]}</a>)}
-              </span>
-            </div>
-          </li>
+          <Step number={3} title={t('runStepTitle')}>
+            <p>{tx(RUN_KEYS[platform], [<code className="mono inline-code">{platform === 'windows' ? 'seine.exe' : './seine'}</code>])}{' '}
+              {tx('runPaste', [<code className="mono inline-code">@name</code>])}</p>
+            <SeineScreen desktop={seineScreens['address-desktop']} mobile={seineScreens['address-mobile']} />
+          </Step>
 
-          <li className="quickstart-card">
-            <span className="quickstart-step">3</span>
-            <div className="quickstart-text">
-              <strong>{t("m454")}</strong>
-              <p>{tx("launchBody", [<code className="mono inline-code">seine.exe</code>, <code className="mono inline-code">./seine</code>, <code className="mono inline-code">@name</code>, <code className="mono inline-code">$name</code>])}</p>
-            </div>
-            <div className="quickstart-action">
-              <span className="quickstart-inline-label">{t("m456")}</span>
-              <div className="quickstart-copy">
-                <code className="mono">{poolUrl}</code>
-                <button type="button" onClick={() => copyToClipboard(poolUrl, setupPoolUrlKey)} aria-label={t("m387")}>
-                  <span role="status">{copiedKey === setupPoolUrlKey ? t("m386") : t("m392")}</span>
-                </button>
-              </div>
-            </div>
-          </li>
+          <Step number={4} title={t('poolStepTitle')}>
+            <p>{t('poolStepBody')}</p>
+            <SeineScreen desktop={seineScreens['pool-desktop']} mobile={seineScreens['pool-mobile']} />
+          </Step>
 
-          <li className="quickstart-card">
-            <span className="quickstart-step">4</span>
-            <div className="quickstart-text">
-              <strong>{t("trackWorker")}</strong>
-              <p>{t('trackBody')}</p>
-            </div>
-            <div className="quickstart-action">
+          <Step number={5} title={t('miningStepTitle')}>
+            <p>{tx('miningStepBody', [<a href={localizePath('/stats')}>{t('m005')}</a>])}</p>
+            <SeineScreen desktop={seineScreens['mining-desktop']} mobile={seineScreens['mining-mobile']} />
+            <div className="start-actions">
               <a className="btn btn-secondary" href={localizePath('/stats')}>{t('m005')}</a>
             </div>
-          </li>
+          </Step>
         </ol>
-
-        <details className="command-option">
-        <summary>{t('commandOption')}</summary>
-        <p className="quickstart-label">{tx("m460", [<code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code>, <code className="mono inline-code">'@yourname'</code>, <code className="mono inline-code">'$yourname'</code>])}</p>
-        <p className="quickstart-label">Windows · PowerShell</p>
-        <div className="command-copy">
-          <pre className="config-block" dir="ltr">{windowsCommand}</pre>
-          <button className="copy-btn" type="button" onClick={() => copyToClipboard(windowsCommand, 'cmd-windows')}>
-            {copiedKey === 'cmd-windows' ? t('m386') : t('m461')}
-          </button>
-        </div>
-        <p className="quickstart-label">macOS / Linux</p>
-        <div className="command-copy">
-          <pre className="config-block" dir="ltr">{commandExample}</pre>
-          <button className="copy-btn" type="button" onClick={() => copyToClipboard(commandExample, 'cmd')}>
-            {copiedKey === 'cmd' ? t("m386") : t("m461")}
-          </button>
-        </div>
-        </details>
-        <details className="command-option" id="miner-settings">
-          <summary>{t('minerSettingsTitle')}</summary>
-          <p className="quickstart-label">{tx('minerSettingsLead', [<code className="mono inline-code">.\seine.exe</code>, <code className="mono inline-code">./seine</code>])}</p>
-          <table className="info-table miner-settings-table">
-            <tbody>
-              {minerSettings.map(([key, flags]) => (
-                <tr key={key}><td>{t(key)}</td><td><code className="mono inline-code" dir="ltr">./seine {flags}</code></td></tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="quickstart-label"><a href={`${seineGuideBase}configure-seine-miner/`}>{t('minerSettingsGuide')}</a></p>
-        </details>
-        {soloGuide && <details className="command-option" id="solo-mining">
-          <summary>{t('soloTitle')}</summary>
-          <p className="quickstart-label">{t('soloLead', [poolFeeLabel])}</p>
-          <p className="quickstart-label">{tx('soloHow', [<code className="mono inline-code">solo:</code>])}</p>
-          <p className="quickstart-label">Windows · PowerShell</p>
-          <div className="command-copy">
-            <pre className="config-block" dir="ltr">{soloWindowsCommand}</pre>
-            <button className="copy-btn" type="button" onClick={() => copyToClipboard(soloWindowsCommand, 'solo-windows')}>
-              {copiedKey === 'solo-windows' ? t('m386') : t('m461')}
-            </button>
-          </div>
-          <p className="quickstart-label">macOS / Linux</p>
-          <div className="command-copy">
-            <pre className="config-block" dir="ltr">{soloCommand}</pre>
-            <button className="copy-btn" type="button" onClick={() => copyToClipboard(soloCommand, 'solo')}>
-              {copiedKey === 'solo' ? t('m386') : t('m461')}
-            </button>
-          </div>
-          <p className="quickstart-label">{t('soloFit')}</p>
-          <p className="quickstart-label">{tx('soloTrack', [<a href={localizePath('/stats')}>{t('m005')}</a>, <code className="mono inline-code">solo:</code>])}</p>
-        </details>}
-        <ExchangeSetup info={poolInfo} poolUrl={poolUrl} />
-      </div>
-
-      <div className="card section" id="wallet">
-        <h3>{t("walletTitle")}</h3>
-        <p className="section-lead">{t("walletLead")}</p>
-        <div className="wallet-grid">
-          <div className="wallet-option">
-            <strong>{t("walletDesktop")}</strong>
-            <p>{tx("walletDesktopBody", [<strong>Create New Wallet</strong>, <strong>Receive</strong>])}</p>
-            <a className="btn btn-primary" href="https://github.com/blocknetprivacy/blocknet-gui/releases/latest" target="_blank" rel="noopener">
-              {t("walletDesktopDownload")}
-            </a>
-          </div>
-          <div className="wallet-option">
-            <strong>{t("walletCli")}</strong>
-            <p>{tx("walletCliBody", [<code className="mono inline-code">blocknet setup</code>, <code className="mono inline-code">blocknet attach mainnet</code>, <code className="mono inline-code">load</code>, <strong>Create a new wallet</strong>, <code className="mono inline-code">address</code>])}</p>
-            <a className="btn btn-secondary" href="https://github.com/blocknetprivacy/blocknet/releases/latest" target="_blank" rel="noopener">
-              {t("walletCliDownload")}
-            </a>
-          </div>
-        </div>
-        <div className="quickstart-notes">
-          <p>{t("walletSeed")}</p>
-          <p>{tx("m463", [<a href="https://blocknet.id" target="_blank" rel="noopener">{t("m462")}</a>, <a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
-          <p><a href={`${seineGuideBase}blocknet-wallet-for-mining/`}>{t("walletGuide")}</a></p>
-        </div>
       </div>
 
       <div className="card section">
-        <h3>{t("helpTitle")}</h3>
-        <ul className="help-links" aria-label={t('browseTopics')}>
-          <li><a href={`${localizePath('/blog/')}#getting-started`}>{t('topicGettingStarted')}</a></li>
-          <li><a href={`${seineGuideBase}mine-blocknet-on-windows/`}>{t("windowsGuide")}</a></li>
-          <li><a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a></li>
-          <li><a href={`${localizePath('/blog/')}#troubleshooting`}>{t('topicTroubleshooting')}</a></li>
-        </ul>
-        <div className="quickstart-notes">
-          <p>{tx("m464", [<code className="mono inline-code">seine-data/seine.config.json</code>])}</p>
-          <p>{tx("m465", [<code className="mono inline-code">--address</code>, <code className="mono inline-code">--pool-url</code>, <code className="mono inline-code">--pool-worker</code>])}</p>
+        <h2 className="start-card-title">{t('moreOptions')}</h2>
+        <div className="start-options">
+          <details id="solo-mining" open={commandOpen} onToggle={(event) => setCommandOpen(event.currentTarget.open)}>
+            <summary>{t(soloAvailable ? 'commandOrSolo' : 'commandOption')}</summary>
+            <div className="start-builder">
+              <p>{t('builderLead')}</p>
+              <label className="start-field">
+                <span>{t('builderAddress')}</span>
+                <input type="text" id="start-address" value={address} dir="ltr" autoComplete="off" spellCheck={false}
+                  placeholder="YOUR_BLOCKNET_ADDRESS" onChange={(event) => setAddress(event.target.value)} />
+              </label>
+              <div className="start-builder-choices">
+                {soloAvailable && <Choice label={t('modeLabel')} value={mineSolo ? 'solo' : 'pool'}
+                  options={[['pool', t('modePool')], ['solo', t('modeSolo')]] as const} onChange={(mode) => setSolo(mode === 'solo')} />}
+                {platformChoice}
+              </div>
+              <div className="start-command">
+                <pre dir="ltr">{command}</pre>
+                <button type="button" onClick={() => copyToClipboard(command, 'command')}>
+                  <span role="status">{copiedKey === 'command' ? t('m386') : t('m461')}</span>
+                </button>
+              </div>
+              {mineSolo ? <>
+                <p className="start-note">{t('soloLead', [poolFeeLabel])} {t('soloFit')}</p>
+                <p className="start-note">{tx('soloTrack', [<a href={localizePath('/stats')}>{t('m005')}</a>, <code className="mono inline-code">solo:</code>])}</p>
+              </> : <p className="start-note">{t('poolModeNote')}</p>}
+            </div>
+          </details>
+          <details id="miner-settings">
+            <summary>{t('minerSettingsTitle')}</summary>
+            <p className="start-note">{tx('minerSettingsLead', [<code className="mono inline-code">.\seine.exe</code>, <code className="mono inline-code">./seine</code>])}</p>
+            <table className="info-table miner-settings-table">
+              <tbody>
+                {minerSettings.map(([key, flags]) => (
+                  <tr key={key}><td>{t(key)}</td><td><code className="mono inline-code" dir="ltr">./seine {flags}</code></td></tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="start-note"><a href={`${seineGuideBase}configure-seine-miner/`}>{t('minerSettingsGuide')}</a></p>
+          </details>
+          <ExchangeSetup info={poolInfo} poolUrl={poolUrl} />
+          <details id="help">
+            <summary>{t('helpRow')}</summary>
+            <ul className="help-links" aria-label={t('browseTopics')}>
+              <li><a href={`${localizePath('/blog/')}#getting-started`}>{t('topicGettingStarted')}</a></li>
+              <li><a href={`${seineGuideBase}mine-blocknet-on-windows/`}>{t("windowsGuide")}</a></li>
+              <li><a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a></li>
+              <li><a href={`${localizePath('/blog/')}#troubleshooting`}>{t('topicTroubleshooting')}</a></li>
+            </ul>
+            <p className="start-note">{tx("m464", [<code className="mono inline-code">seine-data/seine.config.json</code>])}</p>
+            <p className="start-note">{tx("m465", [<code className="mono inline-code">--address</code>, <code className="mono inline-code">--pool-url</code>, <code className="mono inline-code">--pool-worker</code>])}</p>
+          </details>
         </div>
       </div>
 
       <div className="card section" id="pool-information">
-        <h3>{t("m469")}</h3>
-        <table className="info-table" style={{ maxWidth: 500 }}>
-          <tbody>
-            <tr>
-              <td>{t("m402")}</td>
-              <td>
-                <button
-                  type="button"
-                  className="inline-copy-code mono"
-                  onClick={() => copyToClipboard(poolUrl, 'pool-url-info')}
-                  title={t("m457")}
-                >
-                  {poolUrl}
-                </button>
-                {copiedKey === 'pool-url-info' && <span className="inline-copy-note">{t("m386")}</span>}
-              </td>
-            </tr>
-            <tr>
-              <td>{t("poolFee")}</td>
-              <td>
-                <span className="info-value mono">{poolFeeLabel}</span>
-              </td>
-            </tr>
-            <tr>
-              <td>{t("m471")}</td>
-              <td>
-                <span className="info-value">PPLNS</span>
-              </td>
-            </tr>
-            <tr>
-              <td>{t("m472")}</td>
-              <td>
-                <span className="info-value mono">{poolInfo?.min_payout_amount != null ? t("m473", [poolInfo.min_payout_amount.toLocaleString(locale, { maximumFractionDigits: 20 })]) : '-'}</span>
-              </td>
-            </tr>
-            <tr>
-              <td>{t("m474")}</td>
-              <td>
-                <span className="info-value mono">
-                  {poolInfo?.blocks_before_payout != null ? t("m475", [poolInfo.blocks_before_payout.toLocaleString(locale)]) : '-'}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-
-      <div className="card section">
-        <h3>{t("m476")}</h3>
-        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{tx("m478", [<strong style={{ color: 'var(--text)' }}>PPLNS</strong>, pplnsWindowLabel ? (<>{tx("m477", [<strong style={{ color: 'var(--text)' }}>{pplnsWindowLabel}</strong>])}</>) : null])}</p>
-        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{t("m479")}</p>
-        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{tx("m480", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
-        <p style={{ color: 'var(--muted)', fontSize: 14 }}>{tx("soloRewardsNote", [<MiningType solo />])}</p>
-      </div>
-
-      <div className="card section">
-        <h3>{t("m481")}</h3>
-        <div className="seine-screens">
-          <div className="seine-screens-prompts">
-            <SeineScreen desktop={seineScreens['address-desktop']} mobile={seineScreens['address-mobile']} caption={t('seineScreenAddress')} />
-            <SeineScreen desktop={seineScreens['pool-desktop']} mobile={seineScreens['pool-mobile']} caption={t('seineScreenPool')} />
+        <h2 className="start-card-title">{t("m469")}</h2>
+        <dl className="start-facts">
+          <div><dt>{t('poolFee')}</dt><dd>{poolFeeShort}</dd></div>
+          <div><dt>{t('m472')}</dt><dd>{poolInfo?.min_payout_amount != null ? t('m473', [poolInfo.min_payout_amount.toLocaleString(locale, { maximumFractionDigits: 20 })]) : '-'}</dd></div>
+          <div><dt>{t('m471')}</dt><dd>PPLNS{pplnsWindowLabel ? ` ${pplnsWindowLabel}` : ''}</dd></div>
+          <div><dt>{t('m474')}</dt><dd>{poolInfo?.blocks_before_payout != null ? t('m475', [poolInfo.blocks_before_payout.toLocaleString(locale)]) : '-'}</dd></div>
+        </dl>
+        <div className="start-stratum">
+          <span>{t('m402')}</span>
+          <div className="quickstart-copy">
+            <code className="mono" dir="ltr">{poolUrl}</code>
+            <button type="button" onClick={() => copyToClipboard(poolUrl, 'pool-url')} aria-label={t('m387')}>
+              <span role="status">{copiedKey === 'pool-url' ? t('m386') : t('m392')}</span>
+            </button>
           </div>
-          <SeineScreen desktop={seineScreens['mining-desktop']} mobile={seineScreens['mining-mobile']} caption={t('seineScreenMining')} />
+        </div>
+        <div className="start-rewards">
+          <p>{pplnsWindowLabel && <>{tx("m478", [<strong>PPLNS</strong>, tx("m477", [<strong>{pplnsWindowLabel}</strong>])])}{' '}</>}{t("m479")}</p>
+          <p>{tx("m480", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
+          <p>{tx("soloRewardsNote", [<MiningType solo />])}</p>
         </div>
       </div>
-
     </div>
   );
 }
