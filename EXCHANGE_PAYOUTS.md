@@ -46,8 +46,7 @@ miners; coordinate it as a separate deployment. Updated gateways reject handover
 to an engine that does not acknowledge the same memo account. Updated Seine also
 requires the `payout_memo_v1` capability and matching account ID before accepting
 jobs, including after reconnect/failover. A reported positive minimum appears
-in the TUI; absent or invalid metadata is hidden. Longhorn has a separate
-provider-specific memo adapter; this pool uses the capability/account contract. Legacy miners retain
+in the TUI; absent or invalid metadata is hidden. Legacy miners retain
 their existing login contract. Seine farm proxies do not yet support memo mining.
 
 The additive `payout_destinations` PostgreSQL table maps opaque account IDs to
