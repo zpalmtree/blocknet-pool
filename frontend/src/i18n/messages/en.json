@@ -61,7 +61,7 @@
   "m396": "The expected checksum for the current file.",
   "m397": "Check your copy",
   "m398": "Run this from the folder you ran the download command in, then compare the output against the hash above.",
-  "m399": "Blocknet Mining Pool",
+  "m399": "Blocknet (BNT) Mining Pool",
   "m400": "Live Blocknet pool dashboard",
   "m401": "0% pool fee. Track pool hashrate, round luck, recent blocks, payout timing, and current chain conditions from the public dashboard.",
   "m402": "Stratum",
