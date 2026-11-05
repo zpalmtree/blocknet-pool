@@ -2561,6 +2561,8 @@ html { scroll-padding-top: 72px; }
 .settings-checks label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
 .settings-checks input[type='checkbox'] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding-top: 18px; }
+.settings-autosave { margin: 0; font-size: 13px; color: var(--muted); }
+.settings-autosave.is-saved { color: var(--tone-ok-text); }
 .settings-change-password { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 @media (max-width: 600px) {
   .settings-card { padding: 18px; }

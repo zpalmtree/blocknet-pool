@@ -23,6 +23,8 @@ type State = keyof typeof STATES;
 const params = new URLSearchParams(location.search);
 const state = ((params.get('state') ?? 'locked') in STATES ? params.get('state') : 'locked') as State;
 const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
+// `save=slow` holds each settings save for 4 s; `save=fail` ends the session on the first save.
+const saveMode = params.get('save');
 localStorage.setItem('pool_theme', theme);
 applyTheme(theme);
 
@@ -109,6 +111,17 @@ function settingsRoute(method: string, action: string, body: Record<string, unkn
   }
   if (method === 'PUT') {
     if (!server.unlocked) return fail(401, 'locked');
+    if (saveMode === 'fail') {
+      server.unlocked = false;
+      return fail(401, 'locked');
+    }
+    if (saveMode === 'slow') {
+      return new Promise<Response>((resolve) => setTimeout(() => {
+        Object.assign(server, { minPayout: body.min_payout, solo: body.default_solo, hide: body.hide_workers });
+        touch();
+        resolve(Response.json(settingsState()));
+      }, 4000));
+    }
     Object.assign(server, { minPayout: body.min_payout, solo: body.default_solo, hide: body.hide_workers });
     touch();
     return Response.json(settingsState());

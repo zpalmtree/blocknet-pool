@@ -1,5 +1,5 @@
 import { localizePath, t, tx } from '../i18n';
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { SettingsError } from '../api/client';
@@ -131,16 +131,26 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
   const [rigIp, setRigIp] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
   const [draft, setDraft] = useState<{ minPayout: string; solo: boolean; hide: boolean } | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [saveNote, setSaveNote] = useState('');
+  // Values of the newest change, saved or still on its way to the server.
+  const intended = useRef<MinerSettingsValues | null>(null);
+  const queued = useRef<MinerSettingsValues | null>(null);
+  const saving = useRef(false);
+  const minPayoutTimer = useRef<number | undefined>(undefined);
 
   const adopt = useCallback((next: MinerSettingsState) => {
     setState(next);
     onUnlockedChange?.(next.unlocked);
+    intended.current = next.settings ?? null;
     setDraft(next.settings ? {
       minPayout: String(next.settings.min_payout),
       solo: next.settings.default_solo,
       hide: next.settings.hide_workers,
     } : null);
   }, [onUnlockedChange]);
+
+  useEffect(() => () => window.clearTimeout(minPayoutTimer.current), []);
 
   useEffect(() => {
     let active = true;
@@ -150,6 +160,7 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
     setNotice('');
     setTakingBack(false);
     setChangingPassword(false);
+    setSaveStatus('idle');
     api.minerSettings.get(account)
       .then((next) => { if (active) adopt(next); })
       .catch(() => { if (active) setLoadFailed(true); });
@@ -171,6 +182,55 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
       }
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Saves each change as it is made, one request at a time, newest values last. */
+  const persist = async (values: MinerSettingsValues) => {
+    intended.current = values;
+    if (saving.current) {
+      queued.current = values;
+      return;
+    }
+    saving.current = true;
+    // Leave any notice above the form in place so the controls do not move under the pointer.
+    setSaveStatus('saving');
+    setError('');
+    const before = state?.settings;
+    let next: MinerSettingsValues | null = values;
+    try {
+      let result: MinerSettingsState | null = null;
+      while (next) {
+        result = await api.minerSettings.save(account, next);
+        next = queued.current;
+        queued.current = null;
+      }
+      if (!result) return;
+      setState(result);
+      onUnlockedChange?.(result.unlocked);
+      const settings = result.settings;
+      intended.current = settings ?? null;
+      // Keep whatever is being typed in the amount field; the toggles follow the server.
+      setDraft((draft) => settings && draft ? { ...draft, solo: settings.default_solo, hide: settings.hide_workers } : draft);
+      const notes: string[] = [];
+      if (settings && before && settings.min_payout !== before.min_payout) notes.push(t('settingsSavedMinNote'));
+      if (settings && before && settings.default_solo !== before.default_solo) notes.push(t('settingsSavedModeNote'));
+      setSaveNote(notes.join(' '));
+      setSaveStatus('saved');
+      onSaved();
+    } catch (err) {
+      queued.current = null;
+      setSaveStatus('idle');
+      setError(errorText(err));
+      // Show what the server still has, not the change that failed.
+      const saved = state?.settings;
+      intended.current = saved ?? null;
+      if (saved) setDraft((draft) => draft ? { ...draft, solo: saved.default_solo, hide: saved.hide_workers } : draft);
+      if (err instanceof SettingsError && (err.code === 'locked' || err.code === 'already_claimed')) {
+        api.minerSettings.get(account).then(adopt).catch(() => {});
+      }
+    } finally {
+      saving.current = false;
     }
   };
 
@@ -246,33 +306,40 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
       {error && <p className="settings-error" role="alert">{error}</p>}
     </>);
   } else if (draft && state.settings) {
-    const saved = state.settings;
     const min = state.pool_min_payout;
     const max = state.max_min_payout;
-    const save = () => {
-      const minPayout = Number(draft.minPayout.trim().replace(',', '.'));
-      if (!Number.isFinite(minPayout) || minPayout < min || minPayout > max) {
-        setNotice('');
-        setError(t('settingsMinPayoutInvalid', [formatNumber(min), formatNumber(max)]));
+    const parseMinPayout = (text: string) => Number(text.trim().replace(',', '.'));
+    const change = (values: Partial<MinerSettingsValues>) => {
+      const base = intended.current ?? state.settings!;
+      void persist({ ...base, ...values });
+    };
+    /** Saves a typed minimum once it is valid; `final` also reports a bad value. */
+    const commitMinPayout = (text: string, final: boolean) => {
+      window.clearTimeout(minPayoutTimer.current);
+      const minPayout = parseMinPayout(text);
+      if (!text.trim() || !Number.isFinite(minPayout) || minPayout < min || minPayout > max) {
+        if (final) {
+          setError(t('settingsMinPayoutInvalid', [formatNumber(min), formatNumber(max)]));
+        }
         return;
       }
-      const next: MinerSettingsValues = { min_payout: minPayout, default_solo: draft.solo, hide_workers: draft.hide };
-      void run(() => api.minerSettings.save(account, next), (result) => {
-        const notes = [t('settingsSaved')];
-        if (result.settings && result.settings.min_payout !== saved.min_payout) notes.push(t('settingsSavedMinNote'));
-        if (result.settings && result.settings.default_solo !== saved.default_solo) notes.push(t('settingsSavedModeNote'));
-        setNotice(notes.join(' '));
-        onSaved();
-      });
+      if (minPayout !== (intended.current ?? state.settings!).min_payout) change({ min_payout: minPayout });
     };
     body = (<>
       {notice && <p className="settings-saved" role="status">{notice}</p>}
-      <form className="settings-form" onSubmit={(event) => { event.preventDefault(); save(); }}>
+      <form className="settings-form" onSubmit={(event) => { event.preventDefault(); commitMinPayout(draft.minPayout, true); }}>
         <Row label={t('settingsMinPayout')} hint={t('settingsMinPayoutRange', [formatNumber(min), formatNumber(max)])}
           help={{ text: t('settingsMinPayoutHelp'), href: `${localizePath('/info')}#minimum-payout`, link: t('settingsHowPayoutsWork') }}>
           <div className="settings-amount">
-            <input type="text" inputMode="decimal" dir="ltr" aria-label={t('settingsMinPayout')} value={draft.minPayout}
-              onChange={(event) => setDraft({ ...draft, minPayout: event.target.value })} />
+            <input type="text" inputMode="decimal" dir="ltr" enterKeyHint="done" aria-label={t('settingsMinPayout')} value={draft.minPayout}
+              onChange={(event) => {
+                const text = event.target.value;
+                setDraft({ ...draft, minPayout: text });
+                setError('');
+                window.clearTimeout(minPayoutTimer.current);
+                minPayoutTimer.current = window.setTimeout(() => commitMinPayout(text, false), 1200);
+              }}
+              onBlur={(event) => commitMinPayout(event.target.value, true)} />
             <span>BNT</span>
           </div>
         </Row>
@@ -280,19 +347,27 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
           help={{ text: t('infoSoloLead'), href: `${localizePath('/info')}#solo`, link: t('settingsPoolVsSolo') }}>
           <div className="start-choice" role="group" aria-label={t('settingsMode')}>
             <button type="button" className={draft.solo ? '' : 'active'} aria-pressed={!draft.solo}
-              onClick={() => setDraft({ ...draft, solo: false })}>{t('typePool')}</button>
+              onClick={() => { if (draft.solo) { setDraft({ ...draft, solo: false }); change({ default_solo: false }); } }}>{t('typePool')}</button>
             <button type="button" className={draft.solo ? 'active' : ''} aria-pressed={draft.solo}
-              onClick={() => setDraft({ ...draft, solo: true })}>{t('typeSolo')}</button>
+              onClick={() => { if (!draft.solo) { setDraft({ ...draft, solo: true }); change({ default_solo: true }); } }}>{t('typeSolo')}</button>
           </div>
         </Row>
         <Row label={t('settingsWorkerNames')} hint={t('settingsHideWorkersHint')}>
           <div className="settings-checks">
-            <label><input type="checkbox" checked={draft.hide} onChange={(event) => setDraft({ ...draft, hide: event.target.checked })} /> {t('settingsHideWorkers')}</label>
+            <label><input type="checkbox" checked={draft.hide} onChange={(event) => {
+              const hide = event.target.checked;
+              setDraft({ ...draft, hide });
+              change({ hide_workers: hide });
+            }} /> {t('settingsHideWorkers')}</label>
           </div>
         </Row>
         {error && <p className="settings-error settings-row-error" role="alert">{error}</p>}
         <div className="settings-actions">
-          <button type="submit" className="btn btn-primary" disabled={busy}>{t('settingsSave')}</button>
+          <p className={`settings-autosave ${saveStatus === 'saved' ? 'is-saved' : ''}`} role="status" aria-live="polite">
+            {saveStatus === 'saving' ? t('settingsSaving')
+              : saveStatus === 'saved' ? [t('settingsSaved'), saveNote].filter(Boolean).join(' ')
+              : t('settingsAutoSave')}
+          </p>
           <button type="button" className="link-button" aria-expanded={changingPassword}
             onClick={() => setChangingPassword((value) => !value)}>{t('settingsChangePassword')}</button>
         </div>
