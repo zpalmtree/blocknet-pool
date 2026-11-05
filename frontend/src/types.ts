@@ -2,6 +2,7 @@ export type Route =
   | "wallet"
   | "dashboard"
   | "start"
+  | "info"
   | "checkpoints"
   | "luck"
   | "blocks"
@@ -58,6 +59,8 @@ export interface InfoResponse {
   shared_exchange_addresses?: { address: string; name: string }[];
   blocks_before_payout: number;
   pplns_window_duration: string;
+  pplns_window_seconds?: number;
+  payout_interval_seconds?: number;
   latest_miner_version?: string;
 }
 

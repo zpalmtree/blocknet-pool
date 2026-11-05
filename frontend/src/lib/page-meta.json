@@ -111,6 +111,30 @@
     "descriptionKey": "m446",
     "labelKey": "m004"
   },
+  "/info": {
+    "title": "Blocknet Pool Fees, Payouts and Solo Mining",
+    "description": "See how bntpool.com pays Blocknet miners: the pool fee, PPLNS reward window, block confirmations, minimum payouts and solo mining.",
+    "image": "og-payouts.png",
+    "index": true,
+    "label": "Pool info",
+    "guides": [
+      {
+        "href": "/blog/how-pplns-payouts-work/",
+        "label": "How PPLNS payouts work"
+      },
+      {
+        "href": "/blog/solo-mine-blocknet-on-bntpool/",
+        "label": "Solo mining on bntpool.com"
+      },
+      {
+        "href": "/blog/mine-blocknet-to-exchange/",
+        "label": "Mine straight to an exchange"
+      }
+    ],
+    "titleKey": "infoTitle",
+    "descriptionKey": "infoDescription",
+    "labelKey": "infoNav"
+  },
   "/stats": {
     "title": "Blocknet Miner Stats",
     "description": "Look up your Blocknet miner hashrate, shares, and balance.",

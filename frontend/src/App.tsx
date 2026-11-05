@@ -14,6 +14,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { LuckPage } from './pages/LuckPage';
 import { PayoutsPage } from './pages/PayoutsPage';
 import { StartPage } from './pages/StartPage';
+import { InfoPage } from './pages/InfoPage';
 import { AdminPage, StatsPage, WalletPage, PageBoundary, preloadPage } from './components/DeferredPages';
 import type { InfoResponse, Route } from './types';
 
@@ -24,6 +25,7 @@ export function App() {
     { route: 'stats', label: t("m005") },
     { route: 'blocks', label: t("m003") },
     { route: 'payouts', label: t("m004") },
+    { route: 'info', label: t('infoNav') },
   ];
   // Node operators and the pool operator need these, miners rarely do.
   const FOOTER_ITEMS: { route: Route; label: string }[] = [
@@ -192,6 +194,8 @@ export function App() {
     currentPage = <WalletPage />;
   } else if (route === 'start') {
     currentPage = <StartPage poolInfo={poolInfo} />;
+  } else if (route === 'info') {
+    currentPage = <InfoPage poolInfo={poolInfo} />;
   } else if (route === 'checkpoints') {
     currentPage = <CheckpointsPage api={api} liveTick={liveTick} />;
   } else if (route === 'luck') {

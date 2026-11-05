@@ -2495,3 +2495,33 @@ html { scroll-padding-top: 72px; }
   .stats-summary-nums > div + div { border-inline-start: 0; border-top: 1px solid var(--border); }
   .stats-summary-nums dd { margin: 0; font-size: 17px; }
 }
+
+/* Pool info. Values fall back to the system sans so words the mono font lacks, like Arabic, keep their letters joined. */
+#page-info .inline-code { background: none; padding: 0; font-size: 13px; color: var(--text); }
+.info-steps { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: start; }
+.info-steps > li { position: relative; display: grid; gap: 4px; justify-items: start; align-content: start; padding-inline-end: 14px; }
+.info-steps > li::after { content: ''; position: absolute; top: 17px; inset-inline-start: 42px; inset-inline-end: 8px; height: 2px; background: var(--accent-light); }
+.info-steps > li:last-child::after { display: none; }
+.info-steps .start-step-number { margin-bottom: 6px; }
+.info-step-label { font-size: 13px; font-weight: 600; color: var(--muted); }
+.info-step-value { font-family: 'JetBrains Mono', system-ui, sans-serif; font-size: 17px; font-weight: 700; color: var(--text); }
+.info-step-note { font-size: 12.5px; color: var(--muted); }
+.info-lead { margin: 6px 0 10px; font-size: 14px; color: var(--muted); max-width: 72ch; }
+.info-compare { width: 100%; border-collapse: collapse; font-size: 14px; }
+.info-compare th, .info-compare td { padding: 10px 12px; text-align: start; border-bottom: 1px solid var(--border); font-family: 'Manrope', sans-serif; }
+.info-compare tbody tr:last-child > * { border-bottom: 0; }
+.info-compare thead th { font-size: 15px; }
+.info-compare thead .mining-type { font-size: 15px; font-weight: 700; color: var(--text); }
+.info-compare tbody th { width: 28%; color: var(--muted); font-weight: 600; }
+.info-compare td { color: var(--text); }
+.info-minimums td { font-family: 'JetBrains Mono', system-ui, sans-serif; font-weight: 700; }
+@media (max-width: 760px) {
+  .info-steps { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .info-steps > li { grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 0; }
+  .info-steps > li::after { display: none; }
+  .info-steps .start-step-number { grid-row: span 2; margin: 0; }
+  .info-step-value { grid-column: 3; grid-row: 1 / span 2; font-size: 15px; text-align: end; }
+  .info-step-note { grid-column: 2; }
+  .info-compare th, .info-compare td { padding: 9px 6px; }
+}
+.start-info-link { margin-top: 12px; }

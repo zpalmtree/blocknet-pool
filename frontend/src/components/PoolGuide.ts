@@ -16,7 +16,7 @@ export function PoolGuide({ t, localizePath }: {
       h('p', null, t('m479')),
       h('ul', { className: 'help-links' },
         h('li', null, h('a', { href: `${blog}how-pplns-payouts-work/` }, `PPLNS · ${t('m004')}`)),
-        h('li', null, h('a', { href: `${localizePath('/start')}#pool-information` }, `${t('m472')} · ${t('m474')}`)),
+        h('li', null, h('a', { href: localizePath('/info') }, `${t('m472')} · ${t('m474')}`)),
         h('li', null, h('a', { href: `${blog}estimate-blocknet-mining-rewards/#mining-calculator` }, t('rewardsCalculator'))),
         h('li', null, h('a', { href: `${blog}track-your-miner-on-bntpool/` }, t('trackWorker'))),
       ),
