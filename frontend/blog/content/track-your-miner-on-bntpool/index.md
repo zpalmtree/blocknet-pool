@@ -2,7 +2,7 @@
 title: Track your miner on bntpool.com
 description: Check your first accepted shares on bntpool.com, find your machine, compare hashrate, and follow estimated rewards through confirmation to your first payout.
 date: 2026-10-25
-updated: 2026-10-28
+updated: 2026-11-04
 tags: [bntpool, Mining stats, Pool API, Blocknet]
 faq:
   - q: Why is my hashrate on bntpool.com different from what seine shows?
@@ -55,7 +55,7 @@ If you run more than one machine, give each one its own name and the pool lists 
 ./seine --pool-worker rig-01
 ```
 
-The **Workers** table also shows each machine’s miner version. An update notice above your stats links to the [seine releases page](https://github.com/zpalmtree/seine/releases) when a version is old or unknown.
+Rigs that mine solo, with `solo:` in front of the address, show **Solo** in the table's Type column. The **Workers** table also shows each machine’s miner version. An update notice above your stats links to the [seine releases page](https://github.com/zpalmtree/seine/releases) when a version is old or unknown.
 
 ## Why does the pool's hashrate differ from seine's?
 
@@ -70,7 +70,7 @@ The Recent Shares table tells you right away that shares are arriving, even befo
 
 ## When should you expect your first payout?
 
-There is no fixed countdown from your first share to your first payment. The pool must find a block while your shares are in its payout window. That block then needs 60 confirmations: roughly five hours on average **after the block is found**, with actual times varying. Once your confirmed balance reaches the current 0.1 BNT minimum, it is eligible for an automatic payout sweep. Check [Get Started](/start) for current settings.
+There is no fixed countdown from your first share to your first payment. The pool must find a block while your shares are in its payout window. That block then needs 60 confirmations: roughly five hours on average **after the block is found**, with actual times varying. Once your confirmed balance reaches the current 1 BNT minimum, it is eligible for an automatic payout sweep. Check [Get Started](/start) for current settings.
 
 Follow **Recent Payouts** for the payment’s status and transaction link. A queued payment has not been broadcast yet. If a sent payment is missing from your wallet, use the [payout troubleshooting guide](/blog/pool-payout-missing-from-wallet/).
 
@@ -117,7 +117,7 @@ These pages need no lookup and show everything the pool does in the open. The [d
 
 ### Blocks
 
-[Blocks](/blocks) lists every block bntpool.com has found, newest first: height (linked to the explorer), reward, effort, round time, status and time found. Filter by Confirmed, Pending or Orphaned to see where each block stands.
+[Blocks](/blocks) lists every block bntpool.com has found, newest first: height (linked to the explorer), reward, effort, round time, status and time found. A Type column before the status shows whether a block came from shared pool mining or a solo miner, who is paid its whole reward. Filter by Confirmed, Pending or Orphaned to see where each block stands.
 
 ### Payouts
 

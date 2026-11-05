@@ -9,7 +9,7 @@ faq:
     a: 'Nee. Zestig doelintervallen van vijf minuten geven een schatting van 300 minuten, vijf uur. Werkelijke voortgang volgt nieuwe blokken met variabele aankomsttijden. Rijping, saldodrempel en latere betaling zijn afzonderlijke stappen.'
   - q: 'Moet ik blijven minen om een beloning te laten rijpen?'
     a: 'Een gevonden blok krijgt diepte door nieuwe netwerkblokken, ook als je miner offline is. Je aandeel volgt de boekhoudregels van de pool. Stoppen versnelt of herstart de rijping niet; volg de registratie in My Stats.'
-sourceHash: '2f9675c64c30'
+sourceHash: '963042ab2a8e'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Een verdwenen blok kan verweesd worden verklaard; zijn voorlopige beloning geldt
 
 ## Hoe verschilt betaling van de geminede beloning?
 
-De beloning begint in de coinbase-output. Een poolbetaling is een latere transactie naar je ontvangstadres. Op de controledatum is het gepubliceerde minimum 0,1 BNT. Rijpheid en saldodrempel zijn verschillende voorwaarden; de [PPLNS-gids](/blog/nl/how-pplns-payouts-work/) beschrijft verdeling en betaling.
+De beloning begint in de coinbase-output. Een poolbetaling is een latere transactie naar je ontvangstadres. Op 4 november 2026 is het gepubliceerde minimum van bntpool 1 BNT. Rijpheid en saldodrempel zijn verschillende voorwaarden; de [PPLNS-gids](/blog/nl/how-pplns-payouts-work/) beschrijft verdeling en betaling.
 
 Volg na verzending de transactie en ontvangst en besteedbaarheid in je wallet. Haar bevestigingen horen bij de betaling, niet bij het oorspronkelijke poolblok. Een nieuw adres of herverbinding is niet nodig tijdens rijping. Vergelijk [betalingen](/payouts) en wallet met hetzelfde bedoelde adres.
 

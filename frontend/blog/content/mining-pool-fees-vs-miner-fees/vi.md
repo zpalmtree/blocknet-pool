@@ -4,16 +4,16 @@ description: 'Hiểu phí pool và trình đào Blocknet: nơi áp dụng, cách
 tags: ['Hướng dẫn đào', 'Phí pool', 'Phần thưởng']
 faq:
   - q: 'Đây có phải cùng một khoản phí?'
-    a: 'Không. Phí pool thuộc phân phối phần thưởng, phí nhà phát triển thuộc phần mềm. seine v0.2.36 dành 2% thời gian tính phí cho phát triển sau giai đoạn đầu miễn phí. Phí pool riêng của bntpool là 0% khi kiểm tra ngày 26 tháng 10 năm 2026.'
+    a: 'Không. Phí pool thuộc phân phối phần thưởng, phí nhà phát triển thuộc phần mềm. seine v0.3.1 dành 2% thời gian tính phí cho phát triển sau giai đoạn đầu miễn phí. Phí pool riêng của bntpool là 0% khi kiểm tra ngày 26 tháng 10 năm 2026.'
   - q: 'Kết hợp thế nào?'
     a: 'Nhân ước tính gộp với một trừ tỷ lệ trình đào, rồi một trừ tỷ lệ pool. Dùng phiên bản thực tế và thiết lập hiện tại. Đây là ước tính phần thưởng còn lại, không phải bảo đảm thanh toán hay lợi nhuận tiền mặt.'
   - q: 'Có trừ phí trình đào khỏi hashrate pool không?'
     a: 'Trước tiên xác định ý nghĩa số đó. Nếu đã ước tính công việc cho địa chỉ của bạn sau thời gian nhà phát triển, trừ nữa là tính hai lần. Máy tính cho nhập không với điều chỉnh đã phản ánh. Không trừ lại phí từ số dư xác nhận hoặc thanh toán đã ghi.'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-Theo dõi hai lớp phí trong ước tính Blocknet. Hướng dẫn dùng seine v0.2.36 và thiết lập bntpool kiểm tra ngày 26 tháng 10 năm 2026 để nhập [máy tính](/blog/vi/estimate-blocknet-mining-rewards/#mining-calculator) và đọc [My Stats](/stats).
+Theo dõi hai lớp phí trong ước tính Blocknet. Hướng dẫn dùng seine v0.3.1 và thiết lập bntpool kiểm tra ngày 26 tháng 10 năm 2026 để nhập [máy tính](/blog/vi/estimate-blocknet-mining-rewards/#mining-calculator) và đọc [My Stats](/stats).
 
 ## Phí pool khác phí trình đào thế nào?
 
@@ -31,7 +31,7 @@ Ngày 26 tháng 10 năm 2026, `https://bntpool.com/api/info` công bố `pool_fe
 
 ## Phí nhà phát triển seine hoạt động thế nào?
 
-v0.2.36 ghi rõ 2% trên mọi pool và chế độ solo. Đó là thời gian đào cho địa chỉ nhà phát triển, không phải rút ví sau đó. 10 phút đầu miễn phí; bộ theo dõi tính thời gian sau đó. Xem [hướng dẫn cấu hình](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md).
+v0.3.1 ghi rõ 2% trên mọi pool và chế độ solo. Đó là thời gian đào cho địa chỉ nhà phát triển, không phải rút ví sau đó. 10 phút đầu miễn phí; bộ theo dõi tính thời gian sau đó. Xem [hướng dẫn cấu hình](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md).
 
 Lịch chạy theo lượt nên khoảng ngắn không nhất thiết đúng 2%. Đây là mục tiêu dài hạn sau giai đoạn đầu, không phải cam kết mỗi phút hay khối. Ghi phiên bản vì tài liệu cũ hoặc phần mềm khác có thể khác. Phí pool không thay thế thông tin này.
 

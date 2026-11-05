@@ -1,19 +1,19 @@
 ---
 title: Cara kerja pembayaran PPLNS di bntpool.com
-description: bntpool.com membayar penambang Blocknet dengan PPLNS berjendela enam jam. Pelajari pembagian imbalan, 60 konfirmasi blok dan minimum 0,1 BNT.
+description: bntpool.com membayar penambang Blocknet dengan PPLNS berjendela enam jam. Pelajari pembagian imbalan, 60 konfirmasi blok dan minimum 1 BNT.
 tags: [Pembayaran, PPLNS, bntpool, Panduan penambangan]
 faq:
   - q: 'Berapa lama jendela PPLNS di bntpool.com?'
     a: 'Enam jam. Saat pool menemukan blok, pool melihat enam jam sebelumnya dan membagi imbalan kepada semua pengirim share dalam waktu itu, sebanding dengan kesulitan share mereka. Nilai terkini tercantum di halaman Get Started pool.'
   - q: 'Berapa pembayaran minimum di bntpool.com?'
-    a: 'Pembayaran minimum 0,1 BNT. Setelah saldo terkonfirmasi mencapai jumlah itu, pool mengirimnya otomatis ke alamat Blocknet tanpa perlu meminta atau mengklaim. Saldo lebih kecil tetap tersimpan dan bertambah setiap blok terkonfirmasi yang melibatkan share Anda hingga melewati ambang.'
+    a: 'Pembayaran minimum 1 BNT. Setelah saldo terkonfirmasi mencapai jumlah itu, pool mengirimnya otomatis ke alamat Blocknet tanpa perlu meminta atau mengklaim. Saldo lebih kecil tetap tersimpan dan bertambah setiap blok terkonfirmasi yang melibatkan share Anda hingga melewati ambang.'
   - q: 'Mengapa Estimated Rewards berbeda dari Confirmed Rewards?'
     a: 'Estimated Rewards adalah bagian Anda dari blok temuan pool yang masih mengumpulkan 60 konfirmasi, sehingga angkanya masih dapat berubah. Confirmed Rewards berasal dari blok sedalam 60 blok dan sedang menunggu pembayaran. Saat setiap blok matang, nilainya berpindah dari kartu pertama ke kedua.'
   - q: 'Apakah imbalan langsung berhenti saat saya berhenti menambang?'
-    a: 'Tidak. Setiap share berada dalam jendela PPLNS selama enam jam setelah dikirim, jadi blok yang ditemukan pool dalam waktu itu masih mengkreditkan Anda. Imbalan yang sudah terkonfirmasi tetap dalam saldo dan dibayarkan setelah mencapai minimum 0,1 BNT.'
+    a: 'Tidak. Setiap share berada dalam jendela PPLNS selama enam jam setelah dikirim, jadi blok yang ditemukan pool dalam waktu itu masih mengkreditkan Anda. Imbalan yang sudah terkonfirmasi tetap dalam saldo dan dibayarkan setelah mencapai minimum 1 BNT.'
   - q: 'Apa arti effort di atas 100% pada halaman luck?'
     a: 'Effort membandingkan pekerjaan pool selama satu ronde dengan kesulitan blok, yaitu jumlah pekerjaan yang diharapkan. Effort di atas 100% berarti ronde lebih lama dari rata-rata, dan di bawah 100% berarti lebih cepat. Keduanya normal, dan selama banyak ronde rata-rata effort mendekati 100%.'
-sourceHash: 'f216680e1944'
+sourceHash: 2f69ab18ce0b
 translation: draft
 ---
 
@@ -34,7 +34,7 @@ Di bntpool.com, "N terakhir" adalah rentang waktu enam jam. [Halaman Get Started
 | Skema pembayaran | PPLNS |
 | Jendela share | 6 jam |
 | Konfirmasi sebelum pembayaran | 60 blok |
-| Pembayaran minimum | 0,1 BNT |
+| Pembayaran minimum | 1 BNT |
 
 Share dihitung berdasarkan tingkat kesulitan. Pool memberi setiap koneksi penambang kesulitan share sendiri lalu menyesuaikannya agar setiap penambang mengirim aliran share teratur. Mesin lebih cepat mendapat share lebih sulit sehingga bobot tiap share lebih besar. Bagian Anda ditentukan oleh total pekerjaan, ukuran yang adil bagi laptop maupun server.
 
@@ -46,7 +46,7 @@ Setiap pool menemukan blok, imbalan melalui langkah yang sama:
 2. **Jendela diukur.** Pool mengambil enam jam yang berakhir pada blok itu dan menjumlahkan kesulitan setiap share diterima dari masing-masing alamat.
 3. **Imbalan dibagi.** Setiap alamat mendapat proporsi imbalan yang sama dengan proporsi pekerjaannya terhadap total pekerjaan dalam jendela.
 4. **Blok matang.** Bagian Anda muncul sebagai perkiraan hingga blok sedalam 60 blok, lalu masuk saldo terkonfirmasi.
-5. **Saldo dibayar.** Setelah saldo terkonfirmasi mencapai 0,1 BNT, pool mengirimnya ke alamat Anda.
+5. **Saldo dibayar.** Setelah saldo terkonfirmasi mencapai 1 BNT, pool mengirimnya ke alamat Anda.
 
 ## Contoh perhitungan
 
@@ -64,7 +64,7 @@ Sekarang bayangkan penambang kedua dengan hashrate persis sama, tetapi baru terh
 | Hashrate sama, bergabung 30 menit sebelum blok | 1.667 | sekitar 0,17% | sekitar 0,67 BNT |
 | Penambang kecil, menambang penuh enam jam | 100 | 0,01% | 0,04 BNT |
 
-Penambang kecil pada baris terakhir mendapat 0,04 BNT per blok, jadi saldo terkonfirmasinya melewati minimum 0,1 BNT setelah tiga blok seperti itu, lalu dibayar.
+Penambang kecil pada baris terakhir mendapat 0,04 BNT per blok, jadi saldo terkonfirmasinya melewati minimum 1 BNT setelah 25 blok seperti itu, lalu dibayar.
 
 ## Mengapa PPLNS menguntungkan penambang yang konsisten?
 
@@ -83,7 +83,7 @@ Selama pematangan, pool memeriksa bahwa blok masih bagian dari blockchain utama.
 ## Kapan pembayaran bntpool.com tiba?
 
 <Answer>
-Setelah blok mendapat 60 konfirmasi, sekitar lima jam pada waktu blok lima menit, bagian Anda masuk Confirmed Rewards di halaman statistik. Saat saldo terkonfirmasi mencapai 0,1 BNT, bntpool.com otomatis mengirimnya ke alamat Blocknet. Tidak perlu meminta atau mengklaim.
+Setelah blok mendapat 60 konfirmasi, sekitar lima jam pada waktu blok lima menit, bagian Anda masuk Confirmed Rewards di halaman statistik. Saat saldo terkonfirmasi mencapai 1 BNT, bntpool.com otomatis mengirimnya ke alamat Blocknet. Tidak perlu meminta atau mengklaim.
 </Answer>
 
 Bagi penambang baru, perkiraan pertama muncul setelah pool menemukan blok saat share Anda ada dalam jendela. Pembayaran pertama menyusul setelah blok matang dan saldo mencapai minimum. Pembayaran terkirim tercantum di [halaman pembayaran](/payouts) dan riwayat Anda sendiri pada halaman statistik.
@@ -106,4 +106,4 @@ Effort mengukur pekerjaan pool untuk menemukan blok. Nilainya adalah pekerjaan d
 
 Luck memengaruhi seberapa sering blok tiba. Bagian setiap blok Anda hanya bergantung pada proporsi pekerjaan dalam jendela, dan penambangan stabil mempertahankan bagian itu tetap penuh, baik ronde cepat maupun lama.
 
-<CTA target="pool" title="Bergabung ke pool" text="Menambanglah secara konsisten di bntpool.com dan bagian setiap blok Anda dibayar otomatis setelah mencapai 0,1 BNT." />
+<CTA target="pool" title="Bergabung ke pool" text="Menambanglah secara konsisten di bntpool.com dan bagian setiap blok Anda dibayar otomatis setelah mencapai 1 BNT." />

@@ -11,7 +11,7 @@ faq:
     a: 'Tidak. Endpoint statistik, blok, pembayaran, luck, status dan per penambang menyediakan JSON publik melalui HTTPS, sehingga curl atau dasbor rumah dapat membacanya tanpa mendaftar. Jumlah memakai satuan atomik, jadi bagi 100.000.000 untuk BNT, dan lakukan polling setiap 30 hingga 60 detik.'
   - q: 'Mengapa My Stats menunjukkan Estimated Rewards nol?'
     a: 'Estimated Rewards muncul setelah pool menemukan blok saat share Anda berada dalam jendela pembayaran. Bagi penambang baru mungkin perlu beberapa ronde. Share diterima dan hashrate muncul dahulu, lalu perkiraan imbalan, yang matang menjadi Confirmed Rewards dan dibayar otomatis.'
-sourceHash: 'f74ae9281fd2'
+sourceHash: 75495e49f3e9
 translation: draft
 ---
 
@@ -54,7 +54,7 @@ Jika memakai lebih dari satu mesin, beri nama masing-masing agar pool mencantumk
 ./seine --pool-worker rig-01
 ```
 
-Tabel **Workers** juga menampilkan versi miner setiap mesin. Jika versi sudah lama atau tidak diketahui, pemberitahuan di atas statistik menautkan ke [halaman rilis seine](https://github.com/zpalmtree/seine/releases).
+Rig yang menambang solo, dengan `solo:` di depan alamat, menampilkan **Solo** pada kolom Type tabel. Tabel **Workers** juga menampilkan versi miner setiap mesin. Jika versi sudah lama atau tidak diketahui, pemberitahuan di atas statistik menautkan ke [halaman rilis seine](https://github.com/zpalmtree/seine/releases).
 
 ## Mengapa hashrate pool berbeda dari seine?
 
@@ -69,7 +69,7 @@ Tabel Recent Shares langsung menunjukkan kedatangan share, bahkan sebelum hashra
 
 ## Kapan pembayaran pertama dapat diharapkan?
 
-Tidak ada hitung mundur tetap dari share pertama hingga pembayaran pertama. Pool harus menemukan blok saat share Anda masih berada dalam jendela pembayaran. Blok itu kemudian membutuhkan 60 konfirmasi: rata-rata sekitar lima jam **setelah blok ditemukan**, tetapi waktu sebenarnya bervariasi. Setelah saldo terkonfirmasi mencapai minimum saat ini sebesar 0,1 BNT, saldo tersebut dapat masuk ke siklus pembayaran otomatis. Periksa pengaturan terbaru di [Get Started](/start).
+Tidak ada hitung mundur tetap dari share pertama hingga pembayaran pertama. Pool harus menemukan blok saat share Anda masih berada dalam jendela pembayaran. Blok itu kemudian membutuhkan 60 konfirmasi: rata-rata sekitar lima jam **setelah blok ditemukan**, tetapi waktu sebenarnya bervariasi. Setelah saldo terkonfirmasi mencapai minimum saat ini sebesar 1 BNT, saldo tersebut dapat masuk ke siklus pembayaran otomatis. Periksa pengaturan terbaru di [Get Started](/start).
 
 Ikuti status dan tautan transaksi di **Recent Payouts**. Pembayaran yang mengantre belum disiarkan ke jaringan. Jika pembayaran yang sudah dikirim tidak muncul di dompet, gunakan [panduan pemecahan masalah pembayaran](/blog/id/pool-payout-missing-from-wallet/).
 
@@ -116,7 +116,7 @@ Halaman ini tidak perlu pencarian dan menunjukkan semua kegiatan pool secara ter
 
 ### Blok
 
-[Blocks](/blocks) mencantumkan semua blok bntpool.com, terbaru dahulu: ketinggian (tautan explorer), imbalan, effort, waktu ronde, status dan waktu temuan. Filter Confirmed, Pending atau Orphaned menunjukkan keadaan tiap blok.
+[Blocks](/blocks) mencantumkan semua blok bntpool.com, terbaru dahulu: ketinggian (tautan explorer), imbalan, effort, waktu ronde, status dan waktu temuan. Kolom Type sebelum status menunjukkan apakah blok berasal dari penambangan pool bersama atau dari penambang solo, yang dibayar seluruh imbalannya. Filter Confirmed, Pending atau Orphaned menunjukkan keadaan tiap blok.
 
 ### Pembayaran
 

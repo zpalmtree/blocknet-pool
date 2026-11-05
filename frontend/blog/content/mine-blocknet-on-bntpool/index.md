@@ -2,6 +2,7 @@
 title: Mine Blocknet on bntpool.com
 description: Join bntpool.com, seine's default Blocknet pool. Connect to stratum+tcp://bntpool.com:3333 with your address or @name, name your rigs and check your stats.
 date: 2026-10-25
+updated: 2026-11-04
 tags: [Mining guide, bntpool, Blocknet ID, seine]
 faq:
   - q: What is the bntpool.com Stratum address?
@@ -23,7 +24,7 @@ This guide covers joining the bntpool.com pool with seine: the pool address, log
 The bntpool.com Stratum address is `stratum+tcp://bntpool.com:3333`. Seine offers it as the default pool on its first run, so pressing Enter at the pool prompt connects you. You log in with your Blocknet address or a Blocknet ID `@name`. There is no account to create, and rewards go to that address.
 </Answer>
 
-These are the pool's settings, as reported by its public `/api/info` endpoint on October 25, 2026:
+These are the pool's settings, as reported by its public `/api/info` endpoint on November 4, 2026:
 
 | Setting | Value |
 |---|---|
@@ -31,9 +32,11 @@ These are the pool's settings, as reported by its public `/api/info` endpoint on
 | Login | Blocknet address, `@name` or `$name` |
 | Payout scheme | PPLNS over a 6-hour window |
 | Confirmations before payout | 60 blocks |
-| Minimum payout | 0.1 BNT |
+| Minimum payout | 1 BNT |
 
 You can see the same values at any time on the pool's [Get Started](/start) page.
+
+To keep the whole reward of every block your rigs find, put `solo:` in front of your address. [Solo mining on bntpool.com](/blog/solo-mine-blocknet-on-bntpool/) shows how.
 
 ## Why is bntpool.com seine's default pool?
 
@@ -105,7 +108,7 @@ Look for three things:
 
 The pool sets share difficulty separately for each connection and adjusts it as you mine, so even a small CPU sends shares steadily and your first accepted shares appear within minutes of connecting. For the hashrate to expect from your hardware, see the [Blocknet mining hardware guide](https://seineminer.com/blog/blocknet-mining-hardware-hashrate/).
 
-Rewards come next. Estimated Rewards appear once the pool finds a block while your shares are inside the six-hour window. After that block has 60 confirmations, your share moves to Confirmed Rewards, and the pool sends it automatically once you have at least 0.1 BNT. [How PPLNS payouts work](/blog/how-pplns-payouts-work/) explains how each block's reward is split. Pool-wide history is on the [Blocks](/blocks) and [Payouts](/payouts) pages.
+Rewards come next. Estimated Rewards appear once the pool finds a block while your shares are inside the six-hour window. After that block has 60 confirmations, your share moves to Confirmed Rewards, and the pool sends it automatically once you have at least 1 BNT. [How PPLNS payouts work](/blog/how-pplns-payouts-work/) explains how each block's reward is split. Pool-wide history is on the [Blocks](/blocks) and [Payouts](/payouts) pages.
 
 ## What does the Get Started page cover?
 

@@ -9,7 +9,7 @@ faq:
     a: 'Nie. Sześćdziesiąt docelowych interwałów po pięć minut daje szacunek 300 minut, pięciu godzin. Rzeczywisty postęp zależy od bloków o zmiennych czasach nadejścia. Dojrzałość, próg salda i późniejsza transakcja są osobnymi etapami.'
   - q: 'Czy muszę dalej kopać, aby nagroda dojrzała?'
     a: 'Znaleziony blok zyskuje głębokość z nowymi blokami sieci, nawet przy odłączonym minerze. Uprawnienie wynika z zasad rozliczeń puli. Zatrzymanie nie przyspiesza ani nie zeruje dojrzewania; obserwuj zapis w My Stats.'
-sourceHash: '2f9675c64c30'
+sourceHash: '963042ab2a8e'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Blok poza nim może zostać osierocony, a jego wstępna nagroda nie kwalifikuje 
 
 ## Czym wypłata różni się od nagrody?
 
-Nagroda zaczyna w wyjściu coinbase bloku. Wypłata puli to późniejsza transakcja na twój adres. W dniu kontroli publikowane minimum wynosi 0,1 BNT. Dojrzałość i próg salda są różnymi warunkami; [poradnik PPLNS](/blog/pl/how-pplns-payouts-work/) szczegółowo opisuje podział i wypłatę.
+Nagroda zaczyna w wyjściu coinbase bloku. Wypłata puli to późniejsza transakcja na twój adres. Na dzień 4 listopada 2026 opublikowana minimalna wypłata bntpool wynosi 1 BNT. Dojrzałość i próg salda są różnymi warunkami; [poradnik PPLNS](/blog/pl/how-pplns-payouts-work/) szczegółowo opisuje podział i wypłatę.
 
 Po wysłaniu śledź transakcję oraz odbiór i możliwość wydania w portfelu. Jej potwierdzenia dotyczą wypłaty, nie pierwotnego bloku. Nie trzeba zmieniać adresu ani łączyć minera ponownie podczas dojrzewania. Porównuj [historię wypłat](/payouts) i portfel dla tego samego adresu.
 

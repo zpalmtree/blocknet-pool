@@ -2,7 +2,7 @@
 title: Czym jest pula wydobywcza?
 description: Pula wydobywcza łączy hashrate wielu górników i dzieli między nich nagrodę za każdy blok. Poznaj działanie pul, PPLNS, PPS i kopania solo.
 tags: [Podstawy kopania, Pule wydobywcze, PPLNS, bntpool]
-sourceHash: '15d1453f41d9'
+sourceHash: '698c26d17e91'
 translation: draft
 faq:
   - q: 'Czy dołączenie do puli wydobywczej zwiększa ilość wykopanych monet?'
@@ -63,20 +63,20 @@ System wypłat określa, jak pula przelicza udziały na zarobki. Te spotkasz naj
 |---|---|---|
 | PPLNS (pay per last N shares) | Bloki znalezione przez pulę | Nagroda za każdy blok jest dzielona między udziały przesłane w niedawnym oknie czasowym, według ich trudności |
 | PPS (pay per share) | Każdy zaakceptowany udział | Pula płaci stałą kwotę za udział na podstawie jego wartości oczekiwanej, niezależnie od znalezienia bloku |
-| Solo | Bloki znalezione samodzielnie | Kopiesz przez własny węzeł i zachowujesz całą nagrodę za każdy znaleziony blok |
+| Solo | Bloki znalezione samodzielnie | Zachowujesz całą nagrodę za każdy znaleziony blok, kopiąc przez pulę z trybem solo albo przez własny węzeł |
 
 **PPLNS** patrzy wstecz od każdego bloku znalezionego przez pulę. Na bntpool.com „ostatnie N udziałów” oznacza okno sześciu godzin: pula sumuje trudność wszystkich zaakceptowanych udziałów z sześciu godzin przed blokiem i przyznaje każdemu górnikowi taką część nagrody, jaką stanowi jego udział w tej pracy. Każdy udział liczy się do wszystkich bloków znalezionych, gdy znajduje się w oknie, więc górnik pracujący stale zawsze ma za sobą pełne okno, a restart niczego nie zeruje. [Jak działają wypłaty PPLNS na bntpool.com](/blog/pl/how-pplns-payouts-work/) wyjaśnia podział krok po kroku.
 
 **PPS** płaci za każdy udział po jego otrzymaniu, korzystając z jego wartości oczekiwanej: trudność udziału podzielona przez trudność sieci, pomnożona przez nagrodę za blok. Operator puli bierze na siebie wahania częstotliwości znajdowania bloków, a pomiędzy nimi płaci górnikom z własnego salda.
 
-**Kopanie solo** pomija pulę. Własny węzeł tworzy szablony, a każdy znaleziony blok wypłaca całą nagrodę do Twojego portfela. Jest odpowiednie dla instalacji wystarczająco dużych, by często znajdować bloki samodzielnie. Program seine obsługuje oba tryby: domyślnie kopie na bntpool.com, a `./seine --mode daemon` kopie przez Twój własny, zsynchronizowany węzeł Blocknet.
+**Kopanie solo** wypłaca całą nagrodę za każdy blok górnikowi, który go znalazł. Jest odpowiednie dla instalacji wystarczająco dużych, by często znajdować bloki samodzielnie. Na bntpool.com kopiesz solo, dodając `solo:` przed adresem: pula nadal uruchamia węzeł i wypłaca Twoje bloki w ramach zwykłych wypłat, a [kopanie solo na bntpool.com](/blog/pl/solo-mine-blocknet-on-bntpool/) pokazuje konfigurację. Program seine ma też tryb daemon, `./seine --mode daemon`, który kopie przez Twój własny, zsynchronizowany węzeł Blocknet.
 
 ## Na co zwracać uwagę przy wyborze puli?
 
 Porównując pule, zwróć uwagę na szczegóły decydujące o wypłatach i łatwości ich sprawdzenia:
 
 - **Jasny system wypłat.** Pula powinna podać system i jego ustawienia, takie jak okno PPLNS. bntpool.com wymienia je na [stronie Get Started](/start) i publikuje pod adresem `https://bntpool.com/api/info`.
-- **Potwierdzenia i minimalna wypłata.** Nagrody zwykle czekają, aż blok znajdzie się wystarczająco głęboko w łańcuchu, a płatności wychodzą po osiągnięciu minimum przez saldo. Na bntpool.com nagroda za blok zostaje potwierdzona po 60 blokach, zgodnie z okresem dojrzewania coinbase w Blocknecie, a salda wynoszące co najmniej 0,1 BNT są wypłacane automatycznie.
+- **Potwierdzenia i minimalna wypłata.** Nagrody zwykle czekają, aż blok znajdzie się wystarczająco głęboko w łańcuchu, a płatności wychodzą po osiągnięciu minimum przez saldo. Na bntpool.com nagroda za blok zostaje potwierdzona po 60 blokach, zgodnie z okresem dojrzewania coinbase w Blocknecie, a salda wynoszące co najmniej 1 BNT są wypłacane automatycznie.
 - **Publiczne, sprawdzalne liczby.** Powinieneś móc zobaczyć każdy blok znaleziony przez pulę i każdą wysłaną płatność. bntpool.com pokazuje je na stronach [bloków](/blocks) i [wypłat](/payouts), a nakład pracy w każdej rundzie na [stronie szczęścia](/luck).
 - **Własne statystyki.** Wyszukaj swój adres, aby zobaczyć hashrate, udziały i salda. Na bntpool.com służy do tego [strona statystyk](/stats); poradnik [monitorowania górnika](/blog/pl/track-your-miner-on-bntpool/) wyjaśnia każdą kartę.
 - **Łatwa konfiguracja.** Im mniej ustawień, tym szybciej zaczniesz kopać. bntpool.com jest domyślną pulą seine, który sam dostraja wątki, jądra obliczeniowe i pamięć. Możesz też zalogować się za pomocą [nazwy Blocknet ID](https://seineminer.com/pl/blog/blocknet-id-pay-by-name/), takiej jak `@name`, zamiast pełnego adresu.
@@ -88,11 +88,11 @@ Porównując pule, zwróć uwagę na szczegóły decydujące o wypłatach i łat
 | System wypłat | PPLNS |
 | Okno udziałów | 6 godzin |
 | Potwierdzenia przed wypłatą | 60 bloków |
-| Minimalna wypłata | 0,1 BNT |
+| Minimalna wypłata | 1 BNT |
 | Adres Stratum | `stratum+tcp://bntpool.com:3333` |
 
 [Panel puli](/) pokazuje bieżący stan: połączonych górników, hashrate puli i sieci, znalezione bloki oraz nakład pracy bieżącej rundy. Według odczytu z 25 października 2026 r. o 02:25 EDT pula osiągała około 5200 H/s w sieci o wydajności około 44 400 H/s, przy 246 połączonych górnikach. To około 12% sieci, wystarczająco, by oczekiwać około 34 bloków dziennie, jednego mniej więcej co 42 minuty. Te liczby stale się zmieniają, więc sprawdź aktualne wartości w panelu i skorzystaj z [poradnika szacowania nagród](/blog/pl/estimate-blocknet-mining-rewards/), aby przeliczyć je na BNT dla swojego hashrate.
 
 Aby dołączyć, [pobierz seine](https://seineminer.com/pl/#download), uruchom go, wklej adres Blocknet lub `@name` i zaakceptuj domyślną pulę. [Poradnik kopania z seine](https://seineminer.com/pl/blog/how-to-mine-blocknet/) opisuje każdy krok, a [kopanie Blocknetu na bntpool.com](/blog/pl/mine-blocknet-on-bntpool/) wyjaśnia nazwy maszyn i sprawdzanie pierwszych udziałów.
 
-<CTA target="pool" title="Dołącz do bntpool.com" text="Połącz seine z pulą i otrzymuj część każdego znalezionego przez nią bloku, automatycznie wysyłaną na Twój adres po osiągnięciu 0,1 BNT." />
+<CTA target="pool" title="Dołącz do bntpool.com" text="Połącz seine z pulą i otrzymuj część każdego znalezionego przez nią bloku, automatycznie wysyłaną na Twój adres po osiągnięciu 1 BNT." />

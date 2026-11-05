@@ -9,7 +9,7 @@ faq:
     a: 'Tidak. Enam puluh interval target lima menit menghasilkan perkiraan 300 menit atau lima jam. Kemajuan nyata mengikuti blok baru dengan waktu kedatangan bervariasi. Kematangan, ambang saldo, dan transaksi pembayaran berikutnya adalah tahap terpisah.'
   - q: 'Haruskah terus menambang agar imbalan matang?'
     a: 'Blok yang telah ditemukan bertambah dalam saat jaringan menambah blok, meski miner terputus. Hak imbalan mengikuti aturan akuntansi pool. Berhenti tidak mempercepat atau mengulang kematangan; pantau catatannya di My Stats.'
-sourceHash: '2f9675c64c30'
+sourceHash: 963042ab2a8e
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Blok yang keluar dapat ditandai orphaned dan imbalan sementaranya tidak lagi mem
 
 ## Apa perbedaan pembayaran dan imbalan tambang?
 
-Imbalan berasal dari output coinbase blok. Pembayaran pool adalah transaksi berikutnya ke alamat penerima. Pada tanggal pemeriksaan, minimum yang dipublikasikan 0,1 BNT. Kematangan dan ambang saldo berbeda; [panduan PPLNS](/blog/id/how-pplns-payouts-work/) merinci pembagian dan pembayaran.
+Imbalan berasal dari output coinbase blok. Pembayaran pool adalah transaksi berikutnya ke alamat penerima. Pada 4 November 2026, minimum yang dipublikasikan bntpool 1 BNT. Kematangan dan ambang saldo berbeda; [panduan PPLNS](/blog/id/how-pplns-payouts-work/) merinci pembagian dan pembayaran.
 
 Setelah dikirim, ikuti transaksi serta status penerimaan dan kemampuan belanja di dompet. Konfirmasinya milik pembayaran, bukan blok pool semula. Tidak perlu alamat baru atau menyambung ulang miner selama kematangan. Bandingkan [riwayat pembayaran](/payouts) dan dompet memakai alamat yang sama.
 

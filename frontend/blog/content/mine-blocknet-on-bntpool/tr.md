@@ -2,7 +2,7 @@
 title: bntpool.com'da Blocknet madenciliği yapın
 description: seine'in varsayılan Blocknet havuzu bntpool.com'a katılın. Adresiniz veya @name ile stratum+tcp://bntpool.com:3333'e bağlanın, rig'lerinizi adlandırın.
 tags: [Madencilik rehberi, bntpool, Blocknet ID, seine]
-sourceHash: 'df269126bb76'
+sourceHash: '9713e976f981'
 translation: draft
 faq:
   - q: 'bntpool.com Stratum adresi nedir?'
@@ -23,7 +23,7 @@ Bu rehber seine ile bntpool.com havuzuna katılmayı anlatır: havuz adresi, Blo
 bntpool.com Stratum adresi `stratum+tcp://bntpool.com:3333`'tür. seine ilk çalıştırmada bunu varsayılan havuz olarak sunar; havuz sorusunda Enter'a basmanız bağlanmak için yeterlidir. Blocknet adresiniz veya Blocknet ID `@name` ile giriş yaparsınız. Oluşturulacak hesap yoktur ve ödüller o adrese gider.
 </Answer>
 
-25 Ekim 2026 tarihinde herkese açık `/api/info` uç noktasının bildirdiği havuz ayarları şöyledir:
+4 Kasım 2026 tarihinde herkese açık `/api/info` uç noktasının bildirdiği havuz ayarları şöyledir:
 
 | Ayar | Değer |
 |---|---|
@@ -31,9 +31,11 @@ bntpool.com Stratum adresi `stratum+tcp://bntpool.com:3333`'tür. seine ilk çal
 | Giriş | Blocknet adresi, `@name` veya `$name` |
 | Ödeme yöntemi | 6 saatlik pencereyle PPLNS |
 | Ödeme öncesi onaylar | 60 blok |
-| En düşük ödeme | 0,1 BNT |
+| En düşük ödeme | 1 BNT |
 
 Aynı değerleri istediğiniz zaman havuzun [Get Started](/start) sayfasında görebilirsiniz.
+
+Cihazlarınızın bulduğu her bloğun ödülünün tamamını almak için adresinizin önüne `solo:` koyun. [bntpool.com'da solo madencilik](/blog/tr/solo-mine-blocknet-on-bntpool/) nasıl yapılacağını gösterir.
 
 ## bntpool.com neden seine'in varsayılan havuzu?
 
@@ -105,7 +107,7 @@ seine paneli makinenin üzerinde hashrate ve kabul edilen share'leri gösterir. 
 
 Havuz her bağlantı için share zorluğunu ayrı belirler ve madencilik sırasında ayarlar. Böylece küçük bir CPU bile düzenli share gönderir; ilk kabul edilen share'ler bağlantıdan birkaç dakika sonra görünür. Donanımınızdan beklenen hashrate için [Blocknet madencilik donanımı rehberine](https://seineminer.com/tr/blog/blocknet-mining-hardware-hashrate/) bakın.
 
-Ardından ödüller gelir. Share'leriniz altı saatlik pencere içindeyken havuz blok bulunca Estimated Rewards görünür. Blok 60 onay aldığında payınız Confirmed Rewards'a geçer; en az 0,1 BNT olduğunda havuz otomatik gönderir. [PPLNS ödemeleri nasıl çalışır?](/blog/tr/how-pplns-payouts-work/) her blok ödülünün paylaşımını açıklar. Havuzun tamamının geçmişi [Blocks](/blocks) ve [Payouts](/payouts) sayfalarındadır.
+Ardından ödüller gelir. Share'leriniz altı saatlik pencere içindeyken havuz blok bulunca Estimated Rewards görünür. Blok 60 onay aldığında payınız Confirmed Rewards'a geçer; en az 1 BNT olduğunda havuz otomatik gönderir. [PPLNS ödemeleri nasıl çalışır?](/blog/tr/how-pplns-payouts-work/) her blok ödülünün paylaşımını açıklar. Havuzun tamamının geçmişi [Blocks](/blocks) ve [Payouts](/payouts) sayfalarındadır.
 
 ## Get Started sayfası neleri kapsar?
 

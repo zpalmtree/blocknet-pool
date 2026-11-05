@@ -49,7 +49,7 @@ A block that is no longer on that chain can be marked orphaned, and its tentativ
 
 ## How is a payout different from the mined reward?
 
-The mined reward first belongs to the block's coinbase output. A pool payment is a later transaction sending an eligible balance to your receiving address. At the checked date, bntpool's published minimum payout is 0.1 BNT. Reaching block maturity and reaching that balance threshold answer different questions; the [PPLNS guide](/blog/how-pplns-payouts-work/) owns the allocation and payout rules in detail.
+The mined reward first belongs to the block's coinbase output. A pool payment is a later transaction sending an eligible balance to your receiving address. On November 4, 2026, bntpool's published minimum payout is 1 BNT. Reaching block maturity and reaching that balance threshold answer different questions; the [PPLNS guide](/blog/how-pplns-payouts-work/) owns the allocation and payout rules in detail.
 
 After a payment is sent, follow its own transaction record and your wallet's receipt and spendability status. Its confirmation history belongs to the payment transaction, not to the original pool block. You do not need to create a new receiving address or reconnect the miner just because a block is maturing. Use the intended address consistently when comparing the pool's [payout history](/payouts) with your wallet.
 

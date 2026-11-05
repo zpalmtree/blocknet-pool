@@ -2,7 +2,7 @@
 title: "Blocknet-Mining-Rechner"
 description: "Schätze BNT pro Tag und Woche anhand deiner Hashrate, aktueller Netzwerkdaten und des Belohnungsplans. Gebühren werden separat ausgewiesen."
 tags: [Mining-Belohnungen, Mining-Anleitung, Hashrate, bntpool]
-sourceHash: 'ce91c64a8567'
+sourceHash: '9dace0600c53'
 translation: draft
 faq:
   - q: 'Wie berechnet man Blocknet-Mining-Belohnungen?'
@@ -109,7 +109,7 @@ Der Unterschied liegt im Zeitpunkt. Allein würde dieser Zen-5-Server ungefähr 
 Zwei Pool-Eigenschaften prägen deinen ersten Tag:
 
 - **Das Fenster füllt sich über sechs Stunden.** Der Anteil eines neuen Miners an jedem Block wächst, während seine Shares das PPLNS-Fenster füllen. Danach bleibt er bei voller Leistung, solange der Miner weiterarbeitet.
-- **Belohnungen reifen vor der Auszahlung.** Nach 60 Bestätigungen, etwa fünf Stunden, wandert die Blockbelohnung zu Confirmed Rewards. Der Pool sendet dein Guthaben automatisch ab 0,1 BNT.
+- **Belohnungen reifen vor der Auszahlung.** Nach 60 Bestätigungen, etwa fünf Stunden, wandert die Blockbelohnung zu Confirmed Rewards. Der Pool sendet dein Guthaben automatisch ab 1 BNT.
 
 ## Wie vergleichst du die Schätzung mit echten Ergebnissen?
 

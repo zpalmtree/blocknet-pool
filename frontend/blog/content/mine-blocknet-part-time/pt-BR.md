@@ -9,7 +9,7 @@ faq:
     a: 'Uma conexão ativa de mineração não é requisito de pagamento. Saldos confirmados seguem as regras de pagamento do pool, incluindo o limite mínimo atual. Desconectar, por si só, não apaga o saldo nem solicita pagamento imediato.'
   - q: 'Reconectar reinicia a idade das shares antigas?'
     a: 'Não. Shares existentes preservam seus horários. Novo trabalho aceito entra nas janelas relevantes após seu retorno; reconectar não renova shares antigas nem adiciona trabalho pelas horas offline. Verifique novas shares aceitas após reiniciar.'
-sourceHash: '0a11c393062e'
+sourceHash: 'a5bf859e0abb'
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Sim. Trabalho elegível de uma sessão curta pode participar de blocos cujas jan
 
 ## Entenda qual relógio está acompanhando
 
-O bntpool publica atualmente, na [página de primeiros passos](/start), uma janela PPLNS de seis horas, 60 blocos antes da elegibilidade de pagamento e pagamento mínimo de 0,1 BNT. São três etapas diferentes: trabalho considerado para um bloco, maturação desse bloco e limite de saldo. Uma janela de shares de seis horas não é um cronômetro que promete pagamento em seis horas.
+O bntpool publica atualmente, na [página de primeiros passos](/start), uma janela PPLNS de seis horas, 60 blocos antes da elegibilidade de pagamento e pagamento mínimo de 1 BNT. São três etapas diferentes: trabalho considerado para um bloco, maturação desse bloco e limite de saldo. Uma janela de shares de seis horas não é um cronômetro que promete pagamento em seis horas.
 
 Para a fórmula de distribuição, consulte o [guia de PPLNS](/blog/pt-br/how-pplns-payouts-work/). Suas shares elegíveis são ponderadas pela dificuldade em relação a todo o trabalho elegível da mesma janela. Só os minutos online não fixam uma porcentagem da próxima recompensa. Dispositivos, participação no pool e resultados das shares podem mudar os pesos mesmo com sessões de igual duração.
 
@@ -45,7 +45,7 @@ Encerre o seine normalmente com `q` no painel ou `Ctrl+C` no terminal. Guarde o 
 
 Quando uma share sai da janela de um bloco posterior, isso não apaga uma recompensa já distribuída para um bloco anterior. Recompensas estimadas ainda seguem o estado e a maturação do bloco; recompensas confirmadas não pagas ficam na conta até o processamento do pagamento. O [guia de confirmações](/blog/pt-br/block-confirmations-mining-rewards/) diferencia crédito provisório de bloco e saldo maduro.
 
-Um saldo confirmado abaixo de 0,1 BNT continua abaixo do limite automático atual até que novos créditos atinjam o mínimo. Reconectar sozinho não aumenta o saldo nem força um pagamento. Por outro lado, um saldo elegível não exige que o minerador fique online enquanto o pool o processa. Use o [histórico de pagamentos](/payouts) para separar saldo não pago de transação enviada.
+Um saldo confirmado abaixo de 1 BNT continua abaixo do limite automático atual até que novos créditos atinjam o mínimo. Reconectar sozinho não aumenta o saldo nem força um pagamento. Por outro lado, um saldo elegível não exige que o minerador fique online enquanto o pool o processa. Use o [histórico de pagamentos](/payouts) para separar saldo não pago de transação enviada.
 
 ## Volte à mesma conta e confira trabalho novo
 

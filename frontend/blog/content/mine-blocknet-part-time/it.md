@@ -9,7 +9,7 @@ faq:
     a: 'Una connessione attiva non è un requisito. I saldi confermati seguono le regole di pagamento del pool, compresa la soglia minima attuale. Scollegarsi non cancella il saldo né richiede automaticamente un pagamento immediato.'
   - q: 'Ricollegarsi azzera l’età delle share precedenti?'
     a: 'No. Le share conservano i timestamp. Il lavoro nuovo entra nelle finestre pertinenti dopo il ritorno; ricollegarsi non rinnova share vecchie e non aggiunge lavoro per le ore offline. Verifica nuove share accettate dopo il riavvio.'
-sourceHash: '0a11c393062e'
+sourceHash: 'a5bf859e0abb'
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Sì. Il lavoro idoneo di una sessione breve può partecipare ai blocchi le cui f
 
 ## Distingui i diversi tempi
 
-bntpool pubblica attualmente una finestra PPLNS di sei ore, 60 blocchi prima dell’idoneità al pagamento e un minimo di 0,1 BNT sulla [pagina iniziale](/start). Sono lavoro considerato, maturazione del blocco e soglia del saldo. Le sei ore non sono un timer che promette un pagamento.
+bntpool pubblica attualmente una finestra PPLNS di sei ore, 60 blocchi prima dell’idoneità al pagamento e un minimo di 1 BNT sulla [pagina iniziale](/start). Sono lavoro considerato, maturazione del blocco e soglia del saldo. Le sei ore non sono un timer che promette un pagamento.
 
 La [guida PPLNS](/blog/it/how-pplns-payouts-work/) spiega la formula. Le share idonee sono ponderate per difficoltà rispetto a tutto il lavoro idoneo nella finestra. I minuti online non fissano una percentuale del prossimo premio. Hardware, partecipazione al pool ed esiti delle share possono cambiare i pesi anche a parità di durata.
 
@@ -45,7 +45,7 @@ Esci normalmente da seine con `q` nel pannello o `Ctrl+C` nel terminale. Conserv
 
 Quando una share esce dalla finestra di un blocco successivo, non cancella una ricompensa già assegnata a uno precedente. Le stime seguono stato e maturazione del blocco; gli importi confermati non pagati restano nell’account fino all’elaborazione. La [guida alle conferme](/blog/it/block-confirmations-mining-rewards/) distingue credito provvisorio e saldo maturo.
 
-Un saldo confermato sotto 0,1 BNT resta sotto la soglia automatica attuale finché nuovi crediti raggiungono il minimo. Ricollegarsi non lo aumenta né forza il pagamento. Un saldo idoneo non richiede neppure il miner online durante l’elaborazione. La [cronologia dei pagamenti](/payouts) distingue saldo aperto e transazione inviata.
+Un saldo confermato sotto 1 BNT resta sotto la soglia automatica attuale finché nuovi crediti raggiungono il minimo. Ricollegarsi non lo aumenta né forza il pagamento. Un saldo idoneo non richiede neppure il miner online durante l’elaborazione. La [cronologia dei pagamenti](/payouts) distingue saldo aperto e transazione inviata.
 
 ## Torna allo stesso account e verifica lavoro nuovo
 

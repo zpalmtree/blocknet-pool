@@ -1,18 +1,18 @@
 ---
 title: Thanh toán PPLNS trên bntpool.com hoạt động thế nào?
-description: bntpool.com trả thưởng thợ đào Blocknet bằng PPLNS với cửa sổ share sáu giờ. Tìm hiểu cách chia thưởng, 60 xác nhận và mức tối thiểu 0,1 BNT.
+description: bntpool.com trả thưởng thợ đào Blocknet bằng PPLNS với cửa sổ share sáu giờ. Tìm hiểu cách chia thưởng, 60 xác nhận và mức tối thiểu 1 BNT.
 tags: [Thanh toán, PPLNS, bntpool, Hướng dẫn đào coin]
-sourceHash: 'f216680e1944'
+sourceHash: 2f69ab18ce0b
 translation: draft
 faq:
   - q: 'Cửa sổ PPLNS trên bntpool.com dài bao lâu?'
     a: 'Cửa sổ là sáu giờ. Khi pool tìm thấy khối, nó nhìn lại sáu giờ trước khối đó và chia phần thưởng cho mọi người đã gửi share trong thời gian ấy, theo tỷ lệ độ khó share. Giá trị hiện tại được liệt kê trên trang Get Started của pool.'
   - q: 'Mức thanh toán tối thiểu trên bntpool.com là bao nhiêu?'
-    a: 'Mức tối thiểu là 0,1 BNT. Khi số dư đã xác nhận đạt mức đó, pool tự động gửi đến địa chỉ Blocknet của bạn, không cần yêu cầu hay nhận thủ công. Số dư nhỏ hơn ở lại tài khoản và tăng theo từng khối đã xác nhận mà bạn có share đóng góp, cho đến khi vượt ngưỡng.'
+    a: 'Mức tối thiểu là 1 BNT. Khi số dư đã xác nhận đạt mức đó, pool tự động gửi đến địa chỉ Blocknet của bạn, không cần yêu cầu hay nhận thủ công. Số dư nhỏ hơn ở lại tài khoản và tăng theo từng khối đã xác nhận mà bạn có share đóng góp, cho đến khi vượt ngưỡng.'
   - q: 'Vì sao Estimated Rewards khác Confirmed Rewards?'
     a: 'Estimated Rewards là phần của bạn trong các khối pool tìm thấy vẫn đang thu thập 60 xác nhận, nên con số còn có thể đổi. Confirmed Rewards đến từ khối đã sâu 60 khối và đang chờ thanh toán. Khi từng khối trưởng thành, số tiền chuyển từ thẻ đầu sang thẻ thứ hai.'
   - q: 'Phần thưởng có dừng ngay khi tôi ngừng đào không?'
-    a: 'Không. Mỗi share ở trong cửa sổ PPLNS sáu giờ sau khi gửi, nên các khối pool tìm được trong thời gian đó vẫn ghi thưởng cho bạn. Phần thưởng đã xác nhận giữ nguyên trong số dư, và pool thanh toán khi số dư đạt mức tối thiểu 0,1 BNT.'
+    a: 'Không. Mỗi share ở trong cửa sổ PPLNS sáu giờ sau khi gửi, nên các khối pool tìm được trong thời gian đó vẫn ghi thưởng cho bạn. Phần thưởng đã xác nhận giữ nguyên trong số dư, và pool thanh toán khi số dư đạt mức tối thiểu 1 BNT.'
   - q: 'Effort trên 100% ở trang may mắn nghĩa là gì?'
     a: 'Effort so sánh công việc pool đã làm trong vòng với độ khó khối, tức lượng công việc kỳ vọng. Trên 100% nghĩa là vòng đó lâu hơn trung bình, dưới 100% là nhanh hơn. Cả hai đều bình thường; qua nhiều vòng, effort trung bình về khoảng 100%.'
 ---
@@ -34,7 +34,7 @@ Trên bntpool.com, “N cuối” là khoảng thời gian: sáu giờ. [Trang G
 | Phương thức trả thưởng | PPLNS |
 | Cửa sổ share | 6 giờ |
 | Xác nhận trước thanh toán | 60 khối |
-| Thanh toán tối thiểu | 0,1 BNT |
+| Thanh toán tối thiểu | 1 BNT |
 
 Share được tính theo độ khó. Pool đặt độ khó riêng cho mỗi kết nối thợ đào và điều chỉnh để mỗi người gửi share đều đặn. Máy nhanh hơn nhận share khó hơn, nên mỗi share có trọng số lớn hơn. Phần của bạn được quyết định bởi tổng công việc đã làm, một thước đo công bằng cho cả laptop lẫn máy chủ.
 
@@ -46,7 +46,7 @@ Khi pool tìm được khối, phần thưởng luôn đi qua cùng các bước
 2. **Cửa sổ được đo.** Pool lấy sáu giờ kết thúc tại khối và cộng độ khó mọi share được chấp nhận từ mỗi địa chỉ trong khoảng đó.
 3. **Phần thưởng được chia.** Mỗi địa chỉ nhận tỷ lệ phần thưởng bằng tỷ lệ công việc của mình trong tổng cửa sổ.
 4. **Khối trưởng thành.** Phần của bạn hiển thị là ước tính cho đến khi khối sâu 60 khối, rồi chuyển vào số dư đã xác nhận.
-5. **Số dư được thanh toán.** Khi số dư đã xác nhận đạt 0,1 BNT, pool gửi đến địa chỉ của bạn.
+5. **Số dư được thanh toán.** Khi số dư đã xác nhận đạt 1 BNT, pool gửi đến địa chỉ của bạn.
 
 ## Ví dụ tính toán
 
@@ -64,7 +64,7 @@ Giờ hình dung thợ đào thứ hai có hashrate y hệt bạn nhưng kết n
 | Cùng hashrate, tham gia 30 phút trước khối | 1.667 | khoảng 0,17% | khoảng 0,67 BNT |
 | Thợ đào nhỏ, đào trọn sáu giờ | 100 | 0,01% | 0,04 BNT |
 
-Thợ đào nhỏ ở hàng cuối kiếm 0,04 BNT mỗi khối, nên số dư đã xác nhận vượt mức tối thiểu 0,1 BNT sau ba khối như vậy và được thanh toán.
+Thợ đào nhỏ ở hàng cuối kiếm 0,04 BNT mỗi khối, nên số dư đã xác nhận vượt mức tối thiểu 1 BNT sau 25 khối như vậy và được thanh toán.
 
 ## Vì sao PPLNS thưởng cho người đào đều đặn?
 
@@ -83,7 +83,7 @@ Trong lúc khối trưởng thành, pool kiểm tra nó vẫn thuộc chuỗi ch
 ## Khi nào nhận thanh toán bntpool.com?
 
 <Answer>
-Sau khi khối có 60 xác nhận, khoảng năm giờ với thời gian khối năm phút của Blocknet, phần của bạn chuyển vào Confirmed Rewards trên trang thống kê. Khi số dư đã xác nhận đạt 0,1 BNT, bntpool.com tự động gửi đến địa chỉ Blocknet. Bạn không cần yêu cầu hay nhận thủ công.
+Sau khi khối có 60 xác nhận, khoảng năm giờ với thời gian khối năm phút của Blocknet, phần của bạn chuyển vào Confirmed Rewards trên trang thống kê. Khi số dư đã xác nhận đạt 1 BNT, bntpool.com tự động gửi đến địa chỉ Blocknet. Bạn không cần yêu cầu hay nhận thủ công.
 </Answer>
 
 Với người mới, ước tính đầu tiên xuất hiện khi pool tìm khối trong lúc share của bạn nằm trong cửa sổ. Khoản thanh toán đầu tiên đến sau khi khối ấy trưởng thành và số dư đạt tối thiểu. Khoản đã gửi được liệt kê trên [trang thanh toán](/payouts) và lịch sử riêng trên trang thống kê.
@@ -106,4 +106,4 @@ Effort đo lượng công việc pool đã làm để tìm khối. Nó bằng c�
 
 May mắn ảnh hưởng tần suất khối xuất hiện. Phần của bạn trong mỗi khối chỉ phụ thuộc tỷ lệ công việc trong cửa sổ; đào đều đặn giữ tỷ lệ đó đầy đủ dù vòng nhanh hay lâu.
 
-<CTA target="pool" title="Tham gia pool" text="Đào đều đặn trên bntpool.com; phần của bạn trong mỗi khối được tự động thanh toán khi đạt 0,1 BNT." />
+<CTA target="pool" title="Tham gia pool" text="Đào đều đặn trên bntpool.com; phần của bạn trong mỗi khối được tự động thanh toán khi đạt 1 BNT." />

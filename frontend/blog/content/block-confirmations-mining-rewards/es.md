@@ -9,7 +9,7 @@ faq:
     a: 'No. Sesenta intervalos de cinco minutos equivalen a 300 minutos, cinco horas, como estimación. El progreso real depende de nuevos bloques, cuyos tiempos varían. Madurez de la recompensa, umbral de pago y transacción posterior son etapas separadas.'
   - q: '¿Debo seguir minando para que madure una recompensa existente?'
     a: 'Un bloque ya encontrado gana profundidad al crecer la cadena, aunque tu minero esté desconectado. Tu participación depende de las reglas contables del pool. Parar no acelera ni reinicia la madurez; sigue la recompensa registrada en My Stats.'
-sourceHash: '2f9675c64c30'
+sourceHash: '963042ab2a8e'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Un bloque que sale de esa cadena puede marcarse huérfano y su recompensa tentat
 
 ## ¿En qué difiere el pago de la recompensa minada?
 
-La recompensa empieza en la salida coinbase del bloque. El pago del pool es una transacción posterior que envía saldo elegible a tu dirección. En la fecha comprobada, el mínimo publicado es 0,1 BNT. Alcanzar madurez y alcanzar ese saldo son condiciones distintas; la [guía PPLNS](/blog/es/how-pplns-payouts-work/) detalla reparto y pago.
+La recompensa empieza en la salida coinbase del bloque. El pago del pool es una transacción posterior que envía saldo elegible a tu dirección. El 4 de noviembre de 2026, el mínimo publicado es 1 BNT. Alcanzar madurez y alcanzar ese saldo son condiciones distintas; la [guía PPLNS](/blog/es/how-pplns-payouts-work/) detalla reparto y pago.
 
 Una vez enviado, sigue el registro de esa transacción y la recepción y disponibilidad en tu cartera. Sus confirmaciones pertenecen al pago, no al bloque original del pool. No hace falta crear otra dirección ni reconectar el minero mientras madura un bloque. Usa la dirección prevista al comparar [historial de pagos](/payouts) y cartera.
 

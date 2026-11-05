@@ -4,16 +4,16 @@ description: 'Entiende las comisiones del pool y del minero en Blocknet. Aprende
 tags: ['Guía de minería', 'Comisiones', 'Recompensas']
 faq:
   - q: '¿Son el mismo cargo?'
-    a: 'No. La comisión del pool pertenece al reparto de recompensas; la del desarrollador, al software. seine v0.2.36 dedica un 2% del tiempo sujeto a comisión al desarrollo tras la gracia inicial. El pool bntpool.com publicaba un 0% al comprobarlo el 26 de octubre de 2026.'
+    a: 'No. La comisión del pool pertenece al reparto de recompensas; la del desarrollador, al software. seine v0.3.1 dedica un 2% del tiempo sujeto a comisión al desarrollo tras la gracia inicial. El pool bntpool.com publicaba un 0% al comprobarlo el 26 de octubre de 2026.'
   - q: '¿Cómo se combinan?'
     a: 'Para una estimación bruta, multiplica por uno menos la fracción del minero y después por uno menos la del pool. Usa la versión real y la configuración actual. Esto estima recompensas retenidas, no garantiza un pago ni calcula beneficios monetarios.'
   - q: '¿Descuento la comisión del minero del hashrate del pool?'
     a: 'Primero identifica qué representa. Si ya estima trabajo acreditado a tu dirección después del tiempo del desarrollador, descontarlo de nuevo lo duplicaría. El calculador permite poner cero para ese ajuste ya reflejado. No vuelvas a descontar ninguna comisión de un saldo confirmado o pago registrado.'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-Identifica las dos capas de comisiones de una estimación Blocknet y dónde actúan. La guía usa seine v0.2.36 y ajustes públicos de bntpool comprobados el 26 de octubre de 2026. Ayuda a elegir entradas del [calculador](/blog/es/estimate-blocknet-mining-rewards/#mining-calculator) y entender [My Stats](/stats).
+Identifica las dos capas de comisiones de una estimación Blocknet y dónde actúan. La guía usa seine v0.3.1 y ajustes públicos de bntpool comprobados el 26 de octubre de 2026. Ayuda a elegir entradas del [calculador](/blog/es/estimate-blocknet-mining-rewards/#mining-calculator) y entender [My Stats](/stats).
 
 ## ¿Qué diferencia hay entre la comisión del pool y del minero?
 
@@ -31,7 +31,7 @@ El 26 de octubre de 2026, `https://bntpool.com/api/info` publica `pool_fee_pct` 
 
 ## ¿Cómo funciona la comisión de seine?
 
-La versión pública v0.2.36 documenta un 2% uniforme en cualquier pool y en solitario. Se programa como tiempo de minería para la dirección del desarrollador, no como retirada posterior de tu cartera. Los primeros 10 minutos no tienen comisión; se cuenta el tiempo posterior. La [guía de configuración](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) describe la política.
+La versión pública v0.3.1 documenta un 2% uniforme en cualquier pool y en solitario. Se programa como tiempo de minería para la dirección del desarrollador, no como retirada posterior de tu cartera. Los primeros 10 minutos no tienen comisión; se cuenta el tiempo posterior. La [guía de configuración](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) describe la política.
 
 La programación funciona por rondas, por lo que una ventana corta puede no dar exactamente 2%. Es el objetivo a largo plazo tras la gracia, no una promesa por minuto o recompensa. Guarda la versión: otra guía histórica o programa puede tener otra política. La comisión del pool no sustituye ese dato del software.
 

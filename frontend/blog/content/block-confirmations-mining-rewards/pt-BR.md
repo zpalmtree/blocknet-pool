@@ -9,7 +9,7 @@ faq:
     a: 'Não. Sessenta intervalos-alvo de cinco minutos dão uma estimativa de 300 minutos, cinco horas. O avanço real depende de novos blocos, cujos intervalos variam. Maturidade, limite de pagamento e transação posterior são etapas diferentes.'
   - q: 'Preciso continuar minerando para uma recompensa amadurecer?'
     a: 'Um bloco encontrado ganha profundidade com os blocos da rede, mesmo com seu minerador desconectado. Sua participação depende das regras contábeis do pool. Parar não acelera nem reinicia a maturidade; acompanhe o registro em My Stats.'
-sourceHash: '2f9675c64c30'
+sourceHash: '963042ab2a8e'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Um bloco que sai dessa cadeia pode ser marcado órfão, e sua recompensa provis�
 
 ## Como o pagamento difere da recompensa minerada?
 
-A recompensa começa na saída coinbase do bloco. Um pagamento do pool é uma transação posterior para seu endereço. Na data verificada, o mínimo publicado é 0,1 BNT. Maturidade e limite de saldo são condições diferentes; o [guia PPLNS](/blog/pt-br/how-pplns-payouts-work/) detalha distribuição e pagamento.
+A recompensa começa na saída coinbase do bloco. Um pagamento do pool é uma transação posterior para seu endereço. Em 4 de novembro de 2026, o mínimo publicado é 1 BNT. Maturidade e limite de saldo são condições diferentes; o [guia PPLNS](/blog/pt-br/how-pplns-payouts-work/) detalha distribuição e pagamento.
 
 Depois do envio, acompanhe a transação e o estado de recebimento e disponibilidade na carteira. As confirmações pertencem ao pagamento, não ao bloco original. Não é necessário trocar de endereço nem reconectar o minerador durante a maturação. Compare [histórico de pagamentos](/payouts) e carteira com o mesmo endereço previsto.
 

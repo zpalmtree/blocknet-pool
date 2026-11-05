@@ -2,7 +2,7 @@
 title: Deinen Miner auf bntpool.com überwachen
 description: Suche auf bntpool.com nach Adresse oder @name für Hashrate, Shares, Guthaben und Auszahlungen. Verfolge Blöcke und Glück oder nutze die öffentliche API.
 tags: [bntpool, Mining-Statistik, Pool-API, Blocknet]
-sourceHash: 'f74ae9281fd2'
+sourceHash: '75495e49f3e9'
 translation: draft
 faq:
   - q: 'Warum unterscheidet sich meine Hashrate auf bntpool.com von der in seine?'
@@ -54,7 +54,7 @@ Gib bei mehreren Rechnern jedem einen eigenen Namen. Der Pool listet sie dann ge
 ./seine --pool-worker rig-01
 ```
 
-Die Tabelle **Workers** zeigt auch die Miner-Version jedes Rechners. Bei alten oder unbekannten Versionen führt ein Hinweis oberhalb der Statistiken zur [seine-Release-Seite](https://github.com/zpalmtree/seine/releases).
+Rigs, die solo minen, mit `solo:` vor der Adresse, zeigen in der Spalte Typ der Tabelle **Solo** an. Die Tabelle **Workers** zeigt auch die Miner-Version jedes Rechners. Bei alten oder unbekannten Versionen führt ein Hinweis oberhalb der Statistiken zur [seine-Release-Seite](https://github.com/zpalmtree/seine/releases).
 
 ## Warum unterscheidet sich die Pool-Hashrate von der in seine?
 
@@ -69,7 +69,7 @@ Recent Shares zeigt sofort, dass Shares eintreffen, noch bevor sich die Hashrate
 
 ## Wann kannst du mit deiner ersten Auszahlung rechnen?
 
-Zwischen dem ersten Share und der ersten Auszahlung gibt es keine feste Wartezeit. Der Pool muss einen Block finden, während deine Shares im Auszahlungsfenster liegen. Dieser Block braucht anschließend 60 Bestätigungen: durchschnittlich etwa fünf Stunden **ab dem Blockfund**, wobei die tatsächliche Zeit schwankt. Erreicht dein bestätigtes Guthaben die aktuelle Mindestgrenze von 0,1 BNT, kann es beim automatischen Auszahlungslauf ausgezahlt werden. Aktuelle Einstellungen stehen unter [Get Started](/start).
+Zwischen dem ersten Share und der ersten Auszahlung gibt es keine feste Wartezeit. Der Pool muss einen Block finden, während deine Shares im Auszahlungsfenster liegen. Dieser Block braucht anschließend 60 Bestätigungen: durchschnittlich etwa fünf Stunden **ab dem Blockfund**, wobei die tatsächliche Zeit schwankt. Erreicht dein bestätigtes Guthaben die aktuelle Mindestgrenze von 1 BNT, kann es beim automatischen Auszahlungslauf ausgezahlt werden. Aktuelle Einstellungen stehen unter [Get Started](/start).
 
 Status und Transaktionslink findest du unter **Recent Payouts**. Eine eingereihte Zahlung wurde noch nicht gesendet. Fehlt eine gesendete Zahlung in deiner Wallet, hilft der [Leitfaden zu fehlenden Auszahlungen](/blog/de/pool-payout-missing-from-wallet/).
 
@@ -116,7 +116,7 @@ Diese Seiten brauchen keine Adresssuche und zeigen alle Aktivitäten des Pools �
 
 ### Blöcke
 
-[Blocks](/blocks) listet jeden gefundenen Block von bntpool.com, die neuesten zuerst: Höhe mit Explorer-Link, Belohnung, Effort, Rundendauer, Status und Fundzeit. Filtere nach Confirmed, Pending oder Orphaned, um den Stand jedes Blocks zu sehen.
+[Blocks](/blocks) listet jeden gefundenen Block von bntpool.com, die neuesten zuerst: Höhe mit Explorer-Link, Belohnung, Effort, Rundendauer, Status und Fundzeit. Eine Spalte Typ vor dem Status zeigt, ob ein Block aus dem geteilten Pool-Mining stammt oder von einem Solo-Miner, der die volle Belohnung erhält. Filtere nach Confirmed, Pending oder Orphaned, um den Stand jedes Blocks zu sehen.
 
 ### Auszahlungen
 

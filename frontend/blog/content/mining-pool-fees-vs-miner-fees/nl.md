@@ -4,16 +4,16 @@ description: 'Begrijp pool- en minerkosten bij Blocknet: waar ze gelden, hoe je 
 tags: ['Mininggids', 'Poolkosten', 'Beloningen']
 faq:
   - q: 'Zijn dit dezelfde kosten?'
-    a: 'Nee. Poolkosten horen bij beloningsverdeling, ontwikkelaarskosten bij de software. seine v0.2.36 besteedt na de startvrijstelling 2% van de daarvoor tellende miningtijd aan ontwikkeling. De afzonderlijke bntpool-kosten waren 0% op 26 oktober 2026.'
+    a: 'Nee. Poolkosten horen bij beloningsverdeling, ontwikkelaarskosten bij de software. seine v0.3.1 besteedt na de startvrijstelling 2% van de daarvoor tellende miningtijd aan ontwikkeling. De afzonderlijke bntpool-kosten waren 0% op 26 oktober 2026.'
   - q: 'Hoe combineer ik ze?'
     a: 'Vermenigvuldig een bruto schatting met één min de minerfractie, daarna met één min de poolfractie. Gebruik je werkelijke versie en actuele instelling. Dit schat behouden beloningen, geen gegarandeerde betaling of geldwinst.'
   - q: 'Moet ik minerkosten van poolhashrate aftrekken?'
     a: 'Bepaal eerst wat dat cijfer inhoudt. Als het al werk voor je adres na ontwikkelaarstijd schat, tel je de kosten dubbel. De calculator kan nul gebruiken voor die reeds verwerkte aanpassing. Trek kosten niet opnieuw af van bevestigd saldo of geregistreerde betaling.'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-Volg de twee kostenlagen van een Blocknet-schatting. Deze gids gebruikt seine v0.2.36 en openbare bntpool-instellingen gecontroleerd op 26 oktober 2026 voor de [calculator](/blog/nl/estimate-blocknet-mining-rewards/#mining-calculator) en [My Stats](/stats).
+Volg de twee kostenlagen van een Blocknet-schatting. Deze gids gebruikt seine v0.3.1 en openbare bntpool-instellingen gecontroleerd op 26 oktober 2026 voor de [calculator](/blog/nl/estimate-blocknet-mining-rewards/#mining-calculator) en [My Stats](/stats).
 
 ## Wat verschilt tussen pool- en minerkosten?
 
@@ -31,7 +31,7 @@ Op 26 oktober 2026 publiceert `https://bntpool.com/api/info` voor `pool_fee_pct`
 
 ## Hoe werken seine-ontwikkelaarskosten?
 
-v0.2.36 documenteert 2% op iedere pool en in solomodus. Het is miningtijd voor het ontwikkelaarsadres, geen latere afschrijving uit je wallet. De eerste 10 minuten zijn vrijgesteld; daarna wordt tijd bijgehouden. Zie de [configuratiegids](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md).
+v0.3.1 documenteert 2% op iedere pool en in solomodus. Het is miningtijd voor het ontwikkelaarsadres, geen latere afschrijving uit je wallet. De eerste 10 minuten zijn vrijgesteld; daarna wordt tijd bijgehouden. Zie de [configuratiegids](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md).
 
 De planning werkt in rondes, dus een kort tijdvak hoeft niet precies 2% te zijn. Dit is het langetermijndoel na de vrijstelling, geen belofte per minuut of blok. Noteer de versie: oudere documentatie en andere software kunnen verschillen. Poolkosten vervangen die informatie niet.
 

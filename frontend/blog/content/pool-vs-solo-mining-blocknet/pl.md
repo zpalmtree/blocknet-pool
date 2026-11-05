@@ -1,8 +1,8 @@
 ---
 title: Kopanie Blocknetu w puli a solo
-description: Wybierz kopanie Blocknetu w puli lub solo. Oblicz oczekiwaną liczbę bloków dziennie, poznaj regularne wypłaty bntpool.com i skonfiguruj kopanie solo.
+description: Wybierz kopanie Blocknetu w puli lub solo. Oblicz oczekiwaną liczbę bloków dziennie, porównaj wspólne i solowe nagrody na bntpool.com i skonfiguruj kopanie solo.
 tags: [Poradnik kopania, Kopanie solo, bntpool, PPLNS]
-sourceHash: 171d240d6c4b
+sourceHash: 'aecc3e8f992f'
 translation: draft
 faq:
   - q: 'Jak często znajdowałbym blok Blocknetu, kopiąc solo?'
@@ -10,20 +10,20 @@ faq:
   - q: 'Czy do kopania na bntpool.com muszę uruchomić węzeł Blocknet?'
     a: 'Nie. Pula prowadzi własny węzeł Blocknet, tworzy szablony bloków i przesyła znalezione bloki. Potrzebujesz tylko seine i adresu Blocknet lub nazwy Blocknet ID. Uruchom seine, wklej adres, zaakceptuj domyślną pulę, a pula będzie wypłacać na ten adres Twoją część każdego bloku.'
   - q: 'Czy seine może kopać Blocknet solo?'
-    a: 'Tak. Uruchom seine poleceniem ./seine --mode daemon, aby kopać bezpośrednio przez własny, zsynchronizowany węzeł Blocknet, łącząc się za pomocą pliku cookie jego API. Każdy znaleziony blok wypłaca całą nagrodę do portfela węzła. Poradnik kopania solo w repozytorium seine opisuje niestandardowe konfiguracje węzła i hasła portfela.'
+    a: 'Tak, na dwa sposoby. Dodaj solo: przed adresem, jak w ./seine --address solo:YOUR_ADDRESS, a bntpool.com wypłaci Ci całą nagrodę za każdy znaleziony przez Ciebie blok, bez prowadzenia węzła. Możesz też uruchomić seine z --mode daemon, aby kopać przez własny, zsynchronizowany węzeł Blocknet.'
   - q: 'Czy mogę później przełączyć się między kopaniem w puli a solo?'
-    a: 'Tak. seine używa tego samego pliku do pobrania w obu trybach. Uruchom go normalnie, aby kopać na bntpool.com, lub dodaj --mode daemon, aby kopać przez własny węzeł. Zrestartuj program, gdy chcesz zmienić tryb. Już przesłane udziały pozostają w sześciogodzinnym oknie PPLNS puli i nadal zarabiają do jego końca.'
+    a: 'Tak. seine używa tego samego pliku do pobrania we wszystkich opcjach. Dodaj lub usuń prefiks solo: w adresie albo dodaj --mode daemon dla własnego węzła i zrestartuj seine, gdy chcesz zmienić tryb. Udziały już przesłane w ramach wspólnych nagród pozostają w sześciogodzinnym oknie PPLNS i nadal zarabiają do jego końca.'
 ---
 
-Ten poradnik pomoże Ci zdecydować, czy kopać Blocknet na bntpool.com, czy solo przez własny węzeł. Obliczysz, ile bloków Twój hashrate znajduje samodzielnie, zobaczysz, jak pula zamienia to w regularny strumień wypłat, i dowiesz się, jak skonfigurować oba tryby w seine.
+Ten poradnik pomoże Ci wybrać między wspólnymi nagrodami w puli a kopaniem Blocknet solo, przez bntpool.com albo przez własny węzeł. Obliczysz, ile bloków Twój hashrate znajduje samodzielnie, zobaczysz, jak pula zamienia to w regularny strumień wypłat, i dowiesz się, jak skonfigurować każdą opcję w seine.
 
 ## Kopać Blocknet w puli czy solo?
 
 <Answer>
-Oba tryby opierają się na tych samych obliczeniach: Twój udział w hashrate sieci wyznacza udział w jej blokach. Na bntpool.com otrzymujesz część każdego bloku znalezionego przez pulę, więc wypłaty przychodzą regularnie wraz z blokami puli. Kopiąc solo, zachowujesz całą nagrodę za każdy samodzielnie znaleziony blok, co odpowiada dużym instalacjom z własnym węzłem.
+Oba tryby opierają się na tych samych obliczeniach: Twój udział w hashrate sieci wyznacza udział w jej blokach. Na bntpool.com otrzymujesz część każdego bloku znalezionego przez pulę, więc wypłaty przychodzą regularnie wraz z blokami puli. Kopiąc solo, zachowujesz całą nagrodę za każdy samodzielnie znaleziony blok, co odpowiada dużym instalacjom. bntpool.com oferuje oba tryby.
 </Answer>
 
-Dla większości górników bntpool.com jest łatwym punktem startu. To domyślna pula seine, więc poza adresem niczego nie musisz konfigurować ani uruchamiać i synchronizować węzła. Kopanie solo też jest w pełni obsługiwane: seine ma tryb demona, który kopie bezpośrednio przez Twój węzeł Blocknet. Dalsza część poradnika pokazuje, jak określić tryb odpowiedni dla Twojego sprzętu.
+Dla większości górników bntpool.com jest łatwym punktem startu. To domyślna pula seine, więc poza adresem niczego nie musisz konfigurować ani uruchamiać i synchronizować węzła. Kopanie solo też jest w pełni obsługiwane. Dodaj `solo:` przed adresem, a bntpool.com wypłaci Ci całą nagrodę za każdy blok znaleziony przez Twoje koparki, bez prowadzenia węzła. seine ma też tryb demona, który kopie bezpośrednio przez Twój węzeł Blocknet. Dalsza część poradnika pokazuje, jak określić tryb odpowiedni dla Twojego sprzętu.
 
 ## Ile bloków znalazłbyś solo?
 
@@ -67,7 +67,7 @@ bntpool.com łączy hashrate wszystkich swoich górników, więc znajduje bloki 
 Ma to dla Ciebie kilka praktycznych skutków:
 
 - **Zarobki z każdego bloku.** Dopóki Twoje udziały są w sześciogodzinnym oknie, otrzymujesz część każdego bloku znalezionego przez pulę. Możesz obserwować je na [stronie bloków](/blocks).
-- **Automatyczne wypłaty.** Gdy blok znajdzie się 60 bloków w głębi łańcucha, Twoja część przechodzi na potwierdzone saldo, a pula wysyła je na Twój adres po osiągnięciu 0,1 BNT. Wysłane płatności są wymienione na [stronie wypłat](/payouts).
+- **Automatyczne wypłaty.** Gdy blok znajdzie się 60 bloków w głębi łańcucha, Twoja część przechodzi na potwierdzone saldo, a pula wysyła je na Twój adres po osiągnięciu minimalnej wypłaty, która 4 listopada 2026 wynosi 1 BNT. Wysłane płatności są wymienione na [stronie wypłat](/payouts).
 - **Ciągłość mimo restartów.** Już przesłane udziały pozostają w oknie przez sześć godzin, więc restart lub aktualizacja sterownika nie zerują Twojej pozycji.
 - **Uruchamiasz tylko program do kopania.** Pula prowadzi węzeł, tworzy szablony bloków i przesyła bloki. Możesz kopać z kilku maszyn na jeden adres lub nazwę Blocknet ID `@name`.
 
@@ -75,13 +75,26 @@ Ma to dla Ciebie kilka praktycznych skutków:
 
 ## Dlaczego kopać Blocknet solo?
 
-Kopanie solo daje Ci kontrolę nad każdym etapem procesu. Twój węzeł tworzy każdy szablon bloku i sam sprawdza wszystkie bloki, a każdy znaleziony przez Ciebie blok wypłaca całą nagrodę bezpośrednio do portfela węzła.
+Kopanie solo daje Ci całą nagrodę za każdy znaleziony blok. Najlepiej sprawdza się wtedy, gdy Twój hashrate często znajduje bloki. W powyższym przykładzie instalacja z 10% mocy sieci znajduje blok mniej więcej co 50 minut, więc wypłaty solo przychodzą równie regularnie jak w puli.
 
-Najlepiej sprawdza się wtedy, gdy Twój hashrate często znajduje bloki. W powyższym przykładzie instalacja z 10% mocy sieci znajduje blok mniej więcej co 50 minut, więc wypłaty solo przychodzą równie regularnie jak w puli. Jeśli już prowadzisz węzeł Blocknet dla portfela lub innych usług, kopanie solo wymaga dodania do niego programu do kopania.
+Z seine możesz kopać solo na dwa sposoby:
 
-seine jest przystosowany również do tego trybu. Kopie na szablonach bloków węzła, a jeśli węzeł zapomni szablon, na przykład po restarcie, seine ponownie przesyła cały rozwiązany blok, aby znaleziony blok nadal dotarł do łańcucha.
+- **Solo na bntpool.com.** Dodaj `solo:` przed adresem. Pula prowadzi węzeł, przesyła Twoje bloki i wypłaca całą nagrodę za każdy z nich, pomniejszoną o opłatę puli, na Twój adres w ramach zwykłych wypłat. Na jednym adresie możesz łączyć koparki solo i koparki na wspólnych nagrodach.
+- **Solo przez własny węzeł.** Tryb demona seine kopie na szablonach bloków Twojego węzła, a każdy blok wypłaca nagrodę bezpośrednio do portfela węzła. Jeśli już prowadzisz węzeł Blocknet dla portfela lub innych usług, kopanie solo wymaga dodania do niego programu do kopania.
+
+seine jest przystosowany również do trybu demona. Kopie na szablonach bloków węzła, a jeśli węzeł zapomni szablon, na przykład po restarcie, seine ponownie przesyła cały rozwiązany blok, aby znaleziony blok nadal dotarł do łańcucha.
 
 ## Jak skonfigurować kopanie solo z seine?
+
+Aby kopać solo na bntpool.com, zainstaluj seine v0.3.1 lub nowszy i uruchom go z prefiksem przed adresem:
+
+```sh
+./seine --address solo:YOUR_BLOCKNET_ADDRESS
+```
+
+Panel oznacza wtedy Twoje konto jako **Solo**. [Kopanie solo Blocknet na bntpool.com](/blog/pl/solo-mine-blocknet-on-bntpool/) omawia nazwy Blocknet ID, nazwy koparek, wypłaty i miejsce, w którym Twoje bloki solo pojawiają się na stronie statystyk.
+
+Aby kopać solo przez własny węzeł:
 
 1. **Zainstaluj i zsynchronizuj węzeł Blocknet.** Przy użyciu programu `blocknet` uruchom:
 
@@ -111,12 +124,13 @@ seine jest przystosowany również do tego trybu. Kopie na szablonach bloków w�
 Zastosuj wzór z własnym hashrate i bieżącym hashrate sieci z [panelu](/), a następnie sprawdź średni czas między blokami.
 
 - **Zacznij na bntpool.com**, jeśli kopiesz na komputerze stacjonarnym, laptopie lub kilku serwerach albo chcesz regularnych wypłat bez prowadzenia węzła. Uruchom seine, wklej adres lub `@name` i zaakceptuj domyślną pulę.
-- **Kop solo**, jeśli Twoja instalacja ma duży udział w sieci, dzięki czemu samodzielnie często znajduje bloki, a Ty już prowadzisz lub chcesz prowadzić własny zsynchronizowany węzeł.
+- **Kop solo na bntpool.com**, jeśli Twoja instalacja ma duży udział w sieci, dzięki czemu samodzielnie często znajduje bloki. Dodaj `solo:` do adresu i korzystaj z węzła, statystyk i wypłat puli.
+- **Kop solo przez własny węzeł**, jeśli masz taki hashrate i już prowadzisz lub chcesz prowadzić własny zsynchronizowany węzeł.
 
-seine ułatwia późniejszą zmianę decyzji. Kopanie w puli i tryb demona korzystają z tego samego programu, więc wraz z rozbudową sprzętu możesz przełączyć się jedną flagą i restartem. Jeśli prowadzisz lokalny węzeł podczas kopania w puli, seine pokazuje także saldo portfela węzła obok salda puli.
+seine ułatwia późniejszą zmianę decyzji. Wszystkie opcje korzystają z tego samego programu, więc wraz z rozbudową sprzętu możesz przełączyć się jednym prefiksem lub flagą i restartem. Jeśli prowadzisz lokalny węzeł podczas kopania w puli, seine pokazuje także saldo portfela węzła obok salda puli.
 
 <Note>
-Według [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) Blocknet planuje aktualizację sieci o nazwie Faraday około 16 lutego 2027 r. Ma ona zmienić proof of work. Aktualizuj seine: program sprawdza nowe wydania przy uruchomieniu i co 12 godzin.
+Według [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) Blocknet planuje aktualizację sieci o nazwie Faraday około 16 lutego 2027 r. Ma ona zmienić proof of work. Seine v0.3.1 jest na nią gotowy: kopanie w puli samo przejdzie na nowy proof of work, a przy włączonych automatycznych aktualizacjach seine sam instaluje nowsze wydania.
 </Note>
 
-<CTA target="pool" title="Zacznij kopać na bntpool.com" text="Uruchom seine, wklej adres i otrzymuj część każdego bloku znalezionego przez pulę, wypłacaną automatycznie od 0,1 BNT." />
+<CTA target="pool" title="Zacznij kopać na bntpool.com" text="Uruchom seine, wklej adres i otrzymuj część każdego bloku znalezionego przez pulę albo dodaj solo: i zatrzymuj każdy znaleziony blok." />

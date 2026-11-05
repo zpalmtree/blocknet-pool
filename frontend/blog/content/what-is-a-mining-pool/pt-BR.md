@@ -2,7 +2,7 @@
 title: O que é um pool de mineração?
 description: Um pool combina a hashrate de vários mineradores e divide cada recompensa de bloco. Entenda seu funcionamento, PPLNS, PPS, mineração solo e o que avaliar.
 tags: [Fundamentos de mineração, Pools de mineração, PPLNS, bntpool]
-sourceHash: '15d1453f41d9'
+sourceHash: '698c26d17e91'
 translation: draft
 faq:
   - q: 'Entrar em um pool aumenta quanto eu minero?'
@@ -63,20 +63,20 @@ O sistema de pagamento define como os shares viram ganhos. Estes são os mais co
 |---|---|---|
 | PPLNS (pay per last N shares) | Blocos encontrados pelo pool | A recompensa de cada bloco é dividida entre shares de uma janela recente, por dificuldade |
 | PPS (pay per share) | Cada share aceito | O pool paga um valor fixo por share, baseado no valor esperado, mesmo sem encontrar bloco |
-| Solo | Blocos encontrados por você | Você minera com seu próprio nó e fica com toda a recompensa de cada bloco |
+| Solo | Blocos encontrados por você | Você fica com toda a recompensa de cada bloco que encontra, minerando por um pool com modo solo ou com seu próprio nó |
 
 **PPLNS** olha para trás a partir de cada bloco encontrado. No bntpool.com, os "últimos N shares" são uma janela de seis horas. O pool soma a dificuldade dos shares aceitos nesse período e concede a cada minerador a mesma fração da recompensa que sua fração do trabalho. Cada share conta para todos os blocos encontrados enquanto estiver na janela. Quem minera continuamente sempre tem uma janela cheia, e reiniciar não zera nada. [Como funcionam os pagamentos PPLNS no bntpool.com](/blog/pt-br/how-pplns-payouts-work/) explica a divisão passo a passo.
 
 **PPS** paga cada share ao chegar, pelo seu valor esperado: dificuldade do share dividida pela dificuldade da rede, multiplicada pela recompensa do bloco. O operador do pool assume as oscilações dos blocos e paga do próprio saldo nos intervalos.
 
-**Mineração solo** dispensa o pool. Seu nó cria os modelos e cada bloco encontrado paga a recompensa inteira à sua carteira. Ela combina com operações grandes o suficiente para encontrar blocos frequentemente por conta própria. O seine oferece ambos: minera no bntpool.com por padrão, e `./seine --mode daemon` minera com seu nó Blocknet sincronizado.
+**Mineração solo** paga a recompensa inteira de cada bloco ao minerador que o encontrou. Ela combina com operações grandes o suficiente para encontrar blocos frequentemente por conta própria. No bntpool.com, você minera solo colocando `solo:` antes do seu endereço: o pool continua executando o nó e paga seus blocos pelos pagamentos normais, e [mineração solo no bntpool.com](/blog/pt-br/solo-mine-blocknet-on-bntpool/) mostra a configuração. O seine também tem um modo daemon, `./seine --mode daemon`, que minera com seu próprio nó Blocknet sincronizado.
 
 ## O que avaliar em um pool de mineração?
 
 Ao comparar pools, estes detalhes definem como você recebe e como pode conferir:
 
 - **Sistema de pagamento claro.** O pool deve informar o sistema e as configurações, como a janela PPLNS. O bntpool.com os lista em [Get Started](/start) e publica em `https://bntpool.com/api/info`.
-- **Confirmações e mínimo.** Recompensas normalmente esperam o bloco atingir profundidade suficiente; pagamentos saem quando o saldo passa do mínimo. No bntpool.com, a recompensa confirma após 60 blocos, conforme a maturidade da coinbase do Blocknet, e saldos a partir de 0,1 BNT são pagos automaticamente.
+- **Confirmações e mínimo.** Recompensas normalmente esperam o bloco atingir profundidade suficiente; pagamentos saem quando o saldo passa do mínimo. No bntpool.com, a recompensa confirma após 60 blocos, conforme a maturidade da coinbase do Blocknet, e saldos a partir de 1 BNT são pagos automaticamente.
 - **Números públicos e verificáveis.** Você deve poder ver cada bloco encontrado e pagamento enviado. O bntpool.com mostra tudo em [Blocks](/blocks) e [Payouts](/payouts), além do esforço por rodada em [Luck](/luck).
 - **Suas estatísticas.** Consulte o endereço para ver hashrate, shares e saldos. No bntpool.com, use a [página de estatísticas](/stats); o [guia de acompanhamento](/blog/pt-br/track-your-miner-on-bntpool/) explica cada cartão.
 - **Configuração simples.** Quanto menos ajustes, mais cedo você minera. O bntpool.com é o pool padrão do seine, que ajusta threads, kernels e memória sozinho. Você pode usar um [nome Blocknet ID](https://seineminer.com/pt-br/blog/blocknet-id-pay-by-name/) como `@name` no lugar do endereço completo.
@@ -88,11 +88,11 @@ Ao comparar pools, estes detalhes definem como você recebe e como pode conferir
 | Sistema de pagamento | PPLNS |
 | Janela de shares | 6 horas |
 | Confirmações antes do pagamento | 60 blocos |
-| Pagamento mínimo | 0,1 BNT |
+| Pagamento mínimo | 1 BNT |
 | Endereço Stratum | `stratum+tcp://bntpool.com:3333` |
 
 O [painel do pool](/) mostra mineradores conectados, hashrate do pool e da rede, blocos encontrados e esforço da rodada atual. Em uma leitura de 25 de outubro de 2026 às 02:25 EDT, o pool tinha aproximadamente 5.200 H/s em uma rede de 44.400 H/s, com 246 mineradores conectados. Isso representa cerca de 12% da rede, suficiente para esperar 34 blocos por dia, um a cada aproximadamente 42 minutos. Os valores mudam constantemente. Consulte o painel para dados atuais e o [guia de estimativas](/blog/pt-br/estimate-blocknet-mining-rewards/) para convertê-los em BNT conforme sua hashrate.
 
 Para participar, [baixe o seine](https://seineminer.com/pt-br/#download), execute-o, informe seu endereço Blocknet ou `@name` e aceite o pool padrão. O [guia de mineração do seine](https://seineminer.com/pt-br/blog/how-to-mine-blocknet/) cobre cada etapa. [Minerar Blocknet no bntpool.com](/blog/pt-br/mine-blocknet-on-bntpool/) explica nomes de rigs e como conferir os primeiros shares.
 
-<CTA target="pool" title="Entre no bntpool.com" text="Conecte o seine ao pool e ganhe uma parte de cada bloco encontrado, enviada automaticamente ao seu endereço quando atingir 0,1 BNT." />
+<CTA target="pool" title="Entre no bntpool.com" text="Conecte o seine ao pool e ganhe uma parte de cada bloco encontrado, enviada automaticamente ao seu endereço quando atingir 1 BNT." />

@@ -2,7 +2,7 @@
 title: Đào Blocknet trên bntpool.com
 description: Tham gia bntpool.com, pool Blocknet mặc định của seine. Kết nối stratum+tcp://bntpool.com:3333 bằng địa chỉ hoặc @name, đặt tên dàn máy và xem thống kê.
 tags: [Hướng dẫn đào coin, bntpool, Blocknet ID, seine]
-sourceHash: 'df269126bb76'
+sourceHash: 9713e976f981
 translation: draft
 faq:
   - q: 'Địa chỉ Stratum của bntpool.com là gì?'
@@ -23,7 +23,7 @@ Hướng dẫn này trình bày cách tham gia pool bntpool.com bằng seine: đ
 Địa chỉ Stratum của bntpool.com là `stratum+tcp://bntpool.com:3333`. seine đưa ra làm pool mặc định lần đầu chạy, nên chỉ cần nhấn Enter ở câu hỏi pool để kết nối. Bạn đăng nhập bằng địa chỉ Blocknet hoặc Blocknet ID `@name`. Không cần tạo tài khoản và phần thưởng đến địa chỉ đó.
 </Answer>
 
-Đây là cài đặt pool do endpoint công khai `/api/info` báo ngày 25 tháng 10 năm 2026:
+Đây là cài đặt pool do endpoint công khai `/api/info` báo ngày 4 tháng 11 năm 2026:
 
 | Cài đặt | Giá trị |
 |---|---|
@@ -31,9 +31,11 @@ Hướng dẫn này trình bày cách tham gia pool bntpool.com bằng seine: đ
 | Đăng nhập | Địa chỉ Blocknet, `@name` hoặc `$name` |
 | Phương thức trả thưởng | PPLNS với cửa sổ 6 giờ |
 | Xác nhận trước thanh toán | 60 khối |
-| Thanh toán tối thiểu | 0,1 BNT |
+| Thanh toán tối thiểu | 1 BNT |
 
 Bạn có thể xem cùng các giá trị bất cứ lúc nào trên trang [Get Started](/start) của pool.
+
+Để giữ toàn bộ phần thưởng của mỗi khối mà dàn máy của bạn tìm được, hãy thêm `solo:` vào trước địa chỉ. [Đào solo trên bntpool.com](/blog/vi/solo-mine-blocknet-on-bntpool/) hướng dẫn cách làm.
 
 ## Vì sao bntpool.com là pool mặc định của seine?
 
@@ -105,7 +107,7 @@ Hãy tìm ba điều:
 
 Pool đặt độ khó share riêng cho từng kết nối và điều chỉnh khi bạn đào, nên ngay cả CPU nhỏ cũng gửi share đều đặn; các share chấp nhận đầu tiên xuất hiện trong vài phút sau kết nối. Để biết hashrate kỳ vọng từ phần cứng, xem [hướng dẫn phần cứng đào Blocknet](https://seineminer.com/vi/blog/blocknet-mining-hardware-hashrate/).
 
-Phần thưởng đến sau. Estimated Rewards xuất hiện khi pool tìm khối trong lúc share của bạn ở cửa sổ sáu giờ. Sau khi khối có 60 xác nhận, phần của bạn chuyển sang Confirmed Rewards; pool tự động gửi khi có ít nhất 0,1 BNT. [Thanh toán PPLNS hoạt động thế nào](/blog/vi/how-pplns-payouts-work/) giải thích chia thưởng mỗi khối. Lịch sử toàn pool ở các trang [Blocks](/blocks) và [Payouts](/payouts).
+Phần thưởng đến sau. Estimated Rewards xuất hiện khi pool tìm khối trong lúc share của bạn ở cửa sổ sáu giờ. Sau khi khối có 60 xác nhận, phần của bạn chuyển sang Confirmed Rewards; pool tự động gửi khi có ít nhất 1 BNT. [Thanh toán PPLNS hoạt động thế nào](/blog/vi/how-pplns-payouts-work/) giải thích chia thưởng mỗi khối. Lịch sử toàn pool ở các trang [Blocks](/blocks) và [Payouts](/payouts).
 
 ## Trang Get Started có gì?
 

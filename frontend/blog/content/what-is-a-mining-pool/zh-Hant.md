@@ -11,8 +11,8 @@ faq:
     a: '不需要。礦池負責執行節點、建立區塊模板、檢查份額並提交找到的區塊。在 bntpool.com 上，你只需要 seine 挖礦軟體和一個 Blocknet 地址或 Blocknet ID 名稱。執行 seine，貼上地址，接受預設礦池，你在每個區塊中所得的部分就會支付到這個地址。'
   - q: '要怎麼開始在 bntpool.com 挖礦？'
     a: '從 seineminer.com 下載適用於 Windows、macOS 或 Linux 的 seine，執行它，並在提示時貼上你的 Blocknet 地址或 @name。bntpool.com 是 seine 的預設礦池，接受即可開始挖礦。在礦池的統計頁面查詢你的地址，就能看到你的算力、份額和餘額。'
-sourceHash: '15d1453f41d9'
-translation: reviewed
+sourceHash: '698c26d17e91'
+translation: draft
 ---
 
 本指南說明什麼是礦池、為什麼大多數礦工都會加入礦池，以及礦池如何決定每位礦工的收益。你將了解常見的支付方式：PPLNS、PPS 和單獨挖礦，以及把礦機連接到礦池之前要檢查哪些項目。全文以 Blocknet 礦池 bntpool.com 作為實例。
@@ -63,20 +63,20 @@ translation: reviewed
 |---|---|---|
 | PPLNS（依最近 N 個份額支付） | 礦池找到的區塊 | 每個區塊的獎勵依份額難度分給最近一個區間內提交的份額 |
 | PPS（依份額支付） | 每個被接受的份額 | 礦池依份額的期望價值為每個份額支付固定金額，不論是否找到區塊 |
-| 單獨挖礦（solo） | 你自己找到的區塊 | 你連接自己的節點挖礦，找到的每個區塊的全部獎勵都歸你 |
+| 單獨挖礦（solo） | 你自己找到的區塊 | 透過提供單獨挖礦模式的礦池或連接自己的節點挖礦，找到的每個區塊的全部獎勵都歸你 |
 
 **PPLNS** 從礦池找到的每個區塊往回看。在 bntpool.com 上，「最近 N 個份額」是一段六小時的區間：礦池把區塊之前六小時內所有被接受份額的難度相加，並讓每位礦工獲得與其工作量占比相同的獎勵比例。每個份額在區間內時都會計入期間找到的每個區塊，所以持續挖礦的礦工身後總有一個完整的區間，重新啟動也不會讓任何紀錄歸零。[bntpool.com 的 PPLNS 收益如何支付](/blog/zh-hant/how-pplns-payouts-work/)一步步說明了分配過程。
 
 **PPS** 在每個份額到達時依其期望價值付款：份額難度除以全網難度，再乘以區塊獎勵。礦池營運方承擔出塊快慢的起伏，在兩次出塊之間用自己的餘額向礦工付款。
 
-**單獨挖礦**不經過礦池。你自己的節點建立模板，你找到的每個區塊都把全部獎勵支付到你的錢包。它適合規模大到自己就能經常找到區塊的礦場。seine 挖礦軟體兩種方式都支援：預設在 bntpool.com 挖礦，而 `./seine --mode daemon` 則連接你自己已同步的 Blocknet 節點挖礦。
+**單獨挖礦**把每個區塊的全部獎勵支付給找到它的礦工。它適合規模大到自己就能經常找到區塊的礦場。在 bntpool.com 上，只要在地址前加上 `solo:` 就能單獨挖礦：礦池仍然執行節點，並透過正常支付付出你的區塊，[在 bntpool.com 上單獨挖 Blocknet（solo）](/blog/zh-hant/solo-mine-blocknet-on-bntpool/)說明了設定方法。seine 挖礦軟體還提供 daemon 模式 `./seine --mode daemon`，連接你自己已同步的 Blocknet 節點挖礦。
 
 ## 選擇礦池時要看什麼？
 
 比較礦池時，以下細節決定了你如何獲得報酬，以及你能否方便地核實：
 
 - **明確的支付方式。** 礦池應當說明它的支付方式和相關設定，例如 PPLNS 區間。bntpool.com 在 [Get Started 頁面](/start)列出了這些設定，並發布在 `https://bntpool.com/api/info`。
-- **確認數和最低支付額。** 獎勵通常要等區塊在鏈上夠深之後才確認，餘額超過最低額後才會付款。在 bntpool.com 上，區塊獎勵在 60 個區塊後確認，與 Blocknet 的 coinbase 成熟期一致，餘額達到 0.1 BNT 或以上即自動支付。
+- **確認數和最低支付額。** 獎勵通常要等區塊在鏈上夠深之後才確認，餘額超過最低額後才會付款。在 bntpool.com 上，區塊獎勵在 60 個區塊後確認，與 Blocknet 的 coinbase 成熟期一致，餘額達到 1 BNT 或以上即自動支付。
 - **公開、可核實的數據。** 你應當能看到礦池找到的每個區塊和發出的每筆付款。bntpool.com 在[區塊頁面](/blocks)和[支付頁面](/payouts)顯示這些資訊，並在[幸運值頁面](/luck)顯示每一輪的努力值。
 - **你自己的統計數據。** 查詢你的地址即可看到你的算力、份額和餘額。在 bntpool.com 上就是[統計頁面](/stats)；[追蹤你的礦機](/blog/zh-hant/track-your-miner-on-bntpool/)指南說明了每張卡片。
 - **設定簡單。** 需要設定的越少，越早開始挖礦。bntpool.com 是 seine 的預設礦池，seine 會自動調整執行緒、運算核心程式和記憶體，你也可以用 `@name` 這樣的 [Blocknet ID 名稱](https://seineminer.com/zh-hant/blog/blocknet-id-pay-by-name/)代替完整地址登入。
@@ -88,11 +88,11 @@ translation: reviewed
 | 支付方式 | PPLNS |
 | 份額區間 | 6 小時 |
 | 支付前確認數 | 60 個區塊 |
-| 最低支付額 | 0.1 BNT |
+| 最低支付額 | 1 BNT |
 | Stratum 地址 | `stratum+tcp://bntpool.com:3333` |
 
 [礦池儀表板](/)顯示即時情況：線上礦工數、礦池算力、全網算力、已找到的區塊數以及目前一輪的努力值。在 2026 年 10 月 25 日美東夏令時間（EDT）凌晨 2:25 的一次快照中，礦池算力約為 5,200 H/s，全網約為 44,400 H/s，有 246 位礦工在線上。這約占全網的 12%，足以預期每天找到約 34 個區塊，大約每 42 分鐘一個。這些數字隨時在變化，請在儀表板上查看目前數值，並用[收益估算指南](/blog/zh-hant/estimate-blocknet-mining-rewards/)依你自己的算力把它們換算成 BNT。
 
 要加入礦池，請[下載 seine](https://seineminer.com/zh-hant/#download)，執行它，貼上你的 Blocknet 地址或 `@name`，然後接受預設礦池。[seine 挖礦指南](https://seineminer.com/zh-hant/blog/how-to-mine-blocknet/)介紹了每個步驟，[在 bntpool.com 挖 Blocknet](/blog/zh-hant/mine-blocknet-on-bntpool/)介紹了礦機名稱以及如何確認你的第一批份額。
 
-<CTA target="pool" title="加入 bntpool.com" text="讓 seine 連線到礦池，從它找到的每個區塊中分得一份，餘額達到 0.1 BNT 後自動發送到你的地址。" />
+<CTA target="pool" title="加入 bntpool.com" text="讓 seine 連線到礦池，從它找到的每個區塊中分得一份，餘額達到 1 BNT 後自動發送到你的地址。" />

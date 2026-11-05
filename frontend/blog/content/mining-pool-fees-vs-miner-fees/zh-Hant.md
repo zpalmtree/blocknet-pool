@@ -4,16 +4,16 @@ description: '了解Blocknet礦池和礦工程式費用的適用階段、組合�
 tags: ['挖礦指南', '礦池費用', '挖礦獎勵']
 faq:
   - q: '這是同一項費用嗎？'
-    a: '不是。礦池費用屬於獎勵分配，開發者費用屬於軟體。seine v0.2.36在啟動免收期後，將計費挖礦時間的2%用於開發。bntpool獨立的礦池費率在2026年10月26日檢查時為0%。'
+    a: '不是。礦池費用屬於獎勵分配，開發者費用屬於軟體。seine v0.3.1在啟動免收期後，將計費挖礦時間的2%用於開發。bntpool獨立的礦池費率在2026年10月26日檢查時為0%。'
   - q: '如何組合兩種費用？'
     a: '將毛獎勵估算乘以一減礦工程式費率，再乘以一減礦池費率。使用實際版本和目前設定。結果估算保留的獎勵，不是付款保證或現金利潤計算。'
   - q: '需要從礦池算力扣除開發者費用嗎？'
     a: '先確認數字含義。如果已估算扣除開發者時間後計入你地址的工作，再扣會重複計算。計算機允許對已反映的額外調整輸入零。不要從已確認餘額或記錄的付款再次扣費。'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-追蹤Blocknet估算中的兩層費用。本指南採用seine v0.2.36和2026年10月26日檢查的bntpool公開設定，協助填寫[計算機](/blog/zh-hant/estimate-blocknet-mining-rewards/#mining-calculator)並理解[My Stats](/stats)。
+追蹤Blocknet估算中的兩層費用。本指南採用seine v0.3.1和2026年10月26日檢查的bntpool公開設定，協助填寫[計算機](/blog/zh-hant/estimate-blocknet-mining-rewards/#mining-calculator)並理解[My Stats](/stats)。
 
 ## 礦池費用與程式費用有何差別？
 
@@ -31,7 +31,7 @@ translation: draft
 
 ## seine開發者費用如何運作？
 
-v0.2.36文件規定所有礦池和獨立挖礦均為固定2%。它安排為替開發者地址挖礦的時間，並非事後從錢包提款。前10分鐘免收，追蹤器計算之後的時間。參見[版本設定指南](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md)。
+v0.3.1文件規定所有礦池和獨立挖礦均為固定2%。它安排為替開發者地址挖礦的時間，並非事後從錢包提款。前10分鐘免收，追蹤器計算之後的時間。參見[版本設定指南](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md)。
 
 排程按輪次執行，因此短觀察時段不一定恰好2%。這是免收期後的長期目標，不是每分鐘或每區塊的承諾。記錄版本，舊文件或其他程式可能採用不同政策。礦池費率不能取代這項資訊。
 

@@ -2,7 +2,7 @@
 title: Theo dõi trình đào trên bntpool.com
 description: Tra địa chỉ hoặc @name trên bntpool.com để xem hashrate, share, số dư và thanh toán; theo dõi khối và may mắn hoặc dùng API công khai.
 tags: [bntpool, Thống kê đào coin, API pool, Blocknet]
-sourceHash: 'f74ae9281fd2'
+sourceHash: 75495e49f3e9
 translation: draft
 faq:
   - q: 'Vì sao hashrate trên bntpool.com khác số seine hiển thị?'
@@ -54,7 +54,7 @@ Nếu chạy nhiều máy, đặt tên riêng cho từng máy; pool liệt kê r
 ./seine --pool-worker rig-01
 ```
 
-Bảng **Workers** cũng hiển thị phiên bản miner của từng máy. Khi có phiên bản cũ hoặc không xác định, thông báo phía trên thống kê dẫn đến [trang phát hành seine](https://github.com/zpalmtree/seine/releases).
+Dàn máy đào solo, với `solo:` trước địa chỉ, hiển thị **Solo** trong cột Type của bảng. Bảng **Workers** cũng hiển thị phiên bản miner của từng máy. Khi có phiên bản cũ hoặc không xác định, thông báo phía trên thống kê dẫn đến [trang phát hành seine](https://github.com/zpalmtree/seine/releases).
 
 ## Vì sao hashrate pool khác seine?
 
@@ -69,7 +69,7 @@ Bảng Recent Shares cho biết ngay share đang đến, kể cả trước khi 
 
 ## Khi nào bạn nhận được khoản thanh toán đầu tiên?
 
-Không có thời gian đếm ngược cố định từ share đầu tiên đến khoản thanh toán đầu tiên. Pool phải tìm được block khi share của bạn còn trong cửa sổ thanh toán. Sau đó block cần 60 xác nhận: trung bình khoảng năm giờ **sau khi tìm thấy block**, nhưng thời gian thực tế thay đổi. Khi số dư đã xác nhận đạt mức tối thiểu hiện tại 0,1 BNT, số dư đủ điều kiện vào đợt thanh toán tự động. Xem thiết lập hiện tại tại [Get Started](/start).
+Không có thời gian đếm ngược cố định từ share đầu tiên đến khoản thanh toán đầu tiên. Pool phải tìm được block khi share của bạn còn trong cửa sổ thanh toán. Sau đó block cần 60 xác nhận: trung bình khoảng năm giờ **sau khi tìm thấy block**, nhưng thời gian thực tế thay đổi. Khi số dư đã xác nhận đạt mức tối thiểu hiện tại 1 BNT, số dư đủ điều kiện vào đợt thanh toán tự động. Xem thiết lập hiện tại tại [Get Started](/start).
 
 Theo dõi trạng thái và liên kết giao dịch trong **Recent Payouts**. Khoản thanh toán đang xếp hàng chưa được phát lên mạng. Nếu khoản đã gửi chưa xuất hiện trong ví, xem [hướng dẫn xử lý vấn đề thanh toán](/blog/vi/pool-payout-missing-from-wallet/).
 
@@ -116,7 +116,7 @@ Những trang này không cần tra cứu và công khai mọi việc pool làm.
 
 ### Khối
 
-[Blocks](/blocks) liệt kê mọi khối bntpool.com tìm được, mới nhất trước: độ cao (liên kết trình khám phá), phần thưởng, effort, thời gian vòng, trạng thái và thời gian tìm. Lọc theo Confirmed, Pending hoặc Orphaned để biết tình trạng từng khối.
+[Blocks](/blocks) liệt kê mọi khối bntpool.com tìm được, mới nhất trước: độ cao (liên kết trình khám phá), phần thưởng, effort, thời gian vòng, trạng thái và thời gian tìm. Cột Type trước trạng thái cho biết khối đến từ đào pool chia sẻ hay từ một thợ đào solo, người được trả toàn bộ phần thưởng của khối. Lọc theo Confirmed, Pending hoặc Orphaned để biết tình trạng từng khối.
 
 ### Thanh toán
 

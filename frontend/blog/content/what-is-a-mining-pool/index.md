@@ -2,6 +2,7 @@
 title: What is a mining pool?
 description: A mining pool combines many miners' hashrate and shares each block reward among them. Learn how pools work, PPLNS, PPS and solo, and what to look for.
 date: 2026-10-25
+updated: 2026-11-04
 tags: [Mining basics, Mining pools, PPLNS, bntpool]
 faq:
   - q: Does joining a mining pool increase how much I mine?
@@ -63,20 +64,20 @@ The payout scheme is the rule a pool uses to turn shares into earnings. These ar
 |---|---|---|
 | PPLNS (pay per last N shares) | Blocks the pool finds | Each block's reward is split among the shares submitted in a recent window, by share difficulty |
 | PPS (pay per share) | Every accepted share | The pool pays a fixed amount per share, based on the share's expected value, whether or not it finds a block |
-| Solo | Blocks you find yourself | You mine against your own node and keep the whole reward of each block you find |
+| Solo | Blocks you find yourself | You keep the whole reward of each block you find, mining through a pool that offers solo mode or against your own node |
 
 **PPLNS** looks back from each block the pool finds. On bntpool.com, the "last N shares" is a window of six hours: the pool adds up the difficulty of every accepted share in the six hours before the block and gives each miner the same fraction of the reward as their fraction of that work. Each share counts toward every block found while it is in the window, so a miner who runs steadily always has a full window behind them, and a reboot doesn't reset anything. [How PPLNS payouts work on bntpool.com](/blog/how-pplns-payouts-work/) goes through the split step by step.
 
 **PPS** pays for each share as it arrives, using the share's expected value: its difficulty divided by the network difficulty, times the block reward. The pool operator takes on the ups and downs of block finding and pays miners from its own balance in between.
 
-**Solo mining** skips the pool. Your own node builds the templates and each block you find pays its full reward to your wallet. It suits operations large enough to find blocks often on their own. The seine miner supports both: it mines on bntpool.com by default, and `./seine --mode daemon` mines against your own synced Blocknet node.
+**Solo mining** pays each block's full reward to the miner who found it. It suits operations large enough to find blocks often on their own. On bntpool.com you solo mine by putting `solo:` in front of your address: the pool still runs the node and pays your blocks through its normal payouts, and [solo mining on bntpool.com](/blog/solo-mine-blocknet-on-bntpool/) shows the setup. The seine miner also has a daemon mode, `./seine --mode daemon`, that mines against your own synced Blocknet node.
 
 ## What should you look for in a mining pool?
 
 When you compare pools, these are the details that decide how you are paid and how easily you can check it:
 
 - **A clear payout scheme.** The pool should state its scheme and its settings, such as the PPLNS window. bntpool.com lists them on its [Get Started page](/start) and publishes them at `https://bntpool.com/api/info`.
-- **Confirmations and minimum payout.** Rewards usually wait until the block is deep enough in the chain, and payments go out once your balance passes a minimum. On bntpool.com, a block's reward is confirmed after 60 blocks, matching Blocknet's coinbase maturity, and balances of 0.1 BNT or more are paid automatically.
+- **Confirmations and minimum payout.** Rewards usually wait until the block is deep enough in the chain, and payments go out once your balance passes a minimum. On bntpool.com, a block's reward is confirmed after 60 blocks, matching Blocknet's coinbase maturity, and balances of 1 BNT or more are paid automatically.
 - **Public, checkable numbers.** You should be able to see every block the pool found and every payment it sent. bntpool.com shows them on its [blocks](/blocks) and [payouts](/payouts) pages, and round-by-round effort on the [luck page](/luck).
 - **Your own stats.** Look up your address to see your hashrate, shares and balances. On bntpool.com that's the [stats page](/stats); the guide to [tracking your miner](/blog/track-your-miner-on-bntpool/) explains each card.
 - **Easy setup.** The fewer settings you need, the sooner you're mining. bntpool.com is the default pool in seine, which tunes threads, kernels and memory by itself, and you can log in with a [Blocknet ID name](https://seineminer.com/blog/blocknet-id-pay-by-name/) such as `@name` in place of a full address.
@@ -88,11 +89,11 @@ When you compare pools, these are the details that decide how you are paid and h
 | Payout scheme | PPLNS |
 | Share window | 6 hours |
 | Confirmations before payout | 60 blocks |
-| Minimum payout | 0.1 BNT |
+| Minimum payout | 1 BNT |
 | Stratum address | `stratum+tcp://bntpool.com:3333` |
 
 The [pool dashboard](/) shows the live picture: connected miners, pool hashrate, network hashrate, blocks found and the current round's effort. In a snapshot taken on October 25, 2026, at 2:25 a.m. EDT, the pool ran about 5,200 H/s of a network of about 44,400 H/s, with 246 miners connected. That is about 12% of the network, enough to expect around 34 blocks a day, one roughly every 42 minutes. These figures change constantly, so check the dashboard for current values, and use [the rewards estimate guide](/blog/estimate-blocknet-mining-rewards/) to turn them into BNT for your own hashrate.
 
 To join, [download seine](https://seineminer.com/#download), run it, paste your Blocknet address or `@name`, and accept the default pool. The [seine mining guide](https://seineminer.com/blog/how-to-mine-blocknet/) covers each step, and [mining Blocknet on bntpool.com](/blog/mine-blocknet-on-bntpool/) covers rig names and checking your first shares.
 
-<CTA target="pool" title="Join bntpool.com" text="Point seine at the pool and earn a share of every block it finds, sent to your address automatically once you reach 0.1 BNT." />
+<CTA target="pool" title="Join bntpool.com" text="Point seine at the pool and earn a share of every block it finds, sent to your address automatically once you reach 1 BNT." />

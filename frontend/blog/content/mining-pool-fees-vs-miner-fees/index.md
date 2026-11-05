@@ -5,7 +5,7 @@ date: 2026-10-26
 tags: ['Mining guide', 'Pool fees', 'Mining rewards']
 faq:
   - q: 'Are pool fees and miner developer fees the same charge?'
-    a: 'No. A pool fee applies in the pool''s reward accounting, while a miner developer fee belongs to the mining software. seine v0.2.36 assigns a 2% share of billable mining time to development after its startup grace period. bntpool.com''s separately published pool fee was 0% when checked on October 26, 2026.'
+    a: 'No. A pool fee applies in the pool''s reward accounting, while a miner developer fee belongs to the mining software. seine v0.3.1 assigns a 2% share of billable mining time to development after its startup grace period. bntpool.com''s separately published pool fee was 0% when checked on October 26, 2026.'
   - q: 'How do I combine a pool fee and a miner fee?'
     a: 'For a gross reward estimate, apply each retained fraction in sequence: multiply by one minus the miner-fee fraction, then by one minus the pool-fee fraction. Use the fee for your actual miner release and the pool''s current setting. This estimates retained rewards; it is not a guaranteed payout or a calculation of cash profit.'
   - q: 'Should I subtract the miner fee from pool-reported hashrate?'
@@ -13,7 +13,7 @@ faq:
 related: [estimate-blocknet-mining-rewards, how-pplns-payouts-work, track-your-miner-on-bntpool, block-confirmations-mining-rewards]
 ---
 
-Read the two fee layers in a Blocknet mining estimate and follow each to the stage where it applies. This guide uses seine v0.2.36 and bntpool.com's public settings checked on October 26, 2026. It helps you choose the right inputs for the [mining calculator](/blog/estimate-blocknet-mining-rewards/#mining-calculator) and understand the balances you see on [My Stats](/stats).
+Read the two fee layers in a Blocknet mining estimate and follow each to the stage where it applies. This guide uses seine v0.3.1 and bntpool.com's public settings checked on October 26, 2026. It helps you choose the right inputs for the [mining calculator](/blog/estimate-blocknet-mining-rewards/#mining-calculator) and understand the balances you see on [My Stats](/stats).
 
 ## What is the difference between a pool fee and a miner fee?
 
@@ -31,7 +31,7 @@ At the October 26, 2026 check, `https://bntpool.com/api/info` publishes `pool_fe
 
 ## How does seine's developer fee work?
 
-The public v0.2.36 release documents a flat 2% developer fee on every pool and in solo mode. It is scheduled as mining time for the developer address rather than a later withdrawal from your wallet. The first 10 minutes of a run are fee-free, and the tracker accounts for time after that grace period. The [release configuration guide](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) describes this policy.
+The public v0.3.1 release documents a flat 2% developer fee on every pool and in solo mode. It is scheduled as mining time for the developer address rather than a later withdrawal from your wallet. The first 10 minutes of a run are fee-free, and the tracker accounts for time after that grace period. The [release configuration guide](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) describes this policy.
 
 The scheduler works in rounds, so the fraction in a short observation window need not equal exactly 2%. Treat the published percentage as the schedule's long-run target after the grace period, not a promise about every minute or every block reward. Keep the miner version with your notes: a historical guide or another program may describe a different policy. The pool fee cannot substitute for that software-specific information.
 

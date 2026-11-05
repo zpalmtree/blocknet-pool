@@ -9,7 +9,7 @@ faq:
     a: 'Không. Với mục tiêu năm phút, 60 khoảng là 300 phút, tức năm giờ để lập kế hoạch. Tiến độ thực phụ thuộc các khối đến không đều. Trưởng thành, ngưỡng thanh toán và giao dịch thanh toán là các giai đoạn riêng.'
   - q: 'Có phải tiếp tục đào để thưởng cũ trưởng thành?'
     a: 'Khối đã tìm tăng độ sâu khi mạng thêm khối, dù máy bạn ngắt kết nối. Quyền nhận thưởng theo quy tắc kế toán pool. Dừng không tăng tốc hay đặt lại độ trưởng thành; theo dõi trong My Stats.'
-sourceHash: '2f9675c64c30'
+sourceHash: 963042ab2a8e
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Khối rời chuỗi có thể bị đánh dấu mồ côi, và thưởng tạm 
 
 ## Thanh toán khác thưởng đào ra sao?
 
-Thưởng đào trước hết thuộc đầu ra coinbase của khối. Thanh toán pool là giao dịch sau, gửi số dư đủ điều kiện đến địa chỉ nhận. Tại ngày kiểm tra, mức tối thiểu là 0,1 BNT. Trưởng thành và đạt ngưỡng số dư là hai điều kiện; [PPLNS](/blog/vi/how-pplns-payouts-work/) giải thích chi tiết.
+Thưởng đào trước hết thuộc đầu ra coinbase của khối. Thanh toán pool là giao dịch sau, gửi số dư đủ điều kiện đến địa chỉ nhận. Vào ngày 4 tháng 11 năm 2026, mức thanh toán tối thiểu bntpool công bố là 1 BNT. Trưởng thành và đạt ngưỡng số dư là hai điều kiện; [PPLNS](/blog/vi/how-pplns-payouts-work/) giải thích chi tiết.
 
 Sau khi gửi, theo dõi giao dịch và trạng thái nhận/có thể chi tiêu trong ví. Lịch sử xác nhận đó thuộc giao dịch thanh toán, không thuộc khối pool ban đầu. Không cần tạo địa chỉ mới hay kết nối lại chỉ vì khối đang trưởng thành. Dùng đúng địa chỉ khi so [lịch sử thanh toán](/payouts) với ví.
 

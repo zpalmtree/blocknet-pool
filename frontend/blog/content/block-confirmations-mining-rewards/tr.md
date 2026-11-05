@@ -9,7 +9,7 @@ faq:
     a: 'Hayır. Beş dakikalık hedefle 60 aralık, planlama için 300 dakika yani beş saattir. Gerçek ilerleme değişken zamanlarda gelen bloklara bağlıdır. Olgunlaşma, ödeme eşiği ve ödeme işlemi ayrı aşamalardır.'
   - q: 'Mevcut ödül olgunlaşana kadar kazmalı mıyım?'
     a: 'Bulunan blok, madenciniz bağlı olmasa da ağ ilerledikçe derinleşir. Ödül hakkınız havuzun muhasebe kurallarına bağlıdır. Durmak olgunlaşmayı hızlandırmaz veya sıfırlamaz; My Stats üzerinden izleyin.'
-sourceHash: '2f9675c64c30'
+sourceHash: '963042ab2a8e'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Zincirden çıkan blok yetim olarak işaretlenebilir; geçici ödülü kabul edi
 
 ## Ödeme ile kazılan ödül nasıl farklıdır?
 
-Kazılan ödül önce bloğun coinbase çıktısına aittir. Havuz ödemesi, uygun bakiyeyi adresinize gönderen sonraki işlemdir. Kontrol tarihinde asgari ödeme 0,1 BNT idi. Blok olgunluğu ve bakiye eşiği farklı koşullardır; ayrıntılar [PPLNS rehberindedir](/blog/tr/how-pplns-payouts-work/).
+Kazılan ödül önce bloğun coinbase çıktısına aittir. Havuz ödemesi, uygun bakiyeyi adresinize gönderen sonraki işlemdir. 4 Kasım 2026 itibarıyla bntpool'un yayımladığı asgari ödeme 1 BNT'dir. Blok olgunluğu ve bakiye eşiği farklı koşullardır; ayrıntılar [PPLNS rehberindedir](/blog/tr/how-pplns-payouts-work/).
 
 Gönderimden sonra işlemin kaydını ve cüzdanın alım/harcanabilirlik durumunu izleyin. Bu onay geçmişi ilk havuz bloğuna değil ödeme işlemine aittir. Blok olgunlaşıyor diye yeni adres veya yeniden bağlantı gerekmez. [Ödeme geçmişini](/payouts) cüzdanla karşılaştırırken aynı adresi kullanın.
 

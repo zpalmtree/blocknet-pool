@@ -9,7 +9,7 @@ faq:
     a: 'Non. Soixante intervalles cibles de cinq minutes donnent une estimation de 300 minutes, soit cinq heures. Le progrès réel dépend des blocs ajoutés, à intervalles variables. Maturité, seuil de paiement et transaction ultérieure sont des étapes distinctes.'
   - q: 'Faut-il continuer à miner pour qu''une récompense mûrisse ?'
     a: 'Un bloc trouvé gagne de la profondeur avec les blocs du réseau, même si votre mineur est déconnecté. Votre droit dépend des règles comptables du pool. Arrêter n''accélère ni ne réinitialise sa maturité ; suivez la récompense dans My Stats.'
-sourceHash: '2f9675c64c30'
+sourceHash: '963042ab2a8e'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Un bloc sorti de cette chaîne peut être marqué orphelin ; sa récompense prov
 
 ## En quoi le paiement diffère-t-il de la récompense ?
 
-La récompense minée appartient d'abord à la sortie coinbase. Le paiement du pool est une transaction ultérieure vers votre adresse. À la date vérifiée, le minimum publié est 0,1 BNT. Maturité et seuil de solde sont deux conditions ; le [guide PPLNS](/blog/fr/how-pplns-payouts-work/) détaille répartition et paiement.
+La récompense minée appartient d'abord à la sortie coinbase. Le paiement du pool est une transaction ultérieure vers votre adresse. Au 4 novembre 2026, le minimum publié est de 1 BNT. Maturité et seuil de solde sont deux conditions ; le [guide PPLNS](/blog/fr/how-pplns-payouts-work/) détaille répartition et paiement.
 
 Après envoi, suivez cette transaction et l'état de réception et de disponibilité dans votre portefeuille. Ses confirmations concernent le paiement, pas le bloc initial. Inutile de changer d'adresse ou de reconnecter le mineur pendant la maturation. Comparez l'[historique des paiements](/payouts) et le portefeuille avec la même adresse.
 

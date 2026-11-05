@@ -92,9 +92,15 @@ function partTimeMining() {
  return frame(`${miner(220,190,1.2)}${miner(980,190,1.2)}${circle(600,190,62,'#fbfcf5','stroke="#87ac8d" stroke-width="4"')}${rect(572,160,16,60,'#87ac8d',4)}${rect(612,160,16,60,'#87ac8d',4)}${line('M120 340H1080M1060 320 1080 340 1060 360','#237a4e',6)}${rect(135,305,265,70,'#b8ee9d',12)}${rect(850,305,215,70,'#b8ee9d',12)}${[175,235,295,355,890,950,1010].map(x=>circle(x,340,10,'#237a4e')).join('')}${rect(275,285,495,110,'none',16,'stroke="#87ac8d" stroke-width="4" stroke-dasharray="10 8"')}${line('M180 465H1030','#87ac8d',4)}${rect(760,440,270,110,'#fbfcf5',14)}${line('M795 475H995M795 515H940','#87ac8d',5)}${check(1040,495,.8)}`);
 }
 
+function soloOnPool() {
+  const others = [[200, 165], [200, 505], [1000, 165], [1000, 505]];
+  return frame(`${others.map(([x, y]) => `${line(`M${x} ${y}Q600 ${y} 600 337`, '#3c5e49', 3, 'stroke-dasharray="8 12"')}${miner(x, y, .7)}`).join('')}${circle(600, 337, 150, '#153e2d', 'stroke="#315e43" stroke-width="2"')}${miner(600, 150, 1.15)}${line('M600 215V265', '#b8ee9d', 6)}${cube(600, 330, 120)}${check(690, 440, .85)}`, true);
+}
+
 const illustrations = {
   'buy-blocknet-bnt-safetrade': () => scene({ main: 'coin', left: 'update', right: 'wallet' }),
   'sell-blocknet-bnt-safetrade': () => scene({ main: 'update', left: 'miner', right: 'coin' }),
+  'mine-blocknet-to-exchange': () => scene({ main: 'coin', left: 'miner', right: 'check' }),
   'accept-blocknet-payments': () => scene({ main: 'wallet', left: 'document', right: 'check' }),
   'how-mining-secures-blocknet-payments': () => scene({ main: 'shield', left: 'block', right: 'wallet' }),
   'mine-blocknet-part-time': partTimeMining,
@@ -114,6 +120,7 @@ const illustrations = {
   'estimate-blocknet-mining-rewards': estimate,
   'how-pplns-payouts-work': pplns,
   'pool-vs-solo-mining-blocknet': poolSolo,
+  'solo-mine-blocknet-on-bntpool': soloOnPool,
   'what-is-a-mining-pool': miningPool,
   'what-is-hashrate': hashrate,
 };

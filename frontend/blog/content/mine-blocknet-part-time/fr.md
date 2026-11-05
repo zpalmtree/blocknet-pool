@@ -9,7 +9,7 @@ faq:
     a: 'Une connexion active n’est pas une condition de paiement. Les soldes confirmés sont traités selon les règles du pool, notamment le seuil minimum actuel. Se déconnecter n’efface pas le solde et ne demande pas de paiement immédiat.'
   - q: 'La reconnexion remet-elle à zéro l’âge des anciennes shares ?'
     a: 'Non. Elles conservent leur horodatage. Le travail nouveau entre dans les fenêtres correspondantes après votre retour ; la reconnexion ne renouvelle pas les anciennes shares et ne crée pas de travail pendant l’absence. Vérifiez de nouvelles shares acceptées au redémarrage.'
-sourceHash: '0a11c393062e'
+sourceHash: 'a5bf859e0abb'
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Oui. Le travail éligible d’une courte session peut participer aux blocs dont 
 
 ## Distinguez les différents délais
 
-bntpool publie actuellement une fenêtre PPLNS de six heures, 60 blocs avant éligibilité au paiement et un minimum de 0,1 BNT sur la [page de démarrage](/start). Il s’agit du travail considéré, de la maturation du bloc et d’un seuil de solde. La fenêtre de six heures n’est pas une minuterie promettant un paiement.
+bntpool publie actuellement une fenêtre PPLNS de six heures, 60 blocs avant éligibilité au paiement et un minimum de 1 BNT sur la [page de démarrage](/start). Il s’agit du travail considéré, de la maturation du bloc et d’un seuil de solde. La fenêtre de six heures n’est pas une minuterie promettant un paiement.
 
 Le [guide PPLNS](/blog/fr/how-pplns-payouts-work/) détaille la formule. Vos shares éligibles sont pondérées par difficulté face à tout le travail éligible de la fenêtre. Les minutes de connexion ne fixent pas un pourcentage de la prochaine récompense. Matériel, participation du pool et résultats des shares peuvent modifier les poids à durée égale.
 
@@ -45,7 +45,7 @@ Quittez seine normalement avec `q` dans le tableau de bord ou `Ctrl+C` dans le t
 
 Lorsqu’une share sort de la fenêtre d’un bloc ultérieur, cela n’efface pas une récompense déjà attribuée à un bloc antérieur. Les estimations suivent toujours l’état et la maturation du bloc ; les récompenses confirmées impayées restent au compte jusqu’au traitement. Le [guide des confirmations](/blog/fr/block-confirmations-mining-rewards/) distingue crédit provisoire et solde arrivé à maturité.
 
-Un solde confirmé inférieur à 0,1 BNT reste sous le seuil automatique actuel jusqu’à ce que d’autres crédits atteignent le minimum. Reconnecter n’augmente pas ce solde et ne force pas un paiement. Un solde éligible ne nécessite pas non plus un mineur en ligne pendant le traitement. Consultez l’[historique des paiements](/payouts) pour distinguer solde impayé et transaction envoyée.
+Un solde confirmé inférieur à 1 BNT reste sous le seuil automatique actuel jusqu’à ce que d’autres crédits atteignent le minimum. Reconnecter n’augmente pas ce solde et ne force pas un paiement. Un solde éligible ne nécessite pas non plus un mineur en ligne pendant le traitement. Consultez l’[historique des paiements](/payouts) pour distinguer solde impayé et transaction envoyée.
 
 ## Revenez au même compte et vérifiez du travail frais
 

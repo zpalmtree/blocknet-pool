@@ -2,7 +2,7 @@
 title: Monitoruj kopanie na bntpool.com
 description: Wyszukaj adres lub @name na bntpool.com, aby zobaczyć hashrate, udziały, saldo i wypłaty. Śledź bloki i szczęście lub użyj publicznego API.
 tags: [bntpool, Statystyki kopania, API puli, Blocknet]
-sourceHash: 'f74ae9281fd2'
+sourceHash: '75495e49f3e9'
 translation: draft
 faq:
   - q: 'Dlaczego mój hashrate na bntpool.com różni się od wyniku seine?'
@@ -54,7 +54,7 @@ Jeśli uruchamiasz więcej niż jeden komputer, nadaj każdemu własną nazwę, 
 ./seine --pool-worker rig-01
 ```
 
-Tabela **Workers** pokazuje też wersję minera na każdym komputerze. Przy starej lub nieznanej wersji komunikat nad statystykami prowadzi do [strony wydań seine](https://github.com/zpalmtree/seine/releases).
+Koparki kopiące solo, z `solo:` przed adresem, mają w kolumnie Type tabeli wpis **Solo**. Tabela **Workers** pokazuje też wersję minera na każdym komputerze. Przy starej lub nieznanej wersji komunikat nad statystykami prowadzi do [strony wydań seine](https://github.com/zpalmtree/seine/releases).
 
 ## Dlaczego hashrate puli różni się od wyniku seine?
 
@@ -69,7 +69,7 @@ Tabela Recent Shares od razu pokazuje, że udziały docierają, jeszcze zanim us
 
 ## Kiedy spodziewać się pierwszej wypłaty?
 
-Nie ma stałego czasu od pierwszego udziału do pierwszej wypłaty. Pula musi znaleźć blok, gdy Twoje udziały są w oknie wypłat. Następnie blok potrzebuje 60 potwierdzeń: średnio około pięciu godzin **od znalezienia bloku**, choć rzeczywisty czas jest zmienny. Gdy potwierdzone saldo osiągnie obecne minimum 0,1 BNT, kwalifikuje się do automatycznego cyklu wypłat. Aktualne ustawienia znajdziesz na stronie [Get Started](/start).
+Nie ma stałego czasu od pierwszego udziału do pierwszej wypłaty. Pula musi znaleźć blok, gdy Twoje udziały są w oknie wypłat. Następnie blok potrzebuje 60 potwierdzeń: średnio około pięciu godzin **od znalezienia bloku**, choć rzeczywisty czas jest zmienny. Gdy potwierdzone saldo osiągnie obecne minimum 1 BNT, kwalifikuje się do automatycznego cyklu wypłat. Aktualne ustawienia znajdziesz na stronie [Get Started](/start).
 
 Stan płatności i odnośnik do transakcji znajdziesz w **Recent Payouts**. Płatność w kolejce nie została jeszcze rozgłoszona. Jeśli wysłana wypłata nie pojawia się w portfelu, skorzystaj z [poradnika dotyczącego brakujących wypłat](/blog/pl/pool-payout-missing-from-wallet/).
 
@@ -116,7 +116,7 @@ Te strony nie wymagają wyszukiwania i jawnie pokazują wszystkie działania pul
 
 ### Bloki
 
-[Blocks](/blocks) wymienia każdy blok znaleziony przez bntpool.com, od najnowszego: wysokość (z linkiem do eksploratora), nagrodę, nakład pracy, czas rundy, status i czas znalezienia. Filtruj według Confirmed, Pending lub Orphaned, aby sprawdzić stan każdego bloku.
+[Blocks](/blocks) wymienia każdy blok znaleziony przez bntpool.com, od najnowszego: wysokość (z linkiem do eksploratora), nagrodę, nakład pracy, czas rundy, status i czas znalezienia. Kolumna Type przed statusem pokazuje, czy blok pochodzi ze wspólnego kopania w puli, czy od górnika solo, któremu wypłacana jest cała nagroda za blok. Filtruj według Confirmed, Pending lub Orphaned, aby sprawdzić stan każdego bloku.
 
 ### Wypłaty
 

@@ -9,7 +9,7 @@ faq:
     a: 'No. Sessanta intervalli obiettivo da cinque minuti danno una stima di 300 minuti, cinque ore. L''avanzamento reale dipende dai blocchi aggiunti a intervalli variabili. Maturità, soglia del saldo e transazione successiva sono fasi separate.'
   - q: 'Devo continuare a minare perché una ricompensa maturi?'
     a: 'Un blocco trovato guadagna profondità con i nuovi blocchi della rete anche se il miner è scollegato. La tua quota segue le regole contabili del pool. Fermarsi non accelera né azzera la maturazione; segui la ricompensa in My Stats.'
-sourceHash: '2f9675c64c30'
+sourceHash: '963042ab2a8e'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Un blocco uscito può essere marcato orfano e la sua ricompensa provvisoria non 
 
 ## Come differisce il pagamento dalla ricompensa?
 
-La ricompensa nasce nell'output coinbase. Il pagamento del pool è una transazione successiva verso il tuo indirizzo. Alla data verificata il minimo pubblicato è 0,1 BNT. Maturità e soglia del saldo sono condizioni diverse; la [guida PPLNS](/blog/it/how-pplns-payouts-work/) dettaglia ripartizione e pagamento.
+La ricompensa nasce nell'output coinbase. Il pagamento del pool è una transazione successiva verso il tuo indirizzo. Al 4 novembre 2026 il minimo pubblicato è 1 BNT. Maturità e soglia del saldo sono condizioni diverse; la [guida PPLNS](/blog/it/how-pplns-payouts-work/) dettaglia ripartizione e pagamento.
 
 Dopo l'invio, segui la transazione e la ricezione e spendibilità nel wallet. Le sue conferme appartengono al pagamento, non al blocco originale. Non serve cambiare indirizzo o riconnettere il miner durante la maturazione. Confronta lo [storico pagamenti](/payouts) e il wallet con lo stesso indirizzo.
 

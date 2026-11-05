@@ -2,7 +2,7 @@
 title: Was ist ein Mining-Pool?
 description: Ein Mining-Pool bündelt die Hashrate vieler Miner und teilt jede Blockbelohnung unter ihnen auf. Erfahre, wie Pools, PPLNS, PPS und Solo-Mining funktionieren und worauf du achten solltest.
 tags: [Mining-Grundlagen, Mining-Pools, PPLNS, bntpool]
-sourceHash: '15d1453f41d9'
+sourceHash: '698c26d17e91'
 translation: draft
 faq:
   - q: 'Verdiene ich durch den Beitritt zu einem Mining-Pool mehr?'
@@ -63,20 +63,20 @@ Das Vergütungsmodell legt fest, wie ein Pool Shares in Einnahmen umsetzt. Dies 
 |---|---|---|
 | PPLNS (pay per last N shares) | Vom Pool gefundene Blöcke | Jede Blockbelohnung wird nach Share-Difficulty auf die Shares eines zurückliegenden Fensters verteilt |
 | PPS (pay per share) | Jeden akzeptierten Share | Der Pool zahlt je Share einen festen Betrag nach dessen Erwartungswert, unabhängig von Blockfunden |
-| Solo | Selbst gefundene Blöcke | Du minest mit deinem eigenen Node und behältst die volle Belohnung jedes gefundenen Blocks |
+| Solo | Selbst gefundene Blöcke | Du behältst die volle Belohnung jedes gefundenen Blocks, über einen Pool mit Solo-Modus oder mit deinem eigenen Node |
 
 **PPLNS** blickt von jedem Pool-Block zurück. Auf bntpool.com sind die „letzten N Shares“ ein Fenster von sechs Stunden. Der Pool summiert die Difficulty aller akzeptierten Shares in diesen Stunden vor dem Block und gibt jedem Miner denselben Belohnungsanteil wie dessen Arbeitsanteil. Jeder Share zählt für jeden Block während seiner Zeit im Fenster. Kontinuierliche Miner haben deshalb stets ein volles Fenster hinter sich, und ein Neustart setzt nichts zurück. [So funktionieren PPLNS-Auszahlungen auf bntpool.com](/blog/de/how-pplns-payouts-work/) erklärt die Aufteilung Schritt für Schritt.
 
 **PPS** bezahlt jeden Share beim Eingang nach seinem Erwartungswert: Share-Difficulty geteilt durch Netzwerk-Difficulty, multipliziert mit der Blockbelohnung. Der Pool-Betreiber übernimmt die Schwankungen der Blockfunde und zahlt Miner dazwischen aus seinem eigenen Guthaben.
 
-**Solo-Mining** kommt ohne Pool aus. Dein Node erstellt die Vorlagen und jeder gefundene Block zahlt die volle Belohnung an deine Wallet. Das passt zu Betrieben, die groß genug sind, selbst häufig Blöcke zu finden. Der Miner seine unterstützt beides: Standardmäßig minet er auf bntpool.com, mit `./seine --mode daemon` dagegen mit deinem eigenen synchronisierten Blocknet-Node.
+**Solo-Mining** zahlt die volle Belohnung jedes Blocks an den Miner, der ihn gefunden hat. Das passt zu Betrieben, die groß genug sind, selbst häufig Blöcke zu finden. Auf bntpool.com minest du solo, indem du `solo:` vor deine Adresse setzt: Der Pool betreibt weiter den Node und zahlt deine Blöcke über seine normalen Auszahlungen, und [Solo-Mining auf bntpool.com](/blog/de/solo-mine-blocknet-on-bntpool/) zeigt die Einrichtung. Der Miner seine hat außerdem einen Daemon-Modus, `./seine --mode daemon`, der mit deinem eigenen synchronisierten Blocknet-Node arbeitet.
 
 ## Worauf solltest du bei einem Mining-Pool achten?
 
 Beim Vergleich von Pools bestimmen diese Einzelheiten, wie du bezahlt wirst und wie leicht du das prüfen kannst:
 
 - **Ein klar beschriebenes Vergütungsmodell.** Der Pool sollte Modell und Einstellungen, etwa das PPLNS-Fenster, nennen. bntpool.com zeigt sie unter [Get Started](/start) und veröffentlicht sie unter `https://bntpool.com/api/info`.
-- **Bestätigungen und Mindestauszahlung.** Belohnungen warten normalerweise, bis der Block tief genug in der Kette liegt. Zahlungen erfolgen ab einem Mindestguthaben. Auf bntpool.com ist eine Belohnung nach 60 Blöcken bestätigt, entsprechend Blocknets Coinbase-Reife. Guthaben ab 0,1 BNT werden automatisch ausgezahlt.
+- **Bestätigungen und Mindestauszahlung.** Belohnungen warten normalerweise, bis der Block tief genug in der Kette liegt. Zahlungen erfolgen ab einem Mindestguthaben. Auf bntpool.com ist eine Belohnung nach 60 Blöcken bestätigt, entsprechend Blocknets Coinbase-Reife. Guthaben ab 1 BNT werden automatisch ausgezahlt.
 - **Öffentliche, überprüfbare Zahlen.** Du solltest jeden gefundenen Block und jede Zahlung sehen können. bntpool.com zeigt sie auf den Seiten [Blocks](/blocks) und [Payouts](/payouts) sowie den Effort jeder Runde auf [Luck](/luck).
 - **Deine eigene Statistik.** Über deine Adresse solltest du Hashrate, Shares und Guthaben finden. Bei bntpool.com geht das auf der [Statistikseite](/stats); die [Anleitung zur Miner-Überwachung](/blog/de/track-your-miner-on-bntpool/) erklärt jede Karte.
 - **Einfache Einrichtung.** Je weniger Einstellungen nötig sind, desto schneller minest du. bntpool.com ist der Standardpool von seine, der Threads, Kernel und Speicher selbst abstimmt. Statt einer vollständigen Adresse kannst du dich mit einem [Blocknet-ID-Namen](https://seineminer.com/de/blog/blocknet-id-pay-by-name/) wie `@name` anmelden.
@@ -88,11 +88,11 @@ Beim Vergleich von Pools bestimmen diese Einzelheiten, wie du bezahlt wirst und 
 | Auszahlungssystem | PPLNS |
 | Share-Fenster | 6 Stunden |
 | Bestätigungen vor Auszahlung | 60 Blöcke |
-| Mindestauszahlung | 0,1 BNT |
+| Mindestauszahlung | 1 BNT |
 | Stratum-Adresse | `stratum+tcp://bntpool.com:3333` |
 
 Das [Pool-Dashboard](/) zeigt das aktuelle Bild: verbundene Miner, Pool-Hashrate, Netzwerk-Hashrate, gefundene Blöcke und Effort der laufenden Runde. In einer Momentaufnahme vom 25. Oktober 2026 um 02:25 Uhr EDT erreichte der Pool etwa 5.200 H/s bei rund 44.400 H/s im Netzwerk und 246 verbundenen Minern. Das sind ungefähr 12 % des Netzwerks und damit erwartete 34 Blöcke täglich, etwa einer alle 42 Minuten. Die Werte ändern sich ständig. Prüfe aktuelle Zahlen im Dashboard und nutze die [Anleitung zur Belohnungsschätzung](/blog/de/estimate-blocknet-mining-rewards/), um sie für deine Hashrate in BNT umzurechnen.
 
 Zum Beitreten [lädst du seine herunter](https://seineminer.com/de/#download), startest ihn, fügst deine Blocknet-Adresse oder deinen `@name` ein und akzeptierst den Standardpool. Die [Mining-Anleitung für seine](https://seineminer.com/de/blog/how-to-mine-blocknet/) erklärt jeden Schritt; [Blocknet auf bntpool.com minen](/blog/de/mine-blocknet-on-bntpool/) behandelt Rig-Namen und die Kontrolle der ersten Shares.
 
-<CTA target="pool" title="Tritt bntpool.com bei" text="Verbinde seine mit dem Pool und verdiene an jedem gefundenen Block mit. Dein Anteil wird automatisch ab 0,1 BNT an deine Adresse gesendet." />
+<CTA target="pool" title="Tritt bntpool.com bei" text="Verbinde seine mit dem Pool und verdiene an jedem gefundenen Block mit. Dein Anteil wird automatisch ab 1 BNT an deine Adresse gesendet." />

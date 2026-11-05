@@ -11,7 +11,7 @@ faq:
     a: 'No. Statistiche, blocchi, pagamenti, fortuna, stato ed endpoint dei miner sono JSON pubblico via HTTPS, leggibile con curl o una dashboard domestica senza registrazione. Gli importi sono in unità atomiche: dividi per 100.000.000 per ottenere BNT e interroga ogni 30-60 secondi.'
   - q: 'Perché My Stats mostra zero Estimated Rewards?'
     a: 'Le stime appaiono quando la pool trova un blocco con le tue share nella finestra di pagamento. Per un nuovo miner possono servire alcuni round. Share accettate e hashrate compaiono prima, poi le ricompense stimate, che maturano in Confirmed Rewards e vengono pagate automaticamente.'
-sourceHash: 'f74ae9281fd2'
+sourceHash: '75495e49f3e9'
 translation: draft
 ---
 
@@ -54,7 +54,7 @@ Assegna a ogni macchina un nome distinto: la pool mostra separatamente hashrate,
 ./seine --pool-worker rig-01
 ```
 
-La tabella **Workers** mostra anche la versione del miner di ogni macchina. Un avviso sopra le statistiche rimanda alla [pagina delle release di seine](https://github.com/zpalmtree/seine/releases) quando una versione è vecchia o sconosciuta.
+I rig che minano in solo, con `solo:` davanti all’indirizzo, mostrano **Solo** nella colonna Tipo della tabella. La tabella **Workers** mostra anche la versione del miner di ogni macchina. Un avviso sopra le statistiche rimanda alla [pagina delle release di seine](https://github.com/zpalmtree/seine/releases) quando una versione è vecchia o sconosciuta.
 
 ## Perché l’hashrate della pool differisce da seine?
 
@@ -69,7 +69,7 @@ Recent Shares conferma subito l’arrivo del lavoro, prima che l’hashrate si s
 
 ## Quando aspettarsi il primo pagamento?
 
-Non esiste un conto alla rovescia fisso dalla prima share al primo pagamento. Il pool deve trovare un blocco mentre le tue share sono nella finestra di pagamento. Quel blocco richiede poi 60 conferme: circa cinque ore in media **dal ritrovamento del blocco**, con tempi effettivi variabili. Quando il saldo confermato raggiunge il minimo attuale di 0,1 BNT, può essere incluso in un ciclo di pagamento automatico. Consulta [Get Started](/start) per i parametri attuali.
+Non esiste un conto alla rovescia fisso dalla prima share al primo pagamento. Il pool deve trovare un blocco mentre le tue share sono nella finestra di pagamento. Quel blocco richiede poi 60 conferme: circa cinque ore in media **dal ritrovamento del blocco**, con tempi effettivi variabili. Quando il saldo confermato raggiunge il minimo attuale di 1 BNT, può essere incluso in un ciclo di pagamento automatico. Consulta [Get Started](/start) per i parametri attuali.
 
 Segui lo stato e il link alla transazione in **Recent Payouts**. Un pagamento in coda non è ancora stato trasmesso. Se un pagamento inviato manca nel wallet, consulta la [guida ai problemi di pagamento](/blog/it/pool-payout-missing-from-wallet/).
 
@@ -116,7 +116,7 @@ Non richiedono una ricerca e mostrano apertamente l’attività. La [dashboard](
 
 ### Blocchi
 
-[Blocks](/blocks) elenca ogni blocco trovato dal più recente: altezza collegata all’explorer, ricompensa, effort, durata, stato e momento della scoperta. Filtra per Confirmed, Pending o Orphaned per vedere la situazione.
+[Blocks](/blocks) elenca ogni blocco trovato dal più recente: altezza collegata all’explorer, ricompensa, effort, durata, stato e momento della scoperta. Una colonna Tipo prima dello stato indica se un blocco viene dal mining condiviso della pool o da un miner in solo, che riceve l’intera ricompensa. Filtra per Confirmed, Pending o Orphaned per vedere la situazione.
 
 ### Pagamenti
 

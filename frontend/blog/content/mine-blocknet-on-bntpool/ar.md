@@ -2,7 +2,7 @@
 title: تعدين Blocknet على bntpool.com
 description: انضم إلى bntpool.com، المجمع الافتراضي في seine. اتصل عبر stratum+tcp://bntpool.com:3333 بعنوانك أو @name، وسمّ أجهزة التعدين وتابع إحصاءاتك.
 tags: [دليل التعدين, bntpool, Blocknet ID, seine]
-sourceHash: 'df269126bb76'
+sourceHash: 9713e976f981
 translation: draft
 faq:
   - q: 'ما عنوان Stratum الخاص بـ bntpool.com؟'
@@ -23,7 +23,7 @@ faq:
 عنوان Stratum هو `stratum+tcp://bntpool.com:3333`. يعرضه seine افتراضيًا عند التشغيل الأول، لذا يكفي الضغط على Enter عند سؤال المجمع للاتصال. تدخل بعنوان Blocknet أو Blocknet ID `@name`. لا تحتاج إلى إنشاء حساب، وتصل المكافآت إلى ذلك العنوان.
 </Answer>
 
-هذه إعدادات المجمع كما نشرها المسار العام `/api/info` في 25 أكتوبر 2026:
+هذه إعدادات المجمع كما نشرها المسار العام `/api/info` في 4 نوفمبر 2026:
 
 | الإعداد | القيمة |
 |---|---|
@@ -31,9 +31,11 @@ faq:
 | بيانات الدخول | عنوان Blocknet أو `@name` أو `$name` |
 | نظام الدفعات | PPLNS بنافذة 6 ساعات |
 | التأكيدات قبل الدفع | 60 كتلة |
-| الحد الأدنى للدفع | 0.1 BNT |
+| الحد الأدنى للدفع | 1 BNT |
 
 يمكنك الاطلاع على القيم نفسها في أي وقت على صفحة [Get Started](/start).
+
+للاحتفاظ بالمكافأة الكاملة لكل كتلة تجدها أجهزتك، ضع `solo:` قبل عنوانك. يشرح [التعدين الفردي على bntpool.com](/blog/ar/solo-mine-blocknet-on-bntpool/) الطريقة.
 
 ## لماذا bntpool.com هو المجمع الافتراضي في seine؟
 
@@ -105,7 +107,7 @@ Enter pool URL [default: stratum+tcp://bntpool.com:3333]:
 
 يضبط المجمع الصعوبة لكل اتصال منفردًا ويعدّلها أثناء التعدين. لذلك يرسل حتى المعالج الصغير حصصًا بانتظام، وتظهر أولى الحصص المقبولة خلال دقائق من الاتصال. لمعرفة المعدل المتوقع من عتادك، راجع [دليل عتاد تعدين Blocknet](https://seineminer.com/ar/blog/blocknet-mining-hardware-hashrate/).
 
-تأتي المكافآت بعد ذلك. تظهر Estimated Rewards عندما يجد المجمع كتلة وحصصك ضمن نافذة الساعات الست. بعد 60 تأكيدًا، تنتقل حصتك إلى Confirmed Rewards، ويُرسل الرصيد تلقائيًا عندما يبلغ 0.1 BNT على الأقل. يشرح [دليل دفعات PPLNS](/blog/ar/how-pplns-payouts-work/) تقسيم المكافأة. التاريخ العام للمجمع على [Blocks](/blocks) و[Payouts](/payouts).
+تأتي المكافآت بعد ذلك. تظهر Estimated Rewards عندما يجد المجمع كتلة وحصصك ضمن نافذة الساعات الست. بعد 60 تأكيدًا، تنتقل حصتك إلى Confirmed Rewards، ويُرسل الرصيد تلقائيًا عندما يبلغ 1 BNT على الأقل. يشرح [دليل دفعات PPLNS](/blog/ar/how-pplns-payouts-work/) تقسيم المكافأة. التاريخ العام للمجمع على [Blocks](/blocks) و[Payouts](/payouts).
 
 ## ماذا تتضمن صفحة Get Started؟
 

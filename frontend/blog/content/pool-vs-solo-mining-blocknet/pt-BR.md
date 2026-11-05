@@ -1,8 +1,8 @@
 ---
 title: Mineração em pool ou solo para Blocknet
-description: Escolha entre pool e mineração solo de Blocknet. Calcule seus blocos esperados por dia, veja como o bntpool.com oferece pagamentos regulares e configure a mineração solo.
+description: Escolha entre pool e mineração solo de Blocknet. Calcule seus blocos esperados por dia, compare recompensas compartilhadas e solo no bntpool.com e configure a mineração solo.
 tags: [Guia de mineração, Mineração solo, bntpool, PPLNS]
-sourceHash: 171d240d6c4b
+sourceHash: 'aecc3e8f992f'
 translation: draft
 faq:
   - q: 'Com que frequência eu encontraria um bloco de Blocknet minerando solo?'
@@ -10,20 +10,20 @@ faq:
   - q: 'Preciso executar um nó Blocknet para minerar no bntpool.com?'
     a: 'Não. O pool executa seu próprio nó, cria os modelos de bloco e envia os blocos encontrados. Você só precisa do seine e de um endereço Blocknet ou nome Blocknet ID. Execute o minerador, cole o endereço e aceite o pool padrão. Sua parte de cada bloco é paga nesse endereço.'
   - q: 'O seine pode minerar Blocknet solo?'
-    a: 'Sim. Inicie com ./seine --mode daemon para minerar diretamente com seu próprio nó Blocknet sincronizado, usando o cookie da API para conectar. Cada bloco encontrado paga a recompensa inteira à carteira do nó. O guia de mineração solo no repositório do seine cobre instalações personalizadas e senhas de carteira.'
+    a: 'Sim, de duas formas. Coloque solo: antes do seu endereço, como em ./seine --address solo:YOUR_ADDRESS, e o bntpool.com paga a você a recompensa inteira de cada bloco que encontrar, sem nó para executar. Ou inicie o seine com --mode daemon para minerar com seu próprio nó Blocknet sincronizado.'
   - q: 'Posso alternar entre pool e solo depois?'
-    a: 'Sim. O mesmo download do seine serve para ambos. Execute normalmente para minerar no bntpool.com ou acrescente --mode daemon para usar seu próprio nó. Reinicie quando quiser mudar. Shares já enviados permanecem na janela PPLNS de seis horas e continuam rendendo enquanto estiverem nela.'
+    a: 'Sim. O mesmo download do seine serve para todas as opções. Adicione ou remova o prefixo solo: do seu endereço, ou acrescente --mode daemon para usar seu próprio nó, e reinicie o seine quando quiser mudar. Shares já enviados para recompensas compartilhadas permanecem na janela PPLNS de seis horas e continuam rendendo enquanto estiverem nela.'
 ---
 
-Este guia ajuda você a escolher entre minerar Blocknet no bntpool.com ou solo com seu próprio nó. Você calculará quantos blocos sua hashrate encontra sozinha, verá como o pool transforma isso em pagamentos regulares e aprenderá a configurar ambas as opções com o seine.
+Este guia ajuda você a escolher entre as recompensas compartilhadas do pool e a mineração solo de Blocknet, seja solo pelo bntpool.com ou com seu próprio nó. Você calculará quantos blocos sua hashrate encontra sozinha, verá como o pool transforma isso em pagamentos regulares e aprenderá a configurar cada opção com o seine.
 
 ## É melhor minerar Blocknet em pool ou solo?
 
 <Answer>
-A conta é a mesma: sua fração da hashrate da rede define sua fração dos blocos. No bntpool.com, você ganha uma parte de todo bloco encontrado pelo pool, recebendo pagamentos regulares conforme eles chegam. Solo, você fica com a recompensa inteira de cada bloco que encontra, uma opção adequada a grandes operações com nó próprio.
+A conta é a mesma: sua fração da hashrate da rede define sua fração dos blocos. No bntpool.com, você ganha uma parte de todo bloco encontrado pelo pool, recebendo pagamentos regulares conforme eles chegam. Solo, você fica com a recompensa inteira de cada bloco que encontra, uma opção adequada a grandes operações. O bntpool.com oferece as duas.
 </Answer>
 
-Para a maioria dos mineradores, o bntpool.com é o ponto de partida simples. É o pool padrão do seine: basta configurar o endereço, sem executar ou sincronizar um nó. A mineração solo também é totalmente compatível. O modo daemon do seine trabalha diretamente com seu nó Blocknet. O restante do guia mostra como escolher de acordo com seu hardware.
+Para a maioria dos mineradores, o bntpool.com é o ponto de partida simples. É o pool padrão do seine: basta configurar o endereço, sem executar ou sincronizar um nó. A mineração solo também é totalmente compatível. Coloque `solo:` antes do seu endereço e o bntpool.com paga a você a recompensa inteira de cada bloco que seus rigs encontrarem, sem nó para executar. O seine também tem um modo daemon que trabalha diretamente com seu próprio nó Blocknet. O restante do guia mostra como escolher de acordo com seu hardware.
 
 ## Quantos blocos você encontraria solo?
 
@@ -67,7 +67,7 @@ O bntpool.com combina a hashrate de todos os participantes, encontrando blocos m
 Isso traz alguns resultados práticos:
 
 - **Ganhos em cada bloco.** Enquanto seus shares estiverem na janela de seis horas, você ganha parte de cada bloco do pool. Acompanhe-os na [página de blocos](/blocks).
-- **Pagamentos automáticos.** Quando um bloco chega a 60 blocos de profundidade, sua parte passa ao saldo confirmado. O pool o envia ao seu endereço ao atingir 0,1 BNT. Os envios aparecem na [página de pagamentos](/payouts).
+- **Pagamentos automáticos.** Quando um bloco chega a 60 blocos de profundidade, sua parte passa ao saldo confirmado. O pool o envia ao seu endereço ao atingir o pagamento mínimo, 1 BNT em 4 de novembro de 2026. Os envios aparecem na [página de pagamentos](/payouts).
 - **Continuidade durante reinicializações.** Shares já enviados permanecem na janela por seis horas. Reiniciar ou atualizar um driver não zera sua posição.
 - **Só o minerador precisa rodar.** O pool executa o nó, cria modelos e envia blocos. Você pode usar vários rigs para o mesmo endereço ou Blocknet ID `@name`.
 
@@ -75,13 +75,26 @@ O [guia de pagamentos PPLNS](/blog/pt-br/how-pplns-payouts-work/) explica a divi
 
 ## Por que minerar Blocknet solo?
 
-Na mineração solo, todo o processo fica sob seu controle. Seu nó cria cada modelo e verifica todos os blocos. Cada bloco encontrado paga a recompensa completa diretamente à carteira do nó.
+A mineração solo paga a você a recompensa inteira de cada bloco que encontra. A opção funciona melhor quando sua hashrate encontra blocos frequentemente. No exemplo acima, uma operação com 10% da rede encontra um bloco a cada cerca de 50 minutos, recebendo pagamentos solo tão regulares quanto os de um pool.
 
-A opção funciona melhor quando sua hashrate encontra blocos frequentemente. No exemplo acima, uma operação com 10% da rede encontra um bloco a cada cerca de 50 minutos, recebendo tão regularmente quanto um pool. Se você já executa um nó Blocknet para sua carteira ou outros serviços, basta acrescentar o minerador.
+Há duas formas de minerar solo com o seine:
 
-O seine também foi feito para esse modo. Ele minera com os modelos do nó e, se o nó esquecer um modelo, por exemplo após reiniciar, reenvia o bloco resolvido completo para que o bloco encontrado ainda chegue à cadeia.
+- **Solo no bntpool.com.** Coloque `solo:` antes do seu endereço. O pool executa o nó, envia seus blocos e paga a recompensa inteira de cada um, descontada a taxa do pool, ao seu endereço pelos pagamentos normais. Você pode combinar rigs solo e compartilhados no mesmo endereço.
+- **Solo com seu próprio nó.** O modo daemon do seine minera com os modelos de bloco do seu nó, e cada bloco paga diretamente à carteira do nó. Se você já executa um nó Blocknet para sua carteira ou outros serviços, basta acrescentar o minerador.
+
+O seine também foi feito para o modo daemon. Ele minera com os modelos do nó e, se o nó esquecer um modelo, por exemplo após reiniciar, reenvia o bloco resolvido completo para que o bloco encontrado ainda chegue à cadeia.
 
 ## Como configurar a mineração solo com o seine?
+
+Para minerar solo no bntpool.com, instale o seine v0.3.1 ou mais recente e inicie-o com o prefixo no seu endereço:
+
+```sh
+./seine --address solo:YOUR_BLOCKNET_ADDRESS
+```
+
+O painel passa a identificar sua conta como **Solo**. [Minere Blocknet solo no bntpool.com](/blog/pt-br/solo-mine-blocknet-on-bntpool/) explica nomes Blocknet ID, nomes de rig, pagamentos e onde seus blocos solo aparecem na página de estatísticas.
+
+Para minerar solo com seu próprio nó:
 
 1. **Instale e sincronize um nó Blocknet.** Com o gerenciador `blocknet`, execute:
 
@@ -111,12 +124,13 @@ O [guia de mineração solo](https://github.com/zpalmtree/seine/blob/master/docs
 Use sua hashrate e a hashrate atual da rede no [painel](/) na fórmula e observe o intervalo médio entre blocos.
 
 - **Comece no bntpool.com** se minera em desktop, notebook ou poucos servidores, ou se quer pagamentos regulares sem executar um nó. Inicie o seine, cole o endereço ou `@name` e aceite o pool padrão.
-- **Mine solo** se sua operação detém uma grande fração da rede, encontrando blocos frequentemente por conta própria, e você já executa ou quer executar um nó sincronizado.
+- **Mine solo no bntpool.com** se sua operação detém uma grande fração da rede, encontrando blocos frequentemente por conta própria. Adicione `solo:` ao seu endereço e mantenha o nó, as estatísticas e os pagamentos do pool.
+- **Mine solo com seu próprio nó** se você tem essa hashrate e já executa, ou quer executar, seu próprio nó sincronizado.
 
-O seine facilita rever a escolha. Pool e modo daemon usam o mesmo download; você muda com uma opção e uma reinicialização conforme seu hardware cresce. Se mantiver um nó local enquanto minera no pool, o seine também mostra o saldo da carteira desse nó ao lado do saldo do pool.
+O seine facilita rever a escolha. Todas as opções usam o mesmo download; você muda com um prefixo ou uma opção e uma reinicialização conforme seu hardware cresce. Se mantiver um nó local enquanto minera no pool, o seine também mostra o saldo da carteira desse nó ao lado do saldo do pool.
 
 <Note>
-Segundo [blocknetcrypto.com](https://blocknetcrypto.com/#faraday), o Blocknet planeja uma atualização chamada Faraday por volta de 16 de fevereiro de 2027, que deve mudar a prova de trabalho. Mantenha o seine atualizado: ele verifica novas versões ao iniciar e a cada 12 horas.
+Segundo [blocknetcrypto.com](https://blocknetcrypto.com/#faraday), o Blocknet planeja uma atualização chamada Faraday por volta de 16 de fevereiro de 2027, que deve mudar a prova de trabalho. O seine v0.3.1 já está pronto: a mineração em pool passa sozinha para a nova prova de trabalho e, com as atualizações automáticas ativadas, o seine instala as novas versões para você.
 </Note>
 
-<CTA target="pool" title="Comece a minerar no bntpool.com" text="Execute o seine, cole seu endereço e ganhe uma parte de cada bloco encontrado pelo pool, paga automaticamente a partir de 0,1 BNT." />
+<CTA target="pool" title="Comece a minerar no bntpool.com" text="Execute o seine, cole seu endereço e ganhe uma parte de cada bloco encontrado pelo pool, ou adicione solo: e fique com cada bloco que encontrar." />

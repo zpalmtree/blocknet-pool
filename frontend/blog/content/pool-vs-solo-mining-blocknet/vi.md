@@ -1,8 +1,8 @@
 ---
 title: Đào Blocknet bằng pool hay solo
-description: Chọn đào Blocknet bằng pool hoặc solo. Tính số khối kỳ vọng mỗi ngày, xem bntpool.com tạo khoản thanh toán đều đặn và thiết lập đào solo.
+description: Chọn đào Blocknet bằng pool hoặc solo. Tính số khối kỳ vọng mỗi ngày, so sánh phần thưởng chia sẻ và solo trên bntpool.com, và thiết lập đào solo.
 tags: [Hướng dẫn đào coin, Đào solo, bntpool, PPLNS]
-sourceHash: 171d240d6c4b
+sourceHash: aecc3e8f992f
 translation: draft
 faq:
   - q: 'Nếu đào solo, bao lâu tôi tìm được một khối Blocknet?'
@@ -10,20 +10,20 @@ faq:
   - q: 'Có cần chạy node Blocknet để đào trên bntpool.com không?'
     a: 'Không. Pool chạy node Blocknet riêng, tạo mẫu khối và gửi khối tìm được. Bạn chỉ cần seine cùng địa chỉ Blocknet hoặc tên Blocknet ID. Chạy seine, dán địa chỉ, chấp nhận pool mặc định; pool trả phần của bạn trong mỗi khối về địa chỉ đó.'
   - q: 'seine có đào Blocknet solo được không?'
-    a: 'Có. Khởi động seine bằng ./seine --mode daemon để đào trực tiếp với node Blocknet đã đồng bộ của bạn, dùng cookie API của node để kết nối. Mỗi khối tìm được trả toàn bộ phần thưởng vào ví node. Hướng dẫn đào solo trong kho seine trình bày bố trí node tùy chỉnh và mật khẩu ví.'
+    a: 'Có, theo hai cách. Thêm solo: vào trước địa chỉ, như ./seine --address solo:YOUR_ADDRESS, và bntpool.com trả cho bạn toàn bộ phần thưởng của mỗi khối bạn tìm được mà không cần chạy node. Hoặc khởi động seine với --mode daemon để đào với node Blocknet đã đồng bộ của riêng bạn.'
   - q: 'Sau này có thể chuyển giữa đào pool và solo không?'
-    a: 'Có. seine dùng cùng bản tải cho cả hai. Chạy bình thường để đào trên bntpool.com, hoặc thêm --mode daemon để đào với node riêng; khởi động lại khi muốn đổi. Share đã gửi cho pool vẫn nằm trong cửa sổ PPLNS sáu giờ và tiếp tục kiếm thưởng khi còn hiệu lực.'
+    a: 'Có. seine dùng cùng bản tải cho mọi phương án. Thêm hoặc bỏ tiền tố solo: trên địa chỉ, hoặc thêm --mode daemon cho node riêng, rồi khởi động lại seine bất cứ khi nào muốn đổi. Share đã gửi cho phần thưởng chia sẻ vẫn nằm trong cửa sổ PPLNS sáu giờ và tiếp tục kiếm thưởng khi còn hiệu lực.'
 ---
 
-Hướng dẫn này giúp bạn quyết định đào Blocknet trên bntpool.com hay solo với node riêng. Bạn sẽ tính số khối hashrate của mình tự tìm được, xem pool biến nó thành dòng thanh toán đều đặn thế nào và học cách thiết lập cả hai với seine.
+Hướng dẫn này giúp bạn chọn giữa phần thưởng pool chia sẻ và đào solo Blocknet, solo qua bntpool.com hoặc với node riêng. Bạn sẽ tính số khối hashrate của mình tự tìm được, xem pool biến nó thành dòng thanh toán đều đặn thế nào và học cách thiết lập từng phương án với seine.
 
 ## Nên đào Blocknet trong pool hay solo?
 
 <Answer>
-Cả hai theo cùng phép tính: tỷ lệ hashrate của bạn trong mạng quyết định phần khối của bạn. Trên bntpool.com, bạn kiếm một phần từ mọi khối pool tìm thấy, nên thanh toán đến đều khi pool tìm khối. Đào solo cho bạn toàn bộ phần thưởng mỗi khối tự tìm, phù hợp hoạt động quy mô lớn chạy node riêng.
+Cả hai theo cùng phép tính: tỷ lệ hashrate của bạn trong mạng quyết định phần khối của bạn. Trên bntpool.com, bạn kiếm một phần từ mọi khối pool tìm thấy, nên thanh toán đến đều khi pool tìm khối. Đào solo cho bạn toàn bộ phần thưởng mỗi khối tự tìm, phù hợp hoạt động quy mô lớn. bntpool.com hỗ trợ cả hai.
 </Answer>
 
-Với đa số thợ đào, bntpool.com là nơi dễ bắt đầu. Đây là pool mặc định của seine, nên ngoài địa chỉ không có gì cần thiết lập; bạn không phải chạy hay đồng bộ node. Đào solo cũng được hỗ trợ đầy đủ: seine có chế độ daemon đào thẳng với node Blocknet riêng. Phần còn lại cho thấy cách chọn phương án phù hợp phần cứng.
+Với đa số thợ đào, bntpool.com là nơi dễ bắt đầu. Đây là pool mặc định của seine, nên ngoài địa chỉ không có gì cần thiết lập; bạn không phải chạy hay đồng bộ node. Đào solo cũng được hỗ trợ đầy đủ. Thêm `solo:` vào trước địa chỉ và bntpool.com trả cho bạn toàn bộ phần thưởng của mỗi khối dàn máy tìm được, không cần chạy node. seine cũng có chế độ daemon đào thẳng với node Blocknet riêng. Phần còn lại cho thấy cách chọn phương án phù hợp phần cứng.
 
 ## Đào solo sẽ tìm được bao nhiêu khối?
 
@@ -67,7 +67,7 @@ bntpool.com kết hợp hashrate của mọi người đào trong pool, nên tì
 Điều này có vài kết quả thực tế cho bạn:
 
 - **Kiếm từ mọi khối.** Khi share còn trong cửa sổ sáu giờ, bạn nhận phần từ mỗi khối pool tìm được. Có thể theo dõi chúng trên [trang khối](/blocks).
-- **Thanh toán tự động.** Sau khi khối sâu 60 khối, phần của bạn chuyển vào số dư đã xác nhận; pool gửi về địa chỉ khi đạt 0,1 BNT. Khoản đã gửi được liệt kê trên [trang thanh toán](/payouts).
+- **Thanh toán tự động.** Sau khi khối sâu 60 khối, phần của bạn chuyển vào số dư đã xác nhận; pool gửi về địa chỉ khi đạt mức thanh toán tối thiểu, 1 BNT tính đến ngày 4 tháng 11 năm 2026. Khoản đã gửi được liệt kê trên [trang thanh toán](/payouts).
 - **Liên tục qua khởi động lại.** Share đã gửi ở lại cửa sổ sáu giờ, nên khởi động lại hoặc cập nhật driver không đặt lại vị trí.
 - **Chỉ cần chạy trình đào.** Pool chạy node, tạo mẫu khối và gửi khối. Bạn có thể đào từ nhiều máy về một địa chỉ hoặc Blocknet ID `@name`.
 
@@ -75,13 +75,26 @@ bntpool.com kết hợp hashrate của mọi người đào trong pool, nên tì
 
 ## Vì sao đào Blocknet solo?
 
-Đào solo đặt mọi phần của quy trình dưới quyền kiểm soát của bạn. Node riêng tạo từng mẫu khối và tự kiểm tra mọi khối; mỗi khối bạn tìm trả toàn bộ phần thưởng thẳng vào ví node.
+Đào solo trả cho bạn toàn bộ phần thưởng của mỗi khối bạn tìm được. Phù hợp nhất khi hashrate của bạn thường xuyên tìm khối. Trong ví dụ trên, hệ thống nắm 10% mạng tìm khối khoảng mỗi 50 phút, nên thanh toán solo đều như pool.
 
-Phù hợp nhất khi hashrate của bạn thường xuyên tìm khối. Trong ví dụ trên, hệ thống nắm 10% mạng tìm khối khoảng mỗi 50 phút, nên thanh toán solo đều như pool. Nếu đã chạy node Blocknet cho ví hoặc dịch vụ khác, đào solo chỉ thêm trình đào lên đó.
+Có hai cách đào solo bằng seine:
 
-seine cũng được thiết kế cho chế độ này. Nó đào trên mẫu khối của node; nếu node đã quên mẫu, chẳng hạn sau khởi động lại, seine gửi lại toàn bộ khối đã giải để khối tìm được vẫn tới chuỗi.
+- **Solo trên bntpool.com.** Thêm `solo:` vào trước địa chỉ. Pool chạy node, gửi khối của bạn và trả toàn bộ phần thưởng của mỗi khối, trừ phí pool, về địa chỉ của bạn qua các khoản thanh toán thông thường. Bạn có thể kết hợp dàn máy solo và dàn máy chia sẻ trên một địa chỉ.
+- **Solo với node riêng.** Chế độ daemon của seine đào trên mẫu khối của node riêng, và mỗi khối trả thẳng vào ví node. Nếu đã chạy node Blocknet cho ví hoặc dịch vụ khác, đào solo chỉ thêm trình đào lên đó.
+
+seine cũng được thiết kế cho chế độ daemon. Nó đào trên mẫu khối của node; nếu node đã quên mẫu, chẳng hạn sau khởi động lại, seine gửi lại toàn bộ khối đã giải để khối tìm được vẫn tới chuỗi.
 
 ## Thiết lập đào solo bằng seine thế nào?
+
+Để đào solo trên bntpool.com, cài seine v0.3.1 trở lên và khởi động với tiền tố trên địa chỉ:
+
+```sh
+./seine --address solo:YOUR_BLOCKNET_ADDRESS
+```
+
+Bảng điều khiển sau đó gắn nhãn **Solo** cho tài khoản của bạn. [Đào solo Blocknet trên bntpool.com](/blog/vi/solo-mine-blocknet-on-bntpool/) trình bày tên Blocknet ID, tên dàn máy, thanh toán và nơi các khối solo hiện trên trang thống kê.
+
+Để đào solo với node riêng:
 
 1. **Cài và đồng bộ node Blocknet.** Với trình bao `blocknet`, chạy:
 
@@ -111,12 +124,13 @@ seine cũng được thiết kế cho chế độ này. Nó đào trên mẫu kh
 Áp dụng công thức với hashrate riêng và hashrate mạng hiện tại từ [bảng điều khiển](/), rồi xem thời gian trung bình giữa các khối.
 
 - **Bắt đầu trên bntpool.com** nếu đào bằng máy bàn, laptop hoặc vài máy chủ, hoặc muốn thanh toán đều mà không chạy node. Chạy seine, dán địa chỉ hoặc `@name`, chấp nhận pool mặc định.
-- **Đào solo** nếu hệ thống nắm tỷ lệ lớn trong mạng để tự tìm khối thường xuyên, và bạn đã chạy hoặc muốn chạy node đồng bộ riêng.
+- **Đào solo trên bntpool.com** nếu hệ thống nắm tỷ lệ lớn trong mạng để tự tìm khối thường xuyên. Thêm `solo:` vào địa chỉ và vẫn dùng node, thống kê và thanh toán của pool.
+- **Đào solo với node riêng** nếu bạn có hashrate như vậy và đã chạy, hoặc muốn chạy, node đồng bộ riêng.
 
-seine giúp bạn dễ đổi lựa chọn sau này. Đào pool và chế độ daemon dùng cùng bản tải, nên có thể chuyển bằng một cờ và khởi động lại khi mở rộng phần cứng. Nếu chạy node cục bộ trong khi đào pool, seine cũng hiển thị số dư ví node cạnh số dư pool.
+seine giúp bạn dễ đổi lựa chọn sau này. Mọi phương án dùng cùng bản tải, nên có thể chuyển bằng một tiền tố hoặc cờ và khởi động lại khi mở rộng phần cứng. Nếu chạy node cục bộ trong khi đào pool, seine cũng hiển thị số dư ví node cạnh số dư pool.
 
 <Note>
-Theo [blocknetcrypto.com](https://blocknetcrypto.com/#faraday), Blocknet dự kiến nâng cấp mạng tên Faraday vào khoảng ngày 16 tháng 2 năm 2027. Nâng cấp dự kiến thay đổi Proof of Work. Hãy cập nhật seine: phần mềm kiểm tra bản phát hành mới khi khởi động và mỗi 12 giờ.
+Theo [blocknetcrypto.com](https://blocknetcrypto.com/#faraday), Blocknet dự kiến nâng cấp mạng tên Faraday vào khoảng ngày 16 tháng 2 năm 2027. Nâng cấp dự kiến thay đổi Proof of Work. seine v0.3.1 đã sẵn sàng: đào pool tự chuyển sang Proof of Work mới, và khi bật cập nhật tự động, seine tự cài các bản phát hành mới hơn cho bạn.
 </Note>
 
-<CTA target="pool" title="Bắt đầu đào trên bntpool.com" text="Chạy seine, dán địa chỉ và kiếm một phần từ mỗi khối pool tìm được, thanh toán tự động từ 0,1 BNT." />
+<CTA target="pool" title="Bắt đầu đào trên bntpool.com" text="Chạy seine, dán địa chỉ và kiếm một phần từ mỗi khối pool tìm được, hoặc thêm solo: và giữ mọi khối bạn tìm được." />

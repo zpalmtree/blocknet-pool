@@ -11,8 +11,8 @@ faq:
     a: '不需要。没有注册、密码或邮箱。你的 Blocknet 地址，或指向它的 Blocknet ID 名称，既是登录名也是收款地址。用它启动 seine，然后在 My Stats 页面查询，就能看到你的算力、份额、矿机、余额和付款记录。'
   - q: '可以用多台电脑挖到同一个地址吗？'
     a: '可以。在每台电脑上用相同的地址或名称运行 seine，并给每台设置不同的矿机名称。矿池按地址统计份额、余额和付款，所以所有矿机都计入同一个余额、合并为同一笔付款，而 My Stats 页面会把每台矿机单独列成一行。'
-sourceHash: 'df269126bb76'
-translation: reviewed
+sourceHash: '9713e976f981'
+translation: draft
 ---
 
 本指南介绍如何用 seine 加入 bntpool.com 矿池：矿池地址、用 Blocknet 地址或 Blocknet ID `@name` 登录、为每台矿机命名，以及在统计页面上确认你的份额已经到达。如果还没有安装 seine，请先按照 [seine 安装指南](https://seineminer.com/zh-hans/blog/how-to-mine-blocknet/)操作，再回到这里。
@@ -23,7 +23,7 @@ translation: reviewed
 bntpool.com 的 Stratum 地址是 `stratum+tcp://bntpool.com:3333`。seine 首次运行时会把它作为默认矿池，所以在矿池提示处按回车就能连接。你用自己的 Blocknet 地址或 Blocknet ID `@name` 登录。无需创建账户，收益会发送到该地址。
 </Answer>
 
-以下是矿池的设置，来自其公开的 `/api/info` 接口（2026 年 10 月 25 日）：
+以下是矿池的设置，来自其公开的 `/api/info` 接口（2026年11月4日）：
 
 | 设置 | 值 |
 |---|---|
@@ -31,9 +31,11 @@ bntpool.com 的 Stratum 地址是 `stratum+tcp://bntpool.com:3333`。seine 首�
 | 登录 | Blocknet 地址、`@name` 或 `$name` |
 | 支付方式 | PPLNS，6 小时窗口 |
 | 付款前所需确认数 | 60 个区块 |
-| 最低付款额 | 0.1 BNT |
+| 最低付款额 | 1 BNT |
 
 你随时可以在矿池的 [Get Started](/start)（开始挖矿）页面查看这些值。
+
+如果想独得你的矿机找到的每个区块的全部奖励，请在地址前加上 `solo:`。[在 bntpool.com 上单独挖 Blocknet（solo）](/blog/zh-hans/solo-mine-blocknet-on-bntpool/)介绍了具体方法。
 
 ## 为什么 bntpool.com 是 seine 的默认矿池？
 
@@ -105,7 +107,7 @@ seine 的仪表盘会在本机显示你的算力和已接受的份额。要查�
 
 矿池会为每个连接单独设置份额难度，并在挖矿过程中不断调整，所以即使是小型 CPU 也能稳定地提交份额，你的第一批被接受的份额会在连接后几分钟内出现。至于你的硬件能有多少算力，请参阅 [Blocknet 挖矿硬件指南](https://seineminer.com/zh-hans/blog/blocknet-mining-hardware-hashrate/)。
 
-接下来是收益。当矿池找到区块、而你的份额处在六小时窗口内时，Estimated Rewards（预估收益）就会出现。该区块获得 60 个确认后，你的那一份会转入 Confirmed Rewards（已确认收益），当你累计到至少 0.1 BNT 时，矿池会自动发送。[PPLNS 收益如何支付](/blog/zh-hans/how-pplns-payouts-work/)一文解释了每个区块的奖励如何分配。全矿池的历史记录见 [Blocks](/blocks)（区块）和 [Payouts](/payouts)（付款）页面。
+接下来是收益。当矿池找到区块、而你的份额处在六小时窗口内时，Estimated Rewards（预估收益）就会出现。该区块获得 60 个确认后，你的那一份会转入 Confirmed Rewards（已确认收益），当你累计到至少 1 BNT 时，矿池会自动发送。[PPLNS 收益如何支付](/blog/zh-hans/how-pplns-payouts-work/)一文解释了每个区块的奖励如何分配。全矿池的历史记录见 [Blocks](/blocks)（区块）和 [Payouts](/payouts)（付款）页面。
 
 ## Get Started 页面包含哪些内容？
 
