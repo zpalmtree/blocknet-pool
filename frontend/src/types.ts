@@ -512,3 +512,28 @@ export interface PagerState {
   limit: number;
   total: number;
 }
+
+/** Settings a miner changes on My Stats (`/api/miner-settings/:account`). */
+export interface MinerSettingsValues {
+  /** BNT. */
+  min_payout: number;
+  default_solo: boolean;
+  hide_workers: boolean;
+}
+
+export interface MinerSettingsState {
+  account: string;
+  /** Someone has set a password for this account. */
+  claimed: boolean;
+  /** False right after a take-back, until a new password is set. */
+  has_password: boolean;
+  unlocked: boolean;
+  changed_at: number | null;
+  pool_min_payout: number;
+  max_min_payout: number;
+  /** The caller's own IP group, to fill in the take-back form. */
+  your_ip: string | null;
+  settings?: MinerSettingsValues;
+  /** After a take-back: the rig network's part of the account's work. */
+  share?: number;
+}

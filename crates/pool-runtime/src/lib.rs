@@ -11,6 +11,8 @@ pub mod hashrate;
 pub mod jobs;
 pub mod miner_release;
 
+pub mod miner_settings;
+
 pub mod node;
 
 pub mod payout;

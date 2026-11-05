@@ -7,6 +7,7 @@ mod background_read;
 mod blog;
 mod config;
 mod hosted_wallet;
+mod miner_settings;
 mod protect;
 mod runtime;
 mod site_metrics;

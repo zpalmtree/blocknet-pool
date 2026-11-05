@@ -362,6 +362,7 @@ pub(crate) struct ApiState {
     public_read_loads: Arc<Semaphore>,
     checkpoint_file_cache: Arc<CheckpointFileCache>,
     admin_auth_failures: Arc<Mutex<WindowedCounter>>,
+    miner_settings: Arc<crate::miner_settings::MinerSettingsService>,
     /// Newest accepted Cloudflare `checked_at` (only the `public_http` probe
     /// exists). `None` until seeded from the latest stored heartbeat.
     monitor_ingest_last_checked_at: Arc<tokio::sync::Mutex<Option<u64>>>,
@@ -947,6 +948,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
     )?;
     let wallet_hints =
         crate::wallet_hints::router(state.config.active_wallet_hints(), Arc::clone(&state.store))?;
+    let miner_settings = crate::miner_settings::router(Arc::clone(&state.miner_settings));
     let app_state = state.clone();
     let protected = Router::new()
         .route("/api/miners", get(handle_miners))
@@ -1051,6 +1053,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
         .route("/api/miner/:address/hashrate", get(handle_miner_hashrate))
         .merge(hosted_wallet)
         .merge(wallet_hints)
+        .merge(miner_settings)
         .merge(public_telemetry)
         .merge(protected)
         .layer(middleware::from_fn_with_state(
@@ -2879,6 +2882,7 @@ async fn handle_miner(
     Path(address): Path<String>,
     client: ClientIp,
     State(state): State<ApiState>,
+    headers: HeaderMap,
 ) -> Response {
     // A solo miner may look up the login they mine with.
     let address = pool_common::solo::split_solo_login(&address).1.to_string();
@@ -2890,14 +2894,47 @@ async fn handle_miner(
         None => state.cached_miner_detail_payload(&address).await,
     };
     match payload {
-        Ok(payload) => {
+        Ok(mut payload) => {
+            if payload.found
+                && state
+                    .miner_settings
+                    .hides_workers_for(&address, &headers)
+                    .await
+            {
+                hide_worker_names(&mut payload.body);
+            }
             if payload.found {
-                Json(payload.body).into_response()
+                let mut response = Json(payload.body).into_response();
+                // Names differ per viewer when hidden.
+                response
+                    .headers_mut()
+                    .insert(header::VARY, HeaderValue::from_static("Cookie"));
+                response
             } else {
                 (StatusCode::NOT_FOUND, Json(payload.body)).into_response()
             }
         }
         Err(err) => internal_error("failed loading miner data", err),
+    }
+}
+
+/// Public view of a miner whose owner hides worker names.
+fn hide_worker_names(body: &mut MinerDetailResponse) {
+    let names = crate::miner_settings::rig_names(
+        body.workers
+            .iter()
+            .map(|worker| worker.worker.as_str())
+            .chain(body.shares.iter().map(|share| share.worker.as_str())),
+    );
+    for worker in &mut body.workers {
+        if let Some(name) = names.get(&worker.worker) {
+            worker.worker = name.clone();
+        }
+    }
+    for share in &mut body.shares {
+        if let Some(name) = names.get(&share.worker) {
+            share.worker = name.clone();
+        }
     }
 }
 
@@ -4466,7 +4503,13 @@ impl ApiState {
             &config.api_client_ip_header,
             &config.api_trusted_proxies,
         ));
+        let miner_settings = Arc::new(crate::miner_settings::MinerSettingsService::new(
+            Arc::clone(&store),
+            config.runtime.clone(),
+            Arc::clone(&client_ip_policy),
+        ));
         Self {
+            miner_settings,
             recovery: Arc::new(RecoveryAgentClient::new(
                 config.recovery.socket_path.clone(),
             )),
@@ -5307,16 +5350,19 @@ impl ApiState {
         let addr = address.to_string();
         let store = Arc::clone(&self.store);
         let db_result = spawn_blocking_result(
-            move || -> anyhow::Result<(Balance, Option<PendingPayout>, bool)> {
+            move || -> anyhow::Result<(Balance, Option<PendingPayout>, bool, Option<u64>)> {
                 Ok((
                     store.get_balance(&addr)?,
                     store.get_pending_payout(&addr)?,
                     store.miner_has_any_activity(&addr)?,
+                    store
+                        .miner_settings(&addr)?
+                        .and_then(|record| record.settings.min_payout),
                 ))
             },
         )
         .await;
-        let (balance, pending_payout, has_activity) = match db_result {
+        let (balance, pending_payout, has_activity, chosen_min_payout) = match db_result {
             Ok(value) => value,
             Err(err) => {
                 record_api_operation_observation(
@@ -5353,7 +5399,9 @@ impl ApiState {
         };
 
         let payload = MinerBalancePayload {
-            min_payout_amount: self.config.runtime.payout_minimum(address),
+            min_payout_amount: self
+                .miner_settings
+                .effective_min_payout_coins(address, chosen_min_payout),
             address: address.to_string(),
             balance: miner_balance_response(&balance, pending_payout.as_ref()),
             pending_estimate,
@@ -8422,6 +8470,7 @@ mod tests {
                 Path("miner-workers".to_string()),
                 ClientIp::default(),
                 State(state),
+                axum::http::HeaderMap::new(),
             ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
@@ -8461,6 +8510,7 @@ mod tests {
                 Path("solo:miner-solo-workers".to_string()),
                 ClientIp::default(),
                 State(state),
+                axum::http::HeaderMap::new(),
             ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
@@ -8511,6 +8561,7 @@ mod tests {
                 Path("miner-since".to_string()),
                 ClientIp::default(),
                 State(state),
+                axum::http::HeaderMap::new(),
             ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
@@ -8613,6 +8664,7 @@ mod tests {
                 Path("miner-hold".to_string()),
                 ClientIp::default(),
                 State(state),
+                axum::http::HeaderMap::new(),
             ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
@@ -8672,6 +8724,7 @@ mod tests {
                 Path("miner-backlog".to_string()),
                 ClientIp::default(),
                 State(state),
+                axum::http::HeaderMap::new(),
             ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);

@@ -548,6 +548,21 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
     ) -> Result<Vec<(u64, SystemTime)>> {
         Ok(Vec::new())
     }
+    /// The mining mode saved on My Stats for logins without a `solo:` prefix.
+    fn miner_default_solo(&self, _account: &str) -> Result<bool> {
+        Ok(false)
+    }
+    /// Adds accepted work; rows are `(account, ip_group, hour, work)` with
+    /// unique keys.
+    fn add_miner_source_work(&self, _rows: &[(String, String, i64, u64)]) -> Result<()> {
+        Ok(())
+    }
+    fn clear_miner_source_work(&self, _account: &str, _ip_group: &str) -> Result<()> {
+        Ok(())
+    }
+    fn prune_miner_source_work(&self, _before: SystemTime) -> Result<u64> {
+        Ok(0)
+    }
 }
 
 /// Most early block submissions started per window. Real blocks arrive a
@@ -801,6 +816,14 @@ fn penalize_proven_fake(
     }
 
     let outcome = tracker.strike(source, reason);
+    // A struck source's mining no longer counts toward settings take-backs,
+    // nor does that of the throwaway addresses struck with it.
+    tracker.clear_work(&source.address, &source.ip_group);
+    for (address, _) in &outcome.revoked {
+        if address.as_str() != &*source.address {
+            tracker.clear_work(address, &source.ip_group);
+        }
+    }
     let mut revoked_rows = 0u64;
     for (address, shares) in &outcome.revoked {
         match store.revoke_provisional_shares(shares, SOURCE_REVOKED_REJECT_REASON) {
@@ -1258,6 +1281,13 @@ impl PoolEngine {
         if self.faraday_era() && !cap_set.contains(CAP_POW_BLAKE2B_V1) {
             return Err(anyhow!(FARADAY_UPGRADE_MESSAGE));
         }
+        // A `solo:` login always mines solo; otherwise the mode saved on My
+        // Stats applies.
+        let solo = solo
+            || self.store.miner_default_solo(address).unwrap_or_else(|err| {
+                tracing::warn!(address = %address, error = %err, "failed reading saved mining mode");
+                false
+            });
         let ip_group = source_ip_group(conn_id, peer_ip);
         let now_wall = SystemTime::now();
         // Address quarantine comes from address-level evidence; a source with
@@ -1381,6 +1411,30 @@ impl PoolEngine {
                 Some((self.cfg().payout_minimum(address) * 100_000_000.0).round() as u64);
         }
         Ok(result)
+    }
+
+    /// Writes accepted work per source to the store (see `miner_settings.rs`).
+    pub(crate) fn flush_source_work(&self) -> Result<usize> {
+        let (rows, cleared) = self.source_risk.take_work();
+        let written = rows.len();
+        let result = (|| -> Result<()> {
+            for (address, ip_group) in &cleared {
+                self.store.clear_miner_source_work(address, ip_group)?;
+            }
+            self.store.add_miner_source_work(&rows)
+        })();
+        if let Err(err) = result {
+            self.source_risk.restore_work((rows, cleared));
+            return Err(err);
+        }
+        Ok(written)
+    }
+
+    pub(crate) fn prune_source_work(&self, now: SystemTime) -> Result<u64> {
+        let before = now
+            .checked_sub(crate::miner_settings::SOURCE_WORK_RETENTION)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        self.store.prune_miner_source_work(before)
     }
 
     pub(crate) fn disconnect(&self, conn_id: &str) {
@@ -1980,6 +2034,8 @@ impl PoolEngine {
                     }),
                     &metadata,
                 )?;
+                self.source_risk
+                    .record_work(&session.source, share_difficulty, created_at);
                 if validation.followup_action == ValidationFollowupAction::Quarantine {
                     self.trigger_forced_validation_quarantine(
                         &session.address,
@@ -2088,6 +2144,13 @@ impl PoolEngine {
                 share_difficulty,
                 plan.overload_mode != OverloadMode::Normal || probation_saturated,
             );
+            // Unverified work backs a settings take-back only from a source
+            // with clean verified history; a new source has to prove its
+            // shares first.
+            if source_established {
+                self.source_risk
+                    .record_work(&session.source, share_difficulty, created_at);
+            }
             let probation_share = probation_reserved.then(|| PendingAuditShare {
                 share_id,
                 job_id: job_id_for_share.clone(),
@@ -3461,6 +3524,8 @@ pub(crate) struct InMemoryStore {
     /// Next share insert commits but reports an error, like a connection
     /// lost after COMMIT reached the server.
     ambiguous_commit_once: Mutex<bool>,
+    default_solo: Mutex<HashSet<String>>,
+    source_work: Mutex<Vec<(String, String, i64, u64)>>,
 }
 
 #[cfg(test)]
@@ -3475,6 +3540,14 @@ impl InMemoryStore {
 
     pub(crate) fn fail_next_share_insert_after_commit(&self) {
         *self.ambiguous_commit_once.lock() = true;
+    }
+
+    pub(crate) fn set_default_solo(&self, account: &str) {
+        self.default_solo.lock().insert(account.to_string());
+    }
+
+    pub(crate) fn source_work(&self) -> Vec<(String, String, i64, u64)> {
+        self.source_work.lock().clone()
     }
 
     pub(crate) fn blocks(&self) -> Vec<FoundBlockRecord> {
@@ -3527,6 +3600,15 @@ impl InMemoryStore {
 
 #[cfg(test)]
 impl ShareStore for InMemoryStore {
+    fn miner_default_solo(&self, account: &str) -> Result<bool> {
+        Ok(self.default_solo.lock().contains(account))
+    }
+
+    fn add_miner_source_work(&self, rows: &[(String, String, i64, u64)]) -> Result<()> {
+        self.source_work.lock().extend_from_slice(rows);
+        Ok(())
+    }
+
     fn try_claim_share(&self, _job_id: &str, share_key: &str, nonce: u64) -> Result<bool> {
         let key = (share_key.to_string(), nonce);
         let mut seen = self.seen.lock();
@@ -4149,6 +4231,13 @@ mod tests {
         assert!(engine.source_blocked(attacker_conn));
         assert!(engine.source_blocked(attacker_reconnect));
         assert!(!engine.source_blocked(victim_conn));
+
+        // The struck source's work no longer counts toward take-backs, and
+        // unverified shares from sources without verified history never did.
+        let (rows, cleared) = engine.source_risk.take_work();
+        assert!(rows.is_empty(), "{rows:?}");
+        assert!(cleared.contains(&(victim.clone(), "198.51.100.9".to_string())));
+
         engine
             .submit(victim_conn, "job1".to_string(), 4, NonceHasher::honest(4))
             .expect("victim keeps mining");
@@ -4161,6 +4250,55 @@ mod tests {
                 submit_hash_cap()
             )
             .is_err());
+    }
+
+    #[test]
+    fn saved_solo_mode_applies_to_plain_logins_and_work_is_written_per_source() {
+        // Verified shares count toward take-backs from any source.
+        let mut cfg = cfg();
+        cfg.validation_mode = "full".to_string();
+        let (engine, store, _validation) = source_test_engine(cfg, Arc::new(NonceHasher));
+        let solo_address = test_miner_address();
+        let pool_address = other_miner_address();
+        store.set_default_solo(&solo_address);
+        engine
+            .login(
+                "203.0.113.1:4000",
+                solo_address,
+                "rig",
+                2,
+                submit_hash_cap(),
+            )
+            .expect("solo login");
+        assert!(engine.session_is_solo("203.0.113.1:4000"));
+        engine
+            .login(
+                "203.0.113.2:4000",
+                pool_address.clone(),
+                "rig",
+                2,
+                submit_hash_cap(),
+            )
+            .expect("pool login");
+        assert!(!engine.session_is_solo("203.0.113.2:4000"));
+
+        for nonce in 1..=2 {
+            engine
+                .submit(
+                    "203.0.113.2:4000",
+                    "job1".to_string(),
+                    nonce,
+                    NonceHasher::honest(nonce),
+                )
+                .expect("share");
+        }
+        assert_eq!(engine.flush_source_work().expect("flush"), 1);
+        let rows = store.source_work();
+        assert_eq!(rows.len(), 1);
+        let (address, group, _, work) = &rows[0];
+        assert_eq!((address, group.as_str()), (&pool_address, "203.0.113.2"));
+        assert!(*work > 0);
+        assert_eq!(engine.flush_source_work().expect("second flush"), 0);
     }
 
     #[test]

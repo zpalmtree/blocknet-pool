@@ -316,7 +316,25 @@ struct Inner {
 pub(crate) struct SourceRiskTracker {
     policy: SourcePolicy,
     inner: Mutex<Inner>,
+    work: Mutex<SourceWorkLedger>,
 }
+
+/// Accepted work per (address, IP group, hour) not yet written to the store.
+/// It backs settings take-backs (see `miner_settings.rs`); a struck pair's
+/// work is dropped here and in the store.
+#[derive(Debug, Default)]
+struct SourceWorkLedger {
+    pending: HashMap<(Arc<str>, Arc<str>, i64), u64>,
+    cleared: Vec<(String, String)>,
+}
+
+/// Rows of unwritten work kept at most; beyond it new keys are dropped (the
+/// store being down for a long time costs take-back evidence, not memory).
+const SOURCE_WORK_MAX_PENDING: usize = 200_000;
+
+/// Unwritten work, as `(address, ip_group, hour, work)` rows with unique keys,
+/// and the pairs whose stored work must be deleted first.
+pub(crate) type SourceWorkBatch = (Vec<(String, String, i64, u64)>, Vec<(String, String)>);
 
 fn pair_key(address: &str, ip_group: &str) -> String {
     format!("{address}\u{1f}{ip_group}")
@@ -342,6 +360,7 @@ impl SourceRiskTracker {
         Self {
             policy,
             inner: Mutex::new(Inner::default()),
+            work: Mutex::new(SourceWorkLedger::default()),
         }
     }
 
@@ -735,6 +754,70 @@ impl SourceRiskTracker {
             inner.share_index.remove(&key.id);
         }
         Some((address, keys))
+    }
+
+    /// Adds an accepted share's difficulty to its source's work. Sources
+    /// without a known IP are not tracked.
+    pub(crate) fn record_work(&self, source: &SourceRef, difficulty: u64, at: SystemTime) {
+        if difficulty == 0 || source.ip_group.starts_with("conn:") {
+            return;
+        }
+        let key = (
+            Arc::clone(&source.address),
+            Arc::clone(&source.ip_group),
+            crate::miner_settings::source_work_hour(at),
+        );
+        let mut work = self.work.lock();
+        if work.pending.len() >= SOURCE_WORK_MAX_PENDING && !work.pending.contains_key(&key) {
+            return;
+        }
+        let entry = work.pending.entry(key).or_default();
+        *entry = entry.saturating_add(difficulty);
+    }
+
+    /// Drops a pair's work, unwritten and stored.
+    pub(crate) fn clear_work(&self, address: &str, ip_group: &str) {
+        let mut work = self.work.lock();
+        work.pending
+            .retain(|(addr, group, _), _| !(&**addr == address && &**group == ip_group));
+        work.cleared
+            .push((address.to_string(), ip_group.to_string()));
+    }
+
+    pub(crate) fn take_work(&self) -> SourceWorkBatch {
+        let mut work = self.work.lock();
+        let rows = work
+            .pending
+            .drain()
+            .map(|((address, group, hour), amount)| {
+                (address.to_string(), group.to_string(), hour, amount)
+            })
+            .collect();
+        (rows, std::mem::take(&mut work.cleared))
+    }
+
+    /// Puts back a batch the store did not take.
+    pub(crate) fn restore_work(&self, batch: SourceWorkBatch) {
+        let (rows, cleared) = batch;
+        let mut work = self.work.lock();
+        for (address, group, hour, amount) in rows {
+            if cleared
+                .iter()
+                .chain(work.cleared.iter())
+                .any(|(a, g)| *a == address && *g == group)
+            {
+                continue;
+            }
+            let key: (Arc<str>, Arc<str>, i64) = (Arc::from(address), Arc::from(group), hour);
+            if work.pending.len() >= SOURCE_WORK_MAX_PENDING && !work.pending.contains_key(&key) {
+                continue;
+            }
+            let entry = work.pending.entry(key).or_default();
+            *entry = entry.saturating_add(amount);
+        }
+        let mut cleared = cleared;
+        cleared.append(&mut work.cleared);
+        work.cleared = cleared;
     }
 
     /// Applies a strike for a proven fake share from `source`. Returns the

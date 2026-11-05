@@ -279,6 +279,11 @@ pub fn start_stratum_background_tasks(
         Arc::clone(&shared.store),
         Arc::clone(&role),
     );
+    start_source_work_flush(
+        Arc::clone(&engine),
+        Arc::clone(&role),
+        Arc::clone(&task_metrics),
+    );
     start_found_block_recovery(engine, Arc::clone(&task_metrics));
     start_heap_trim(Arc::clone(&task_metrics));
     let payout = PayoutProcessor::new_with_task_metrics(
@@ -401,6 +406,61 @@ fn start_heap_trim(task_metrics: Arc<NamedTimedOperationTracker>) {
             record_runtime_task_observation(
                 &task_metrics,
                 "heap_trim",
+                started_at.elapsed(),
+                failed,
+            );
+        }
+    });
+}
+
+/// How often accepted work per source is written for settings take-backs.
+const SOURCE_WORK_FLUSH_INTERVAL: Duration = Duration::from_secs(30);
+const SOURCE_WORK_PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+/// Every engine writes the work it accepted (both do during a handover);
+/// only the primary prunes old rows.
+fn start_source_work_flush(
+    engine: Arc<PoolEngine>,
+    role: Arc<EngineRole>,
+    task_metrics: Arc<NamedTimedOperationTracker>,
+) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(SOURCE_WORK_FLUSH_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_prune: Option<Instant> = None;
+        loop {
+            ticker.tick().await;
+            let started_at = Instant::now();
+            let prune = role.is_primary()
+                && last_prune.is_none_or(|at| at.elapsed() >= SOURCE_WORK_PRUNE_INTERVAL);
+            let task_engine = Arc::clone(&engine);
+            let failed = match tokio::task::spawn_blocking(move || {
+                task_engine.flush_source_work()?;
+                if prune {
+                    task_engine.prune_source_work(SystemTime::now())?;
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+            {
+                Ok(Ok(())) => {
+                    if prune {
+                        last_prune = Some(Instant::now());
+                    }
+                    false
+                }
+                Ok(Err(err)) => {
+                    tracing::warn!(error = %err, "writing source work failed");
+                    true
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "source work task join failed");
+                    true
+                }
+            };
+            record_runtime_task_observation(
+                &task_metrics,
+                "source_work_flush",
                 started_at.elapsed(),
                 failed,
             );

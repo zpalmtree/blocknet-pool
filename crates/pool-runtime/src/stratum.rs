@@ -1747,8 +1747,10 @@ impl StratumServer {
 
                             match login {
                                 Ok(Ok((login_result, address))) => {
+                                    // The engine also applies the mode saved on My Stats.
+                                    let session_solo = self.engine.session_is_solo(&conn_id);
                                     let job_owner =
-                                        pool_common::solo::assignment_owner(&address, login_solo);
+                                        pool_common::solo::assignment_owner(&address, session_solo);
                                     let worker =
                                         normalize_worker_name(params.worker.as_str());
                                     let difficulty =
@@ -1768,8 +1770,11 @@ impl StratumServer {
                                         run_result = Err(err);
                                         break;
                                     }
-                                    if login_solo {
-                                        let notice = solo_login_notice(self.engine.pool_fee_pct());
+                                    if session_solo {
+                                        let notice = solo_login_notice(
+                                            self.engine.pool_fee_pct(),
+                                            !login_solo,
+                                        );
                                         let notify = block_notification(NOTIFY_SOLO_MINING, &notice);
                                         if let Err(err) = queue_json(&outbound, &notify) {
                                             run_result = Err(err);
@@ -2855,15 +2860,21 @@ fn is_pool_block_solved(notification: &StratumNotify) -> bool {
             == Some(NOTIFY_POOL_BLOCK_SOLVED)
 }
 
-/// Sent once after a `solo:` login.
-fn solo_login_notice(pool_fee_pct: f64) -> String {
+/// Sent once after a solo login: a `solo:` prefix, or a plain login for an
+/// address whose My Stats settings choose solo (`from_settings`).
+fn solo_login_notice(pool_fee_pct: f64, from_settings: bool) -> String {
     let fee = if pool_fee_pct > 0.0 {
         format!(", less the {}% pool fee", format_fee_pct(pool_fee_pct))
     } else {
         String::new()
     };
+    let how_to_leave = if from_settings {
+        "This address is set to solo on My Stats; change the mining mode there to share rewards with the pool (PPLNS)"
+    } else {
+        "Remove the solo: prefix to share rewards with the pool (PPLNS)"
+    };
     format!(
-        "solo mining: you are paid only for blocks this address finds, the full block reward{fee}. Remove the solo: prefix to share rewards with the pool (PPLNS)"
+        "solo mining: you are paid only for blocks this address finds, the full block reward{fee}. {how_to_leave}"
     )
 }
 
@@ -3093,9 +3104,11 @@ mod tests {
 
     #[test]
     fn solo_login_notice_names_the_pool_fee() {
-        assert!(!solo_login_notice(0.0).contains('%'));
-        assert!(solo_login_notice(1.0).contains("less the 1% pool fee"));
-        assert!(solo_login_notice(0.5).contains("less the 0.5% pool fee"));
+        assert!(!solo_login_notice(0.0, false).contains('%'));
+        assert!(solo_login_notice(1.0, false).contains("less the 1% pool fee"));
+        assert!(solo_login_notice(0.5, false).contains("less the 0.5% pool fee"));
+        assert!(solo_login_notice(0.0, false).contains("Remove the solo: prefix"));
+        assert!(solo_login_notice(0.0, true).contains("My Stats"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

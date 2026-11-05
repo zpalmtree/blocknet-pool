@@ -13,6 +13,8 @@ import type {
   MinerBalancePayload,
   MinerListItem,
   MinerResponse,
+  MinerSettingsState,
+  MinerSettingsValues,
   PagedResponse,
   PayoutItem,
   ReconciliationPayoutResolutionAction,
@@ -45,6 +47,49 @@ interface DaemonLogStreamOptions {
 interface BlocknetHandleResolution {
   address: string;
   handle: string;
+}
+
+/** A refused My Stats settings request, with the server's reason. */
+export class SettingsError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly triesLeft?: number;
+  readonly retryAfter?: number;
+
+  constructor(status: number, code: string, triesLeft?: number, retryAfter?: number) {
+    super(code);
+    this.status = status;
+    this.code = code;
+    this.triesLeft = triesLeft;
+    this.retryAfter = retryAfter;
+  }
+}
+
+/** Settings requests report errors to their own form, not the global toast. */
+async function settingsRequest(method: string, path: string, body?: unknown): Promise<MinerSettingsState> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      credentials: 'same-origin',
+      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new SettingsError(0, 'network');
+  }
+  let data: Record<string, unknown> = {};
+  try {
+    data = await res.json();
+  } catch {
+    // Keep the empty body.
+  }
+  if (!res.ok) {
+    const num = (key: string) => (typeof data[key] === 'number' ? (data[key] as number) : undefined);
+    throw new SettingsError(res.status, typeof data.error === 'string' ? data.error : `http_${res.status}`,
+      num('tries_left'), num('retry_after'));
+  }
+  return data as unknown as MinerSettingsState;
 }
 
 function withQuery(path: string, params: QueryParams): string {
@@ -182,6 +227,19 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, memo }),
       }),
     getMiner: (address: string) => fetchJson<MinerResponse>(`/api/miner/${encodeURIComponent(address)}`),
+    minerSettings: {
+      get: (account: string) => settingsRequest('GET', `/api/miner-settings/${encodeURIComponent(account)}`),
+      claim: (account: string, password: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/claim`, { password }),
+      unlock: (account: string, password: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/unlock`, { password }),
+      takeBack: (account: string, ip: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/take-back`, { ip }),
+      setPassword: (account: string, password: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/password`, { password }),
+      save: (account: string, settings: MinerSettingsValues) =>
+        settingsRequest('PUT', `/api/miner-settings/${encodeURIComponent(account)}`, settings),
+    },
     getMinerBalance: (address: string, includePendingEstimate = true) =>
       fetchJson<MinerBalancePayload>(
         `/api/miner/${encodeURIComponent(address)}/balance?include_pending_estimate=${includePendingEstimate ? 'true' : 'false'}`

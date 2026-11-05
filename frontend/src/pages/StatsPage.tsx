@@ -11,6 +11,7 @@ import { PayoutProgress } from '../components/PayoutProgress';
 import { RangeTabs } from '../components/RangeTabs';
 import { MiningType } from '../components/MiningType';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
+import { MinerSettings, SettingsLockIcon } from '../components/MinerSettings';
 import { knownExchange, validMemo } from '../lib/payout-destination';
 import { readDestination, rememberDestination } from '../lib/storage';
 import { formatCoins, formatCompactCoins, formatFee, humanRate, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
@@ -77,6 +78,9 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [workersOffset, setWorkersOffset] = useState(0);
   const [payoutsOffset, setPayoutsOffset] = useState(0);
   const [estimateHelpOpen, setEstimateHelpOpen] = useState(false);
+  const [view, setView] = useState<'stats' | 'settings'>(() =>
+    typeof location !== 'undefined' && location.hash === '#settings' ? 'settings' : 'stats');
+  const [settingsUnlocked, setSettingsUnlocked] = useState(false);
 
   // A late registry response must not leave address-only results under a memo warning.
   useEffect(() => {
@@ -95,6 +99,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
     minerAddressRef.current = minerAddress;
     setWorkersOffset(0);
     setPayoutsOffset(0);
+    setSettingsUnlocked(false);
   }, [minerAddress]);
 
   const refreshMinerData = useCallback(async () => {
@@ -438,7 +443,20 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
       {!minerAddress && !lookupLoading && (<p className="section-lead" style={{ marginBottom: 16 }}>{tx("statsEmpty", [<a href={localizePath("/start")}>{t("m002")}</a>])}</p>)}
 
-      {showLookupResult && (<div id="lookup-result">
+      {showLookupResult && (<div className="sub-tabs stats-tabs" role="tablist" aria-label={t('m616')}>
+          <button type="button" role="tab" id="stats-tab-stats" aria-selected={view === 'stats'} aria-controls="lookup-result"
+            className={view === 'stats' ? 'active' : ''} onClick={() => setView('stats')}>{t('statsTab')}</button>
+          <button type="button" role="tab" id="stats-tab-settings" aria-selected={view === 'settings'} aria-controls="miner-settings"
+            className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}>
+            <SettingsLockIcon open={settingsUnlocked} />{t('settingsTab')}</button>
+        </div>)}
+
+      {showLookupResult && view === 'settings' && (<div id="miner-settings" role="tabpanel" aria-labelledby="stats-tab-settings">
+          <MinerSettings api={api} account={minerAddress} onSaved={() => void refreshMinerBalance(false)}
+            onUnlockedChange={setSettingsUnlocked} />
+        </div>)}
+
+      {showLookupResult && view === 'stats' && (<div id="lookup-result" role="tabpanel" aria-labelledby="stats-tab-stats">
           {balanceUnavailable && (<div className="card stats-notice">{minerBalanceData ? t("m489") : t("m490")}</div>)}
           {verificationHold && (<div className="card stats-notice">
                 {verificationHold.mode === 'quarantined' ? t("m505", [timestampTitle(verificationQuarantineUntil) || t('m600')]) : t("m506", [timestampTitle(verificationOnlyUntil) || t('m600')])}

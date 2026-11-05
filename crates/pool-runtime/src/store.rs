@@ -27,7 +27,14 @@ use pool_common::protocol::parse_hash_hex;
 pub struct PoolStore {
     inner: Arc<PostgresStore>,
     submit_risk: SubmitRiskCache,
+    /// Short-lived per-account cache of the saved mining mode read on login.
+    default_solo: parking_lot::Mutex<HashMap<String, (Instant, bool)>>,
 }
+
+/// How long a login may act on a cached mining mode. A change on My Stats
+/// reaches new logins at most this late.
+const DEFAULT_SOLO_CACHE_TTL: Duration = Duration::from_secs(30);
+const DEFAULT_SOLO_CACHE_MAX_ENTRIES: usize = 65_536;
 
 /// How long a submit may act on a cached risk read. Writes made by this
 /// process (strikes, quarantines, validation holds) update or drop the entry
@@ -119,6 +126,7 @@ impl PoolStore {
         Ok(Arc::new(Self {
             inner: PostgresStore::connect(database_url, pool_size)?,
             submit_risk: SubmitRiskCache::default(),
+            default_solo: Default::default(),
         }))
     }
 
@@ -297,6 +305,7 @@ impl PoolStore {
             inner: PostgresStore::connect_with_schema(&url, 2, Some(&schema))
                 .expect("connect postgres test store"),
             submit_risk: SubmitRiskCache::default(),
+            default_solo: Default::default(),
         }))
     }
 }
@@ -490,6 +499,42 @@ impl ShareStore for PoolStore {
         limit: usize,
     ) -> Result<Vec<(u64, SystemTime)>> {
         self.inner.get_vardiff_hints_for_address(address, limit)
+    }
+
+    fn miner_default_solo(&self, account: &str) -> Result<bool> {
+        let now = Instant::now();
+        if let Some((cached_at, solo)) = self.default_solo.lock().get(account) {
+            if now.saturating_duration_since(*cached_at) < DEFAULT_SOLO_CACHE_TTL {
+                return Ok(*solo);
+            }
+        }
+        let solo = self
+            .inner
+            .miner_settings(account)?
+            .is_some_and(|record| record.settings.default_solo);
+        let mut cache = self.default_solo.lock();
+        if cache.len() >= DEFAULT_SOLO_CACHE_MAX_ENTRIES {
+            cache.retain(|_, (cached_at, _)| {
+                now.saturating_duration_since(*cached_at) < DEFAULT_SOLO_CACHE_TTL
+            });
+            if cache.len() >= DEFAULT_SOLO_CACHE_MAX_ENTRIES {
+                cache.clear();
+            }
+        }
+        cache.insert(account.to_string(), (now, solo));
+        Ok(solo)
+    }
+
+    fn add_miner_source_work(&self, rows: &[(String, String, i64, u64)]) -> Result<()> {
+        self.inner.add_miner_source_work(rows)
+    }
+
+    fn clear_miner_source_work(&self, account: &str, ip_group: &str) -> Result<()> {
+        self.inner.clear_miner_source_work(account, ip_group)
+    }
+
+    fn prune_miner_source_work(&self, before: SystemTime) -> Result<u64> {
+        self.inner.prune_miner_source_work(before)
     }
 }
 

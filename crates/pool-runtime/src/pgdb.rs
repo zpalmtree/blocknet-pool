@@ -515,6 +515,192 @@ pub fn connect_payout_inspection_client(url: &str, label: &str) -> Result<Client
 }
 
 impl PostgresStore {
+    pub fn miner_settings(
+        &self,
+        account: &str,
+    ) -> Result<Option<crate::miner_settings::MinerSettingsRecord>> {
+        let row = self.conn().query_opt(
+            "SELECT password_hash, owner_ip_group, claimed_at, changed_at, taken_back_at,
+                    min_payout, default_solo, hide_workers
+             FROM miner_settings WHERE account = $1",
+            &[&account],
+        )?;
+        Ok(row.map(|row| crate::miner_settings::MinerSettingsRecord {
+            account: account.to_string(),
+            password_hash: row.get(0),
+            owner_ip_group: row.get(1),
+            claimed_at: from_unix(row.get(2)),
+            changed_at: from_unix(row.get(3)),
+            taken_back_at: row.get::<_, Option<i64>>(4).map(from_unix),
+            settings: crate::miner_settings::MinerSettings {
+                min_payout: opt_i64_to_u64(row.get(5)),
+                default_solo: row.get(6),
+                hide_workers: row.get(7),
+            },
+        }))
+    }
+
+    /// Sets the first password for an account. False when it already has one.
+    pub fn claim_miner_settings(
+        &self,
+        account: &str,
+        password_hash: &str,
+        ip_group: &str,
+        now: SystemTime,
+    ) -> Result<bool> {
+        let now = to_unix(now);
+        let rows = self.conn().execute(
+            "INSERT INTO miner_settings (account, password_hash, owner_ip_group, claimed_at, changed_at)
+             VALUES ($1, $2, $3, $4, $4) ON CONFLICT (account) DO NOTHING",
+            &[&account, &password_hash, &ip_group, &now],
+        )?;
+        Ok(rows == 1)
+    }
+
+    /// Replaces the password, if the password and owner are still the ones
+    /// the caller unlocked (`expected`); `owner_ip_group` stays as it is.
+    pub fn set_miner_settings_password(
+        &self,
+        account: &str,
+        expected: (Option<&str>, &str),
+        password_hash: &str,
+        now: SystemTime,
+    ) -> Result<bool> {
+        let rows = self.conn().execute(
+            "UPDATE miner_settings SET password_hash = $4, changed_at = $5
+             WHERE account = $1 AND password_hash IS NOT DISTINCT FROM $2 AND owner_ip_group = $3",
+            &[
+                &account,
+                &expected.0,
+                &expected.1,
+                &password_hash,
+                &to_unix(now),
+            ],
+        )?;
+        Ok(rows == 1)
+    }
+
+    /// Clears the password and records `ip_group` as the owner, if the owner
+    /// is still `expected_owner` (so two concurrent take-backs cannot both win).
+    pub fn take_back_miner_settings(
+        &self,
+        account: &str,
+        expected_owner: &str,
+        ip_group: &str,
+        now: SystemTime,
+    ) -> Result<bool> {
+        let now = to_unix(now);
+        let rows = self.conn().execute(
+            "UPDATE miner_settings
+             SET password_hash = NULL,
+                 owner_ip_group = $3,
+                 changed_at = $4,
+                 taken_back_at = $4
+             WHERE account = $1 AND owner_ip_group = $2",
+            &[&account, &expected_owner, &ip_group, &now],
+        )?;
+        Ok(rows == 1)
+    }
+
+    /// Saves settings, if the password and owner are still the ones the
+    /// caller unlocked (`expected`).
+    pub fn update_miner_settings(
+        &self,
+        account: &str,
+        expected: (Option<&str>, &str),
+        settings: &crate::miner_settings::MinerSettings,
+        now: SystemTime,
+    ) -> Result<bool> {
+        let min_payout = opt_u64_to_i64(settings.min_payout)?;
+        let rows = self.conn().execute(
+            "UPDATE miner_settings
+             SET min_payout = $4, default_solo = $5, hide_workers = $6, changed_at = $7
+             WHERE account = $1 AND password_hash IS NOT DISTINCT FROM $2 AND owner_ip_group = $3",
+            &[
+                &account,
+                &expected.0,
+                &expected.1,
+                &min_payout,
+                &settings.default_solo,
+                &settings.hide_workers,
+                &to_unix(now),
+            ],
+        )?;
+        Ok(rows == 1)
+    }
+
+    /// Minimum payouts miners chose, by account.
+    pub fn miner_min_payouts(&self) -> Result<HashMap<String, u64>> {
+        let rows = self.conn().query(
+            "SELECT account, min_payout FROM miner_settings WHERE min_payout IS NOT NULL",
+            &[],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1).max(0) as u64))
+            .collect())
+    }
+
+    /// Adds accepted work. Rows are `(account, ip_group, hour, work)`.
+    pub fn add_miner_source_work(&self, rows: &[(String, String, i64, u64)]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let accounts = rows.iter().map(|row| row.0.as_str()).collect::<Vec<_>>();
+        let groups = rows.iter().map(|row| row.1.as_str()).collect::<Vec<_>>();
+        let hours = rows.iter().map(|row| row.2).collect::<Vec<_>>();
+        let work = rows
+            .iter()
+            .map(|row| i64::try_from(row.3).unwrap_or(i64::MAX))
+            .collect::<Vec<_>>();
+        self.conn().execute(
+            "INSERT INTO miner_source_work (account, ip_group, hour, work)
+             SELECT * FROM UNNEST($1::text[], $2::text[], $3::bigint[], $4::bigint[])
+             ON CONFLICT (account, ip_group, hour)
+             DO UPDATE SET work = LEAST(
+                 miner_source_work.work::numeric + EXCLUDED.work::numeric,
+                 9223372036854775807
+             )::bigint",
+            &[&accounts, &groups, &hours, &work],
+        )?;
+        Ok(())
+    }
+
+    /// Forgets an IP group's work for an account (after a proven fake share).
+    pub fn clear_miner_source_work(&self, account: &str, ip_group: &str) -> Result<()> {
+        self.conn().execute(
+            "DELETE FROM miner_source_work WHERE account = $1 AND ip_group = $2",
+            &[&account, &ip_group],
+        )?;
+        Ok(())
+    }
+
+    /// Work per IP group for an account since `since`.
+    pub fn miner_source_work_since(
+        &self,
+        account: &str,
+        since: SystemTime,
+    ) -> Result<HashMap<String, u64>> {
+        let since = crate::miner_settings::source_work_hour(since);
+        let rows = self.conn().query(
+            "SELECT ip_group, LEAST(SUM(work), 9223372036854775807)::bigint
+             FROM miner_source_work WHERE account = $1 AND hour >= $2 GROUP BY ip_group",
+            &[&account, &since],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1).max(0) as u64))
+            .collect())
+    }
+
+    pub fn prune_miner_source_work(&self, before: SystemTime) -> Result<u64> {
+        let before = crate::miner_settings::source_work_hour(before);
+        let rows = self
+            .conn()
+            .execute("DELETE FROM miner_source_work WHERE hour < $1", &[&before])?;
+        Ok(rows)
+    }
+
     pub fn register_payout_destination(
         &self,
         destination: &pool_common::destination::PayoutDestination,
@@ -865,6 +1051,31 @@ CREATE TABLE IF NOT EXISTS vardiff_hints (
     PRIMARY KEY (address, worker)
 );
 CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated_at DESC);
+
+-- Settings a miner changes from My Stats; see miner_settings.rs. A row
+-- exists once someone has set a password for the account.
+CREATE TABLE IF NOT EXISTS miner_settings (
+    account TEXT PRIMARY KEY,
+    password_hash TEXT,
+    owner_ip_group TEXT NOT NULL,
+    claimed_at BIGINT NOT NULL,
+    changed_at BIGINT NOT NULL,
+    taken_back_at BIGINT,
+    min_payout BIGINT CHECK (min_payout IS NULL OR min_payout > 0),
+    default_solo BOOLEAN NOT NULL DEFAULT FALSE,
+    hide_workers BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+-- Accepted share difficulty per account, IP group and hour, which decides
+-- settings take-backs.
+CREATE TABLE IF NOT EXISTS miner_source_work (
+    account TEXT NOT NULL,
+    ip_group TEXT NOT NULL,
+    hour BIGINT NOT NULL,
+    work BIGINT NOT NULL,
+    PRIMARY KEY (account, ip_group, hour)
+);
+CREATE INDEX IF NOT EXISTS idx_miner_source_work_hour ON miner_source_work(hour);
 
 CREATE TABLE IF NOT EXISTS stat_snapshots (
     id BIGSERIAL PRIMARY KEY,
@@ -7009,6 +7220,139 @@ mod tests {
         store
             .open_independent_session()
             .expect("connect lock session")
+    }
+
+    #[test]
+    fn miner_settings_claim_take_back_and_update() {
+        use crate::miner_settings::MinerSettings;
+        let Some(store) = test_store() else {
+            return;
+        };
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert!(store.miner_settings("addr").unwrap().is_none());
+        assert!(store
+            .claim_miner_settings("addr", "hash-1", "198.51.100.7", now)
+            .unwrap());
+        // The first password wins.
+        assert!(!store
+            .claim_miner_settings("addr", "hash-2", "203.0.113.24", now)
+            .unwrap());
+        let record = store.miner_settings("addr").unwrap().unwrap();
+        assert_eq!(record.password_hash.as_deref(), Some("hash-1"));
+        assert_eq!(record.owner_ip_group, "198.51.100.7");
+        assert_eq!(record.settings, MinerSettings::default());
+        assert_eq!(record.taken_back_at, None);
+
+        let later = now + Duration::from_secs(60);
+        let settings = MinerSettings {
+            min_payout: Some(5 * crate::miner_settings::ATOMIC_PER_BNT),
+            default_solo: true,
+            hide_workers: true,
+        };
+        let owner = (Some("hash-1"), "198.51.100.7");
+        assert!(store
+            .update_miner_settings("addr", owner, &settings, later)
+            .unwrap());
+        assert!(!store
+            .update_miner_settings("missing", owner, &settings, later)
+            .unwrap());
+        // A write checked against an old password or owner is refused.
+        assert!(!store
+            .update_miner_settings("addr", (Some("old"), "198.51.100.7"), &settings, later)
+            .unwrap());
+        let record = store.miner_settings("addr").unwrap().unwrap();
+        assert_eq!(record.settings, settings);
+        assert_eq!(record.changed_at, later);
+        assert_eq!(
+            store.miner_min_payouts().unwrap().get("addr").copied(),
+            settings.min_payout
+        );
+
+        // A take-back only applies against the owner it was decided on.
+        assert!(!store
+            .take_back_miner_settings("addr", "someone-else", "203.0.113.24", later)
+            .unwrap());
+        assert!(store
+            .take_back_miner_settings("addr", "198.51.100.7", "203.0.113.24", later)
+            .unwrap());
+        let record = store.miner_settings("addr").unwrap().unwrap();
+        assert_eq!(record.password_hash, None);
+        assert_eq!(record.owner_ip_group, "203.0.113.24");
+        assert_eq!(record.taken_back_at, Some(later));
+        assert_eq!(record.settings, settings, "a take-back keeps the settings");
+
+        let reset = later + Duration::from_secs(60);
+        // A session from before the take-back can no longer write.
+        assert!(!store
+            .set_miner_settings_password("addr", owner, "hash-x", reset)
+            .unwrap());
+        assert!(!store
+            .update_miner_settings("addr", owner, &MinerSettings::default(), reset)
+            .unwrap());
+        assert!(store
+            .set_miner_settings_password("addr", (None, "203.0.113.24"), "hash-3", reset)
+            .unwrap());
+        assert_eq!(
+            store
+                .miner_settings("addr")
+                .unwrap()
+                .unwrap()
+                .password_hash
+                .as_deref(),
+            Some("hash-3")
+        );
+
+        let cleared = MinerSettings::default();
+        assert!(store
+            .update_miner_settings("addr", (Some("hash-3"), "203.0.113.24"), &cleared, reset)
+            .unwrap());
+        assert!(store.miner_min_payouts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn miner_source_work_adds_per_hour_and_clears_per_pair() {
+        let Some(store) = test_store() else {
+            return;
+        };
+        // A whole hour (1_800_000_000 is a multiple of 3_600).
+        let hour = 1_800_000_000;
+        let row =
+            |group: &str, hour: i64, work: u64| ("addr".to_string(), group.to_string(), hour, work);
+        store
+            .add_miner_source_work(&[
+                row("a", hour, 10),
+                row("b", hour, 5),
+                row("a", hour - 3_600, 7),
+            ])
+            .unwrap();
+        store
+            .add_miner_source_work(&[row("a", hour, u64::MAX)])
+            .unwrap();
+        store
+            .add_miner_source_work(&[("other".into(), "a".into(), hour, 99)])
+            .unwrap();
+        let since = UNIX_EPOCH + Duration::from_secs((hour - 3_600) as u64);
+        let work = store.miner_source_work_since("addr", since).unwrap();
+        assert_eq!(work.get("a").copied(), Some(i64::MAX as u64), "saturates");
+        assert_eq!(work.get("b").copied(), Some(5));
+        let recent = store
+            .miner_source_work_since("addr", UNIX_EPOCH + Duration::from_secs(hour as u64))
+            .unwrap();
+        assert_eq!(recent.get("b").copied(), Some(5));
+
+        store.clear_miner_source_work("addr", "a").unwrap();
+        let work = store.miner_source_work_since("addr", since).unwrap();
+        assert_eq!(work.get("a"), None);
+        assert_eq!(work.get("b").copied(), Some(5));
+
+        let pruned = store
+            .prune_miner_source_work(UNIX_EPOCH + Duration::from_secs((hour + 1) as u64))
+            .unwrap();
+        assert_eq!(pruned, 0, "the bucket starting at `hour` is kept");
+        let pruned = store
+            .prune_miner_source_work(UNIX_EPOCH + Duration::from_secs((hour + 3_600) as u64))
+            .unwrap();
+        assert_eq!(pruned, 2);
     }
 
     #[test]

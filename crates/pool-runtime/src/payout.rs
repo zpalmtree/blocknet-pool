@@ -1392,6 +1392,14 @@ impl PayoutProcessor {
                 return;
             }
         };
+        // Minimums miners chose on My Stats; never below the pool's.
+        let chosen_minimums = match self.store.miner_min_payouts() {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load miner payout minimums");
+                return;
+            }
+        };
         let mut candidates = Vec::with_capacity(balances.len());
 
         for bal in balances {
@@ -1406,7 +1414,10 @@ impl PayoutProcessor {
             if destination.memo.is_none() && self.cfg.requires_payout_memo(&destination.address) {
                 continue;
             }
-            let account_minimum = atomic_amount_from_coins(self.cfg.payout_minimum(&bal.address));
+            let account_minimum = crate::miner_settings::effective_min_payout(
+                atomic_amount_from_coins(self.cfg.payout_minimum(&bal.address)),
+                chosen_minimums.get(&bal.address).copied(),
+            );
             let existing_pending = match self.store.get_pending_payout(&bal.address) {
                 Ok(v) => v,
                 Err(err) => {
@@ -4406,6 +4417,59 @@ mod tests {
             4_000_000
         ));
         assert!(totals.lock().is_empty());
+    }
+
+    #[test]
+    fn a_minimum_chosen_on_my_stats_holds_back_smaller_payouts() {
+        let store = require_test_store!();
+        for seed in 1..=2 {
+            store
+                .update_balance(&Balance {
+                    address: test_address(seed),
+                    pending: 200_000_000,
+                    paid: 0,
+                })
+                .unwrap();
+        }
+        let now = SystemTime::now();
+        assert!(store
+            .claim_miner_settings(&test_address(1), "hash", "203.0.113.1", now)
+            .unwrap());
+        assert!(store
+            .update_miner_settings(
+                &test_address(1),
+                (Some("hash"), "203.0.113.1"),
+                &crate::miner_settings::MinerSettings {
+                    min_payout: Some(500_000_000),
+                    ..Default::default()
+                },
+                now,
+            )
+            .unwrap());
+        let url = spawn_wallet_send_server(
+            &test_address(200),
+            vec![wallet_output("funds", 0, 10_000_000_000)],
+            MockAdvancedSendPolicy {
+                fee: 1000,
+                ..Default::default()
+            },
+            32,
+        );
+        let processor = PayoutProcessor::new(
+            Config {
+                min_payout_amount: 1.0,
+                ..Default::default()
+            },
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&url, "").unwrap()),
+        );
+        processor.send_payouts();
+        let pending = store.get_pending_payouts().unwrap();
+        assert!(
+            pending.iter().all(|p| p.address != test_address(1)),
+            "2 BNT is below the chosen 5 BNT minimum"
+        );
+        assert!(pending.iter().any(|p| p.address == test_address(2)));
     }
 
     #[test]

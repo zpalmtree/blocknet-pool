@@ -2525,3 +2525,48 @@ html { scroll-padding-top: 72px; }
   .info-compare th, .info-compare td { padding: 9px 6px; }
 }
 .start-info-link { margin-top: 12px; }
+
+/* My Stats settings tab */
+.stats-tabs { margin: -8px 0 24px; }
+.stats-tabs button { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; }
+.settings-card { padding: 24px 28px; }
+.settings-meta { display: flex; justify-content: flex-end; margin: -8px 0 10px; }
+.settings-state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.settings-state.is-open { color: var(--accent-strong); }
+.settings-lock { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; flex: none; }
+.settings-title { margin: 0 0 6px; font-size: 16px; font-weight: 800; }
+.settings-lead { margin: 0 0 14px; font-size: 14px; color: var(--text); max-width: 70ch; }
+.settings-foot { margin: 14px 0 0; font-size: 13px; color: var(--muted); }
+.settings-foot .link-button { font-size: 13px; }
+.settings-form { margin: 0; }
+.settings-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.settings-inline input { flex: 1 1 200px; min-width: 0; max-width: 280px; }
+.settings-inline .link-button, .settings-actions .link-button { font-size: 14px; }
+.settings-card input[aria-invalid='true'] { border-color: var(--bad); }
+.settings-error { margin: 10px 0 0; font-size: 13px; color: var(--tone-bad-text); }
+.settings-row-error { margin-top: 14px; }
+.settings-saved { margin: 0 0 16px; padding: 10px 14px; font-size: 13px; border-radius: 4px; background: var(--tone-ok-bg); border: 1px solid var(--tone-ok-border); color: var(--tone-ok-text); }
+.settings-row { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 8px 24px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.settings-form > .settings-row:first-child { padding-top: 0; }
+.settings-row-label { font-size: 14px; font-weight: 700; padding-top: 8px; }
+.settings-row-control { display: grid; gap: 8px; justify-items: start; min-width: 0; }
+.settings-hint { margin: 0; font-size: 13px; color: var(--muted); }
+.settings-hint code { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text); }
+.settings-help-note { margin: 0; max-width: 62ch; padding: 10px 12px; border-radius: 4px; background: var(--surface-hover); }
+.settings-help-note a { font-weight: 700; color: var(--accent-strong); white-space: nowrap; }
+.settings-amount { display: inline-flex; align-items: center; gap: 8px; }
+.settings-amount input { width: 110px; text-align: end; }
+.settings-amount span { font-weight: 700; color: var(--muted); font-size: 13px; }
+.settings-checks { display: grid; gap: 10px; padding-top: 8px; }
+.settings-checks label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.settings-checks input[type='checkbox'] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding-top: 18px; }
+.settings-change-password { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+@media (max-width: 600px) {
+  .settings-card { padding: 18px; }
+  .settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .settings-row-label { padding-top: 0; }
+  .settings-inline input { max-width: none; flex-basis: 100%; }
+  .settings-inline .btn { flex: 1 1 auto; }
+  .settings-row-control .start-choice { width: auto; }
+}
