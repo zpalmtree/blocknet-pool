@@ -974,7 +974,11 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
             pool_fee_pct: state.config.runtime.pool_fee_pct,
             confirmations: state.config.runtime.blocks_before_payout.max(0) as u64,
             pool_up_since: parking_lot::Mutex::new(None),
+            miner_release: state.miner_release.clone(),
         });
+        if let Some(chat) = &service.telegram_poller {
+            crate::alert_chat::spawn_telegram_bot(Arc::clone(&state.store), Arc::clone(chat));
+        }
     }
     let app_state = state.clone();
     let protected = Router::new()
@@ -2909,14 +2913,39 @@ async fn handle_miners(
     Json(PagedResponse::from_unpaged(items, limit, offset)).into_response()
 }
 
+/// What a visitor gets for a miner whose owner keeps stats private.
+fn private_stats_response(status: StatusCode, body: serde_json::Value) -> Response {
+    let mut response = (status, Json(body)).into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::VARY, HeaderValue::from_static("Cookie"));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+fn private_stats_refused() -> Response {
+    private_stats_response(
+        StatusCode::FORBIDDEN,
+        json!({"error": "private_stats", "message": "This miner keeps their stats private."}),
+    )
+}
+
 async fn handle_miner_balance(
     Path(address): Path<String>,
     Query(query): Query<MinerBalanceQuery>,
     client: ClientIp,
     State(state): State<ApiState>,
+    headers: HeaderMap,
 ) -> Response {
     // A solo miner may look up the login they mine with.
     let address = pool_common::solo::split_solo_login(&address).1.to_string();
+    if state
+        .miner_settings
+        .public_view_for(&address, &headers)
+        .await
+        == crate::miner_settings::PublicView::Private
+    {
+        return private_stats_refused();
+    }
     let include_pending_estimate = query.include_pending_estimate.unwrap_or(true);
     if let Some(cached) = state.fresh_miner_balance_payload(&address, include_pending_estimate) {
         return Json(cached).into_response();
@@ -2949,13 +2978,36 @@ async fn handle_miner(
     };
     match payload {
         Ok(mut payload) => {
-            if payload.found
-                && state
+            let view = if payload.found {
+                state
                     .miner_settings
-                    .hides_workers_for(&address, &headers)
+                    .public_view_for(&address, &headers)
                     .await
-            {
-                hide_worker_names(&mut payload.body);
+            } else {
+                crate::miner_settings::PublicView::Full
+            };
+            match view {
+                crate::miner_settings::PublicView::Private => {
+                    return private_stats_response(
+                        StatusCode::OK,
+                        json!({
+                            "private_stats": true,
+                            "hashrate": 0,
+                            "solo_hashrate": 0,
+                            "workers": [],
+                            "shares": [],
+                            "payouts": [],
+                            "blocks_found": 0,
+                            "total_accepted": 0,
+                            "total_rejected": 0,
+                            "verification_hold": null,
+                        }),
+                    );
+                }
+                crate::miner_settings::PublicView::HideNames => {
+                    hide_worker_names(&mut payload.body)
+                }
+                crate::miner_settings::PublicView::Full => {}
             }
             if payload.found {
                 let mut response = Json(payload.body).into_response();
@@ -2997,9 +3049,18 @@ async fn handle_miner_hashrate(
     Query(query): Query<RangeQuery>,
     client: ClientIp,
     State(state): State<ApiState>,
+    headers: HeaderMap,
 ) -> Response {
     // A solo miner may look up the login they mine with.
     let address = pool_common::solo::split_solo_login(&address).1.to_string();
+    if state
+        .miner_settings
+        .public_view_for(&address, &headers)
+        .await
+        == crate::miner_settings::PublicView::Private
+    {
+        return private_stats_refused();
+    }
     let label = normalized_range_label(query.range.as_deref());
     let key = format!("miner_hashrate:{label}:{address}");
     let task_state = state.clone();
@@ -7755,6 +7816,7 @@ mod tests {
                 }),
                 client.clone(),
                 State(state.clone()),
+                axum::http::HeaderMap::new(),
             )
             .await;
             assert_eq!(cached.status(), StatusCode::OK);
@@ -7766,6 +7828,7 @@ mod tests {
                 }),
                 client.clone(),
                 State(state.clone()),
+                axum::http::HeaderMap::new(),
             )
             .await;
             assert_eq!(uncached.status(), StatusCode::TOO_MANY_REQUESTS);

@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use pool_common::{cli::parse_config_path, logging::init_logging};
 use tracing::info;
 
+mod alert_chat;
 mod alert_mail;
 mod alerts;
 mod api;

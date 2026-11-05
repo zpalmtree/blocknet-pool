@@ -23,9 +23,10 @@ use axum::{Json, Router};
 use parking_lot::Mutex;
 use pool_runtime::config::Config as RuntimeConfig;
 use pool_runtime::miner_settings::{
-    effective_min_payout, max_min_payout, plausible_email, take_back_decision, validate_min_payout,
-    MinerAlert, MinerSettings, MinerSettingsRecord, TakeBack, ALERT_OFFLINE_MINUTES,
-    ATOMIC_PER_BNT, TAKE_BACK_WINDOW,
+    discord_webhook_display, discord_webhook_valid, effective_min_payout, max_min_payout,
+    plausible_email, start_difficulty_in_era, take_back_decision, validate_min_payout,
+    AlertChoices as StoredAlertChoices, MinerAlert, MinerSettings, MinerSettingsRecord, TakeBack,
+    ALERT_DROP_MINUTES, ALERT_OFFLINE_MINUTES, ATOMIC_PER_BNT, TAKE_BACK_WINDOW,
 };
 use pool_runtime::store::PoolStore;
 use serde::Deserialize;
@@ -164,7 +165,14 @@ struct Limits {
     alert_emails_by_account: AttemptLimiter,
     alert_emails_by_client: AttemptLimiter,
     alert_emails_total: AttemptLimiter,
+    chat_links_by_account: AttemptLimiter,
+    chat_links_by_client: AttemptLimiter,
 }
+
+/// Discord test posts and Telegram links per account per hour.
+const CHAT_LINKS_PER_ACCOUNT: u32 = 5;
+/// The same per client per hour, across accounts.
+const CHAT_LINKS_PER_CLIENT: u32 = 20;
 
 /// Confirmation emails per account per hour.
 const ALERT_EMAILS_PER_ACCOUNT: u32 = 3;
@@ -183,7 +191,17 @@ pub(crate) struct MinerSettingsService {
     sessions: Mutex<Sessions>,
     limits: Mutex<Limits>,
     hashing: Semaphore,
-    hide_workers: Mutex<HashMap<String, (Instant, bool)>>,
+    hide_workers: Mutex<HashMap<String, (Instant, PublicView)>>,
+}
+
+/// What visitors without an unlocked session see of an account's stats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PublicView {
+    Full,
+    /// Rigs are shown as "Rig 1", "Rig 2".
+    HideNames,
+    /// Nothing but that the stats are private.
+    Private,
 }
 
 /// Changes whenever the password or the owner does, ending older sessions.
@@ -336,6 +354,15 @@ struct TakeBackRequest {
     ip: String,
 }
 
+/// Tells a missing field (keep the saved value) from an explicit `null`.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SettingsRequest {
@@ -343,7 +370,13 @@ struct SettingsRequest {
     min_payout: Option<f64>,
     default_solo: bool,
     hide_workers: bool,
-    /// Alert choices; applied only once an alert email is set.
+    /// Missing keeps the saved choice (older pages do not send it).
+    #[serde(default)]
+    private_stats: Option<bool>,
+    /// Missing keeps the saved choice; `null` lets the pool choose.
+    #[serde(default, deserialize_with = "present")]
+    start_difficulty: Option<Option<u64>>,
+    /// Alert choices; applied only once an alert channel is set.
     #[serde(default)]
     alerts: Option<AlertChoices>,
 }
@@ -355,6 +388,28 @@ struct AlertChoices {
     offline_minutes: u32,
     notify_payouts: bool,
     notify_solo_blocks: bool,
+    /// The rest are kept as saved when missing.
+    #[serde(default)]
+    hashrate_drop_minutes: Option<u32>,
+    #[serde(default)]
+    notify_updates: Option<bool>,
+    #[serde(default)]
+    weekly_summary: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscordRequest {
+    webhook: String,
+    #[serde(default)]
+    lang: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct TelegramRequest {
+    #[serde(default)]
+    lang: String,
 }
 
 #[derive(Deserialize)]
@@ -394,6 +449,8 @@ impl MinerSettingsService {
                 alert_emails_by_account: AttemptLimiter::new(),
                 alert_emails_by_client: AttemptLimiter::new(),
                 alert_emails_total: AttemptLimiter::new(),
+                chat_links_by_account: AttemptLimiter::new(),
+                chat_links_by_client: AttemptLimiter::new(),
             }),
             hashing: Semaphore::new(MAX_CONCURRENT_HASHES),
             hide_workers: Mutex::new(HashMap::new()),
@@ -560,39 +617,41 @@ impl MinerSettingsService {
         self.hide_workers.lock().remove(account);
     }
 
-    /// Whether public miner stats for `account` should show "Rig N" instead
-    /// of worker names for this request.
-    pub(crate) async fn hides_workers_for(&self, account: &str, headers: &HeaderMap) -> bool {
+    /// What this request may see of `account`'s public stats: everything,
+    /// numbered rigs, or nothing. The unlocked owner sees everything.
+    pub(crate) async fn public_view_for(&self, account: &str, headers: &HeaderMap) -> PublicView {
         let now = Instant::now();
         let cached = self
             .hide_workers
             .lock()
             .get(account)
             .filter(|(at, _)| now.saturating_duration_since(*at) < HIDE_CACHE_TTL)
-            .map(|(_, hide)| *hide);
-        let hide = match cached {
-            Some(hide) => hide,
+            .map(|(_, view)| *view);
+        let view = match cached {
+            Some(view) => view,
             None => {
-                let hide = match self.record(account).await {
-                    Ok(record) => record.is_some_and(|record| record.settings.hide_workers),
-                    // Fail closed: hiding names is the safer mistake.
-                    Err(_) => true,
+                let view = match self.record(account).await {
+                    Ok(Some(record)) if record.settings.private_stats => PublicView::Private,
+                    Ok(Some(record)) if record.settings.hide_workers => PublicView::HideNames,
+                    Ok(_) => PublicView::Full,
+                    // Fail closed: hiding is the safer mistake.
+                    Err(_) => PublicView::Private,
                 };
                 let mut cache = self.hide_workers.lock();
                 if cache.len() >= HIDE_CACHE_MAX_ENTRIES {
                     cache.clear();
                 }
-                cache.insert(account.to_string(), (now, hide));
-                hide
+                cache.insert(account.to_string(), (now, view));
+                view
             }
         };
-        if !hide {
-            return false;
+        if view == PublicView::Full {
+            return view;
         }
-        // The owner sees real names while unlocked; visitors without a
+        // The owner sees everything while unlocked; visitors without a
         // session cost no further read.
         let Some(token) = session_token(headers) else {
-            return true;
+            return view;
         };
         let caller = Caller {
             account: account.to_string(),
@@ -600,8 +659,8 @@ impl MinerSettingsService {
             token: Some(token),
         };
         match self.record(account).await {
-            Ok(Some(record)) => !self.unlocked(&caller, &record),
-            _ => true,
+            Ok(Some(record)) if self.unlocked(&caller, &record) => PublicView::Full,
+            _ => view,
         }
     }
 
@@ -631,24 +690,79 @@ impl MinerSettingsService {
             "max_min_payout": coins(self.max_min_payout(&caller.account)),
             "your_ip": caller.client,
             "alerts_available": self.alerts.is_some(),
+            "telegram_available": self
+                .alerts
+                .as_ref()
+                .is_some_and(|alerts| alerts.telegram_bot.is_some()),
         });
         if let (true, Some(record)) = (unlocked, record) {
             body["settings"] = json!({
                 "min_payout": coins(self.effective_minimum(&caller.account, record.settings.min_payout)),
                 "default_solo": record.settings.default_solo,
                 "hide_workers": record.settings.hide_workers,
+                "private_stats": record.settings.private_stats,
+                "start_difficulty": record.settings.start_difficulty,
             });
             body["alerts"] = alert.map_or(Value::Null, |alert| {
+                let telegram = match (&alert.telegram_chat_id, alert.telegram_pending) {
+                    (Some(_), _) => {
+                        json!({"name": alert.telegram_name.clone().unwrap_or_default()})
+                    }
+                    (None, true) => json!({"pending": ""}),
+                    (None, false) => Value::Null,
+                };
                 json!({
                     "email": alert.email,
-                    "confirmed": alert.confirmed_at.is_some(),
+                    "confirmed": alert.confirmed_at.is_some() && !alert.email.is_empty(),
                     "offline_minutes": alert.offline_minutes,
                     "notify_payouts": alert.notify_payouts,
                     "notify_solo_blocks": alert.notify_solo_blocks,
+                    "hashrate_drop_minutes": alert.hashrate_drop_minutes,
+                    "notify_updates": alert.notify_updates,
+                    "weekly_summary": alert.weekly_summary,
+                    "discord": alert.discord_webhook.as_deref().map(discord_webhook_display),
+                    "telegram": telegram,
                 })
             });
         }
         body
+    }
+
+    /// Starting difficulties a miner may choose in the current era
+    /// (`initial..=max`), and about where the account's rigs are now.
+    async fn difficulty_range(&self, account: &str) -> Result<(u64, u64, Option<u64>), ApiError> {
+        let account = account.to_string();
+        let (min, max, initial) = (
+            self.runtime.min_share_difficulty.max(1),
+            self.runtime.max_share_difficulty,
+            self.runtime.initial_share_difficulty,
+        );
+        self.blocking(move |store| {
+            let height = store.highest_block_height()?;
+            let (floor, initial, max) = if pool_common::faraday::is_faraday(height + 1) {
+                (
+                    pool_common::faraday::FARADAY_MIN_SHARE_DIFFICULTY,
+                    pool_common::faraday::FARADAY_INITIAL_SHARE_DIFFICULTY,
+                    pool_common::faraday::FARADAY_MAX_SHARE_DIFFICULTY,
+                )
+            } else {
+                let max = max.max(min);
+                (min, initial.clamp(min, max), max)
+            };
+            let fresh = SystemTime::now()
+                .checked_sub(Duration::from_secs(86_400))
+                .unwrap_or(UNIX_EPOCH);
+            let mut hints: Vec<u64> = store
+                .get_vardiff_hints_for_address(&account, 32)?
+                .into_iter()
+                .filter(|(difficulty, at)| *at >= fresh && *difficulty >= floor)
+                .map(|(difficulty, _)| difficulty)
+                .collect();
+            hints.sort_unstable();
+            let current = hints.get(hints.len() / 2).copied();
+            Ok((initial, max, current))
+        })
+        .await
     }
 
     /// The account's alert email, read only for an unlocked caller.
@@ -673,10 +787,20 @@ impl MinerSettingsService {
         new_token: Option<String>,
     ) -> ApiResult {
         let alert = self.alert_for(&caller.account, unlocked).await?;
-        Ok(respond_body(
-            self.state_body(caller, record, unlocked, alert.as_ref()),
-            new_token,
-        ))
+        let mut body = self.state_body(caller, record, unlocked, alert.as_ref());
+        if let (true, Some(record)) = (unlocked, record) {
+            let (min, max, current) = self.difficulty_range(&caller.account).await?;
+            body["difficulty"] = json!({"min": min, "max": max, "current": current});
+            // A choice from an earlier difficulty era no longer applies.
+            if record
+                .settings
+                .start_difficulty
+                .is_some_and(|chosen| start_difficulty_in_era(chosen, min, max).is_none())
+            {
+                body["settings"]["start_difficulty"] = Value::Null;
+            }
+        }
+        Ok(respond_body(body, new_token))
     }
 }
 
@@ -1014,10 +1138,28 @@ impl MinerSettingsService {
                 ))
             }
         };
+        let start_difficulty = match request.start_difficulty {
+            None => record.settings.start_difficulty,
+            Some(None) => None,
+            Some(Some(chosen)) => {
+                let (min, max, _) = self.difficulty_range(&caller.account).await?;
+                Some(start_difficulty_in_era(chosen, min, max).ok_or_else(|| {
+                    ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_settings",
+                        &format!("Choose a starting difficulty from {min} to {max}."),
+                    )
+                })?)
+            }
+        };
         let settings = MinerSettings {
             min_payout,
             default_solo: request.default_solo,
             hide_workers: request.hide_workers,
+            private_stats: request
+                .private_stats
+                .unwrap_or(record.settings.private_stats),
+            start_difficulty,
         };
         if settings != record.settings {
             let account = caller.account.clone();
@@ -1044,6 +1186,8 @@ impl MinerSettingsService {
                 min_payout = ?settings.min_payout,
                 default_solo = settings.default_solo,
                 hide_workers = settings.hide_workers,
+                private_stats = settings.private_stats,
+                start_difficulty = ?settings.start_difficulty,
                 "miner settings saved"
             );
         }
@@ -1057,14 +1201,32 @@ impl MinerSettingsService {
                     "Choose 10, 30 or 60 minutes.",
                 ));
             }
+            if choices
+                .hashrate_drop_minutes
+                .is_some_and(|minutes| minutes != 0 && !ALERT_DROP_MINUTES.contains(&minutes))
+            {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_settings",
+                    "Choose 30 minutes, 1 hour or 2 hours.",
+                ));
+            }
             let account = caller.account.clone();
             self.blocking(move |store| {
-                store.update_miner_alert_choices(
-                    &account,
-                    choices.offline_minutes,
-                    choices.notify_payouts,
-                    choices.notify_solo_blocks,
-                )
+                let Some(saved) = store.miner_alert(&account)? else {
+                    return Ok(false);
+                };
+                let choices = StoredAlertChoices {
+                    offline_minutes: choices.offline_minutes,
+                    notify_payouts: choices.notify_payouts,
+                    notify_solo_blocks: choices.notify_solo_blocks,
+                    hashrate_drop_minutes: choices
+                        .hashrate_drop_minutes
+                        .unwrap_or(saved.hashrate_drop_minutes),
+                    notify_updates: choices.notify_updates.unwrap_or(saved.notify_updates),
+                    weekly_summary: choices.weekly_summary.unwrap_or(saved.weekly_summary),
+                };
+                store.update_miner_alert_choices(&account, &choices, SystemTime::now())
             })
             .await?;
         }
@@ -1195,9 +1357,134 @@ impl MinerSettingsService {
         self.alert_service()?;
         let record = self.require_unlocked(&caller).await?;
         let account = caller.account.clone();
-        self.blocking(move |store| store.remove_miner_alert(&account))
+        self.blocking(move |store| store.remove_miner_alert_email(&account))
             .await?;
         tracing::info!(account = %caller.account, "alert email removed");
+        self.respond(&caller, Some(&record), true, None).await
+    }
+
+    /// Checks that a Discord or Telegram link may be made for this account
+    /// now: unlocked, mined here, and within the hourly limits.
+    async fn chat_link_allowed(&self, caller: &Caller) -> Result<MinerSettingsRecord, ApiError> {
+        let client = self.require_client(caller)?;
+        let record = self.require_unlocked(caller).await?;
+        let account = caller.account.clone();
+        if !self
+            .blocking(move |store| store.miner_has_any_activity(&account))
+            .await?
+        {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "not_mining",
+                "Alerts are available once this address has mined on the pool.",
+            ));
+        }
+        let now = Instant::now();
+        let mut limits = self.limits.lock();
+        if !limits
+            .chat_links_by_client
+            .try_take(&client, CHAT_LINKS_PER_CLIENT, now)
+        {
+            return Err(ApiError::rate_limited(
+                limits.chat_links_by_client.retry_after(&client, now),
+            ));
+        }
+        if !limits
+            .chat_links_by_account
+            .try_take(&caller.account, CHAT_LINKS_PER_ACCOUNT, now)
+        {
+            return Err(ApiError::rate_limited(
+                limits
+                    .chat_links_by_account
+                    .retry_after(&caller.account, now),
+            ));
+        }
+        Ok(record)
+    }
+
+    /// Saves a Discord webhook once a test message posted to it.
+    async fn set_discord(&self, caller: Caller, request: DiscordRequest) -> ApiResult {
+        let service = Arc::clone(self.alert_service()?);
+        let webhook = request.webhook.trim().to_string();
+        if !discord_webhook_valid(&webhook) {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_webhook",
+                "Paste a Discord webhook link (https://discord.com/api/webhooks/…).",
+            ));
+        }
+        let record = self.chat_link_allowed(&caller).await?;
+        let lang = crate::alerts::supported_lang(request.lang.trim()).to_string();
+        let text = crate::alerts::bot_text(
+            &lang,
+            "discordTest",
+            &[&crate::alerts::short_account(&caller.account)],
+        );
+        if let Err(err) = service.chat.discord(&webhook, &text).await {
+            tracing::info!(account = %caller.account, error = %err, "discord test message failed");
+            return Err(ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "discord_failed",
+                "Discord did not accept the test message. Check the webhook link.",
+            ));
+        }
+        let account = caller.account.clone();
+        self.blocking(move |store| {
+            let was_active =
+                store.ensure_miner_alert(&account, &lang, &crate::alerts::new_token())?;
+            store.set_miner_alert_discord(&account, Some(&webhook), was_active, SystemTime::now())
+        })
+        .await?;
+        tracing::info!(account = %caller.account, "discord alerts connected");
+        self.respond(&caller, Some(&record), true, None).await
+    }
+
+    async fn remove_discord(&self, caller: Caller) -> ApiResult {
+        self.alert_service()?;
+        let record = self.require_unlocked(&caller).await?;
+        let account = caller.account.clone();
+        self.blocking(move |store| {
+            store.set_miner_alert_discord(&account, None, true, SystemTime::now())
+        })
+        .await?;
+        tracing::info!(account = %caller.account, "discord alerts removed");
+        self.respond(&caller, Some(&record), true, None).await
+    }
+
+    /// Makes a Connect Telegram link; the bot links the chat on Start.
+    async fn connect_telegram(&self, caller: Caller, request: TelegramRequest) -> ApiResult {
+        let service = Arc::clone(self.alert_service()?);
+        let Some(bot) = service.telegram_bot.clone() else {
+            return Err(ApiError::new(
+                StatusCode::NOT_FOUND,
+                "telegram_unavailable",
+                "Telegram alerts are not available on this pool.",
+            ));
+        };
+        let record = self.chat_link_allowed(&caller).await?;
+        let lang = crate::alerts::supported_lang(request.lang.trim()).to_string();
+        let code = crate::alerts::new_link_code();
+        let hash = crate::alerts::token_hash(&code);
+        let account = caller.account.clone();
+        self.blocking(move |store| {
+            store.ensure_miner_alert(&account, &lang, &crate::alerts::new_token())?;
+            store.start_miner_alert_telegram(&account, &hash, SystemTime::now())
+        })
+        .await?;
+        let alert = self.alert_for(&caller.account, true).await?;
+        let mut body = self.state_body(&caller, Some(&record), true, alert.as_ref());
+        body["alerts"]["telegram"] =
+            json!({"pending": crate::alert_chat::telegram_link(&bot, &code)});
+        Ok(respond_body(body, None))
+    }
+
+    async fn remove_telegram(&self, caller: Caller) -> ApiResult {
+        self.alert_service()?;
+        let record = self.require_unlocked(&caller).await?;
+        let account = caller.account.clone();
+        self.blocking(move |store| store.remove_miner_alert_telegram(&account))
+            .await?;
+        tracing::info!(account = %caller.account, "telegram alerts removed");
         self.respond(&caller, Some(&record), true, None).await
     }
 }
@@ -1303,6 +1590,48 @@ async fn handle_alert_email_remove(
     finish(service.remove_alert_email(caller).await)
 }
 
+async fn handle_discord(
+    State(service): State<Arc<MinerSettingsService>>,
+    Path(account): Path<String>,
+    connect: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+    Json(request): Json<DiscordRequest>,
+) -> Response {
+    let caller = service.caller(normalize_account(&account), &headers, peer(connect));
+    finish(service.set_discord(caller, request).await)
+}
+
+async fn handle_discord_remove(
+    State(service): State<Arc<MinerSettingsService>>,
+    Path(account): Path<String>,
+    connect: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+) -> Response {
+    let caller = service.caller(normalize_account(&account), &headers, peer(connect));
+    finish(service.remove_discord(caller).await)
+}
+
+async fn handle_telegram(
+    State(service): State<Arc<MinerSettingsService>>,
+    Path(account): Path<String>,
+    connect: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+    Json(request): Json<TelegramRequest>,
+) -> Response {
+    let caller = service.caller(normalize_account(&account), &headers, peer(connect));
+    finish(service.connect_telegram(caller, request).await)
+}
+
+async fn handle_telegram_remove(
+    State(service): State<Arc<MinerSettingsService>>,
+    Path(account): Path<String>,
+    connect: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+) -> Response {
+    let caller = service.caller(normalize_account(&account), &headers, peer(connect));
+    finish(service.remove_telegram(caller).await)
+}
+
 pub(crate) fn router<S>(service: Arc<MinerSettingsService>) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -1330,6 +1659,19 @@ where
         .route(
             "/api/miner-settings/:account/alert-email/remove",
             post(handle_alert_email_remove),
+        )
+        .route("/api/miner-settings/:account/discord", post(handle_discord))
+        .route(
+            "/api/miner-settings/:account/discord/remove",
+            post(handle_discord_remove),
+        )
+        .route(
+            "/api/miner-settings/:account/telegram",
+            post(handle_telegram),
+        )
+        .route(
+            "/api/miner-settings/:account/telegram/remove",
+            post(handle_telegram_remove),
         )
         .layer(body_limit)
         .with_state(service)
@@ -1622,8 +1964,14 @@ mod tests {
             );
             headers
         };
-        assert!(service.hides_workers_for(&account, &HeaderMap::new()).await);
-        assert!(!service.hides_workers_for(&account, &owner_headers).await);
+        assert_eq!(
+            service.public_view_for(&account, &HeaderMap::new()).await,
+            PublicView::HideNames
+        );
+        assert_eq!(
+            service.public_view_for(&account, &owner_headers).await,
+            PublicView::Full
+        );
 
         // A stranger guessing the password runs out of tries.
         for left in (0..UNLOCK_FAILURES_PER_ACCOUNT).rev() {
@@ -1722,9 +2070,13 @@ mod tests {
             .unwrap()
             .expect("open test store");
         let mailer = Arc::new(MemoryMailer::default());
+        let chat = Arc::new(crate::alert_chat::MemoryChat::default());
         let alerts = Arc::new(AlertService {
             config: AlertsConfig::default(),
             mailer: Arc::clone(&mailer) as Arc<dyn crate::alert_mail::Mailer>,
+            chat: Arc::clone(&chat) as Arc<dyn crate::alert_chat::ChatSender>,
+            telegram_bot: Some("bntpool_alerts_bot".into()),
+            telegram_poller: None,
         });
         let service = Arc::new(MinerSettingsService::new(
             Arc::clone(&store),
@@ -1739,6 +2091,9 @@ mod tests {
             router(Arc::clone(&service)).merge(crate::alerts::router(Arc::clone(&store)));
         let account = test_address();
         let path = format!("/api/miner-settings/{account}");
+        // A fresh inbox each run: the shared test database remembers how many
+        // confirmations an address got today.
+        let inbox = format!("miner-{}@example.com", rand::random::<u32>());
         let mut owner = Client {
             app: app.clone(),
             ip: "198.51.100.7",
@@ -1758,7 +2113,7 @@ mod tests {
             .send(
                 "POST",
                 &format!("{path}/alert-email"),
-                Some(json!({"email": "miner@example.com", "lang": "en"})),
+                Some(json!({"email": inbox, "lang": "en"})),
             )
             .await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -1795,14 +2150,14 @@ mod tests {
             .send(
                 "POST",
                 &format!("{path}/alert-email"),
-                Some(json!({"email": "miner@example.com", "lang": "en"})),
+                Some(json!({"email": inbox, "lang": "en"})),
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{state}");
-        assert_eq!(state["alerts"]["email"], "miner@example.com");
+        assert_eq!(state["alerts"]["email"], inbox);
         assert_eq!(state["alerts"]["confirmed"], false);
         let confirm = mailer.sent.lock().pop().expect("confirmation email");
-        assert_eq!(confirm.to, "miner@example.com");
+        assert_eq!(confirm.to, inbox);
         assert!(confirm.unsubscribe_url.is_none());
         let token = confirm
             .text
@@ -1821,6 +2176,7 @@ mod tests {
             pool_up_since: parking_lot::Mutex::new(Some(
                 SystemTime::now() - Duration::from_secs(3_600),
             )),
+            miner_release: pool_runtime::miner_release::MinerRelease::new("0.3.1"),
         };
         let now = SystemTime::now();
         let share = |worker: &str, at: SystemTime, nonce: u64| pool_runtime::engine::ShareRecord {
@@ -1963,6 +2319,302 @@ mod tests {
             .await
             .unwrap();
         assert!(mailer.sent.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn chat_alerts_private_stats_and_starting_difficulty() {
+        use crate::alert_mail::{AlertsConfig, MemoryMailer};
+        use crate::alerts::{run_cycle, AlertService, WorkerContext};
+        let Ok(url) = std::env::var("BLOCKNET_POOL_TEST_POSTGRES_URL") else {
+            eprintln!("skipping postgres test: set BLOCKNET_POOL_TEST_POSTGRES_URL");
+            return;
+        };
+        let store = tokio::task::spawn_blocking(move || PoolStore::open(&url, 2))
+            .await
+            .unwrap()
+            .expect("open test store");
+        let mailer = Arc::new(MemoryMailer::default());
+        let chat = Arc::new(crate::alert_chat::MemoryChat::default());
+        let alerts = Arc::new(AlertService {
+            config: AlertsConfig::default(),
+            mailer: Arc::clone(&mailer) as Arc<dyn crate::alert_mail::Mailer>,
+            chat: Arc::clone(&chat) as Arc<dyn crate::alert_chat::ChatSender>,
+            telegram_bot: Some("bntpool_alerts_bot".into()),
+            telegram_poller: None,
+        });
+        let service = Arc::new(MinerSettingsService::new(
+            Arc::clone(&store),
+            RuntimeConfig {
+                min_payout_amount: 1.0,
+                ..Default::default()
+            },
+            Arc::new(ClientIpPolicy::default()),
+            Some(Arc::clone(&alerts)),
+        ));
+        let app: Router = router(Arc::clone(&service));
+        let account = test_address();
+        let path = format!("/api/miner-settings/{account}");
+        let mut owner = Client {
+            app: app.clone(),
+            ip: "198.51.100.8",
+            cookie: None,
+        };
+        let (status, _) = owner
+            .send(
+                "POST",
+                &format!("{path}/claim"),
+                Some(json!({"password": "correct horse"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        let now = SystemTime::now();
+        let base = rand::random::<u32>() as u64 * 1_000;
+        let share = |worker: &str, at: SystemTime, nonce: u64| pool_runtime::engine::ShareRecord {
+            job_id: format!("chat-test-{nonce}"),
+            miner: account.clone(),
+            worker: worker.to_string(),
+            difficulty: 6_000,
+            nonce,
+            status: "verified",
+            was_sampled: true,
+            block_hash: None,
+            claimed_hash: None,
+            reject_reason: None,
+            created_at: at,
+            solo: false,
+        };
+        let seed = Arc::clone(&store);
+        let shares = vec![
+            share("rig-1", now - Duration::from_secs(20 * 60), base + 1),
+            share("laptop", now - Duration::from_secs(30), base + 2),
+        ];
+        tokio::task::spawn_blocking(move || {
+            for share in shares {
+                seed.add_share(share).unwrap();
+            }
+        })
+        .await
+        .unwrap();
+
+        // Discord: only channel webhooks, saved once the test message posts.
+        let webhook = "https://discord.com/api/webhooks/1204567890/AbCdEfGhIjKlMnOpQrStUvWx3qXw";
+        let (status, body) = owner
+            .send("POST", &format!("{path}/discord"),
+                Some(json!({"webhook": "https://example.com/api/webhooks/1/abcdefghijklmnopqrstuvwx"})))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "invalid_webhook");
+        let (status, state) = owner
+            .send(
+                "POST",
+                &format!("{path}/discord"),
+                Some(json!({"webhook": webhook, "lang": "en"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{state}");
+        assert_eq!(
+            state["alerts"]["discord"],
+            "discord.com/api/webhooks/1204…3qXw"
+        );
+        assert_eq!(state["alerts"]["email"], "");
+        let test_post = chat.sent.lock().pop().expect("test message");
+        assert_eq!(test_post.0, webhook);
+        assert!(test_post.1.contains("will be posted in this channel"));
+
+        // Telegram: a one-time link, linked when the bot sees Start.
+        let (status, state) = owner
+            .send(
+                "POST",
+                &format!("{path}/telegram"),
+                Some(json!({"lang": "en"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{state}");
+        let link = state["alerts"]["telegram"]["pending"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let code = link
+            .strip_prefix("https://t.me/bntpool_alerts_bot?start=")
+            .expect("bot link")
+            .to_string();
+        let (_, state) = owner.send("GET", &path, None).await;
+        assert_eq!(state["alerts"]["telegram"]["pending"], "");
+        let chat_id = -(rand::random::<u32>() as i64) - 1;
+        let link_store = Arc::clone(&store);
+        let hash = crate::alerts::token_hash(&code);
+        let linked = tokio::task::spawn_blocking(move || {
+            let first = link_store.finish_miner_alert_telegram(
+                &hash,
+                chat_id,
+                "@ada",
+                SystemTime::now(),
+            )?;
+            let again = link_store.finish_miner_alert_telegram(
+                &hash,
+                chat_id,
+                "@ada",
+                SystemTime::now(),
+            )?;
+            anyhow::Ok((first, again))
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(linked.0.map(|(linked, _)| linked), Some(account.clone()));
+        assert!(linked.1.is_none(), "links work once");
+        let (_, state) = owner.send("GET", &path, None).await;
+        assert_eq!(state["alerts"]["telegram"]["name"], "@ada");
+
+        // New alert choices are validated and saved.
+        let settings = |alerts: Value| {
+            json!({
+                "min_payout": null, "default_solo": false, "hide_workers": false, "alerts": alerts
+            })
+        };
+        let (status, _) = owner
+            .send(
+                "PUT",
+                &path,
+                Some(settings(
+                    json!({"offline_minutes": 10, "notify_payouts": true,
+                "notify_solo_blocks": false, "hashrate_drop_minutes": 45}),
+                )),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, state) = owner
+            .send(
+                "PUT",
+                &path,
+                Some(settings(
+                    json!({"offline_minutes": 10, "notify_payouts": true,
+                "notify_solo_blocks": false, "hashrate_drop_minutes": 60, "weekly_summary": true}),
+                )),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{state}");
+        assert_eq!(state["alerts"]["hashrate_drop_minutes"], 60);
+        assert_eq!(state["alerts"]["weekly_summary"], true);
+        assert_eq!(state["alerts"]["notify_updates"], false);
+
+        // Without an email, alerts go to Discord and Telegram.
+        let context = WorkerContext {
+            store: Arc::clone(&store),
+            service: Arc::clone(&alerts),
+            pool_fee_pct: 0.0,
+            confirmations: 60,
+            pool_up_since: parking_lot::Mutex::new(Some(now - Duration::from_secs(3_600))),
+            miner_release: pool_runtime::miner_release::MinerRelease::new("0.3.1"),
+        };
+        chat.sent.lock().clear();
+        run_cycle(&context, now).await.unwrap();
+        let telegram_to = format!("telegram:{chat_id}");
+        let sent: Vec<(String, String)> = std::mem::take(&mut *chat.sent.lock())
+            .into_iter()
+            .filter(|(to, _)| to == webhook || to == &telegram_to)
+            .collect();
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        assert!(sent
+            .iter()
+            .all(|(_, text)| text.starts_with("rig-1 stopped mining\n")));
+
+        // A deleted webhook is dropped; Telegram keeps working.
+        chat.gone.lock().push(webhook.to_string());
+        let seed = Arc::clone(&store);
+        let back = share("rig-1", now, base + 3);
+        tokio::task::spawn_blocking(move || seed.add_share(back).unwrap())
+            .await
+            .unwrap();
+        run_cycle(&context, now + Duration::from_secs(60))
+            .await
+            .unwrap();
+        let sent: Vec<(String, String)> = std::mem::take(&mut *chat.sent.lock())
+            .into_iter()
+            .filter(|(to, _)| to == &telegram_to)
+            .collect();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert!(sent[0].1.starts_with("rig-1 is mining again"));
+        let (_, state) = owner.send("GET", &path, None).await;
+        assert_eq!(state["alerts"]["discord"], Value::Null);
+
+        // /stop in Telegram leaves nowhere to send to.
+        let stop_store = Arc::clone(&store);
+        tokio::task::spawn_blocking(move || stop_store.clear_miner_alert_telegram_chat(chat_id))
+            .await
+            .unwrap()
+            .unwrap();
+        let (_, state) = owner.send("GET", &path, None).await;
+        assert_eq!(state["alerts"], Value::Null);
+
+        // Private stats hide everything from visitors, not from the owner.
+        let owner_headers = {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::COOKIE,
+                HeaderValue::from_str(owner.cookie.as_ref().unwrap()).unwrap(),
+            );
+            headers
+        };
+        let (status, state) = owner
+            .send(
+                "PUT",
+                &path,
+                Some(json!({"min_payout": null, "default_solo": false,
+                "hide_workers": false, "private_stats": true})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{state}");
+        assert_eq!(state["settings"]["private_stats"], true);
+        assert_eq!(
+            service.public_view_for(&account, &HeaderMap::new()).await,
+            PublicView::Private
+        );
+        assert_eq!(
+            service.public_view_for(&account, &owner_headers).await,
+            PublicView::Full
+        );
+        // An older page that does not send it keeps the choice.
+        let (_, state) = owner
+            .send(
+                "PUT",
+                &path,
+                Some(json!({"min_payout": null, "default_solo": false, "hide_workers": false})),
+            )
+            .await;
+        assert_eq!(state["settings"]["private_stats"], true);
+
+        // Starting difficulty: within the era's range, or back to the pool's pick.
+        let min = state["difficulty"]["min"].as_u64().unwrap();
+        let difficulty = |value: Value| {
+            json!({"min_payout": null, "default_solo": false,
+            "hide_workers": false, "start_difficulty": value})
+        };
+        let (status, _) = owner
+            .send("PUT", &path, Some(difficulty(json!(min - 1))))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, state) = owner
+            .send("PUT", &path, Some(difficulty(json!(min * 2))))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{state}");
+        assert_eq!(state["settings"]["start_difficulty"], min * 2);
+        let (_, state) = owner
+            .send(
+                "PUT",
+                &path,
+                Some(json!({"min_payout": null, "default_solo": false, "hide_workers": false})),
+            )
+            .await;
+        assert_eq!(
+            state["settings"]["start_difficulty"],
+            min * 2,
+            "kept when not sent"
+        );
+        let (_, state) = owner
+            .send("PUT", &path, Some(difficulty(Value::Null)))
+            .await;
+        assert_eq!(state["settings"]["start_difficulty"], Value::Null);
     }
 
     #[test]

@@ -31,6 +31,11 @@ pub(crate) struct AlertsConfig {
     pub credentials_file: String,
     /// Links in emails point here.
     pub site_url: String,
+    /// File holding a `Telegram token:` line for the alert bot; empty turns
+    /// Telegram alerts off.
+    pub telegram_token_file: String,
+    /// The bot's username, for Connect Telegram links.
+    pub telegram_bot: String,
 }
 
 impl Default for AlertsConfig {
@@ -43,6 +48,8 @@ impl Default for AlertsConfig {
             from_name: "bntpool.com".to_string(),
             credentials_file: String::new(),
             site_url: "https://bntpool.com".to_string(),
+            telegram_token_file: String::new(),
+            telegram_bot: "bntpool_alerts_bot".to_string(),
         }
     }
 }
@@ -53,32 +60,53 @@ pub(crate) struct SmtpCredentials {
     password: String,
 }
 
-/// Reads `SMTP username:` and `SMTP password:` lines from a file other users
-/// cannot read.
-pub(crate) fn load_credentials(path: &Path) -> Result<SmtpCredentials> {
-    let metadata = std::fs::metadata(path).context("alert SMTP credentials")?;
+/// Reads `name value` lines from a secrets file other users cannot read.
+fn secret_fields(path: &Path, what: &str) -> Result<String> {
+    let metadata = std::fs::metadata(path).with_context(|| what.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if metadata.permissions().mode() & 0o007 != 0 {
-            bail!("alert SMTP credentials must not be readable by other users");
+            bail!("{what} must not be readable by other users");
         }
     }
     if !metadata.is_file() {
-        bail!("alert SMTP credentials must be a regular file");
+        bail!("{what} must be a regular file");
     }
-    let text = std::fs::read_to_string(path).context("read alert SMTP credentials")?;
-    let field = |name: &str| {
-        text.lines()
-            .find_map(|line| line.trim().strip_prefix(name))
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow!("alert SMTP credentials need a `{name}` line"))
-    };
+    std::fs::read_to_string(path).with_context(|| format!("read {what}"))
+}
+
+fn secret_field(text: &str, what: &str, name: &str) -> Result<String> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix(name))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("{what} need a `{name}` line"))
+}
+
+/// Reads `SMTP username:` and `SMTP password:` lines from a file other users
+/// cannot read.
+pub(crate) fn load_credentials(path: &Path) -> Result<SmtpCredentials> {
+    let what = "alert SMTP credentials";
+    let text = secret_fields(path, what)?;
     Ok(SmtpCredentials {
-        username: field("SMTP username:")?,
-        password: field("SMTP password:")?,
+        username: secret_field(&text, what, "SMTP username:")?,
+        password: secret_field(&text, what, "SMTP password:")?,
     })
+}
+
+/// Reads the `Telegram token:` line from a file other users cannot read.
+pub(crate) fn load_telegram_token(path: &Path) -> Result<String> {
+    let what = "alert Telegram token";
+    let text = secret_fields(path, what)?;
+    let token = secret_field(&text, what, "Telegram token:")?;
+    let (id, secret) = token
+        .split_once(':')
+        .ok_or_else(|| anyhow!("{what} is not a bot token"))?;
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || secret.len() < 20 {
+        bail!("{what} is not a bot token");
+    }
+    Ok(token)
 }
 
 /// One email ready to send.
@@ -90,6 +118,9 @@ pub(crate) struct OutgoingMail {
     pub html: String,
     /// One-click unsubscribe URL (RFC 8058), if any.
     pub unsubscribe_url: Option<String>,
+    /// The same alert as a short plain-text chat message, if it goes to
+    /// Discord and Telegram too.
+    pub chat: Option<String>,
 }
 
 #[axum::async_trait]
@@ -339,6 +370,7 @@ mod tests {
             text: "line\r\n.starts with a dot".into(),
             html: "<p>hi</p>".into(),
             unsubscribe_url: Some("https://bntpool.com/api/alerts/unsubscribe?token=abc".into()),
+            chat: None,
         }
     }
 

@@ -2614,9 +2614,18 @@ html { scroll-padding-top: 72px; }
 .settings-badge-ok { background: var(--status-confirmed-bg); border: 1px solid var(--status-confirmed-border); color: var(--status-confirmed-text); }
 .settings-badge-warn { background: var(--status-pending-bg); border: 1px solid var(--status-pending-border); color: var(--status-pending-text); }
 .settings-checks select { font: 600 13px 'Manrope', sans-serif; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); }
-.settings-checks.is-disabled label { opacity: 0.5; }
+.settings-checks.is-disabled label, .settings-checks.is-disabled .settings-check-note { opacity: 0.5; }
 .settings-check-note { margin: -4px 0 0 24px; font-size: 13px; color: var(--muted); }
 .settings-hint .link-button { font-size: 13px; }
+.settings-section { margin: 0; padding: 26px 0 4px; font-size: 16px; font-weight: 800; letter-spacing: -0.01em; }
+.settings-form > .settings-section:first-child { padding-top: 0; }
+.settings-section + .settings-row { padding-top: 10px; }
+.settings-channel { font-family: 'JetBrains Mono', monospace; font-size: 13.5px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-hover); overflow-wrap: anywhere; }
+.settings-card input[type='url'] { font-family: 'JetBrains Mono', monospace; font-size: 13.5px; padding: 9px 14px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); outline: none; flex: 1 1 260px; min-width: 0; max-width: 420px; }
+.settings-card input[type='url']:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-light); }
+.stats-private { display: grid; gap: 10px; justify-items: start; }
+.stats-private h2 { margin: 0; font-size: 19px; font-weight: 800; }
+.stats-private p { margin: 0; max-width: 62ch; color: var(--muted); }
 .alerts-page .card { max-width: 640px; }
 .alerts-page .card h2 { margin: 0 0 8px; font-size: 20px; }
 .alerts-page .card p { margin: 0 0 16px; }

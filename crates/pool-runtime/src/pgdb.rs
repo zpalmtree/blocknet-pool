@@ -524,7 +524,7 @@ impl PostgresStore {
     ) -> Result<Option<crate::miner_settings::MinerSettingsRecord>> {
         let row = self.conn().query_opt(
             "SELECT password_hash, owner_ip_group, claimed_at, changed_at, taken_back_at,
-                    min_payout, default_solo, hide_workers
+                    min_payout, default_solo, hide_workers, private_stats, start_difficulty
              FROM miner_settings WHERE account = $1",
             &[&account],
         )?;
@@ -539,6 +539,8 @@ impl PostgresStore {
                 min_payout: opt_i64_to_u64(row.get(5)),
                 default_solo: row.get(6),
                 hide_workers: row.get(7),
+                private_stats: row.get(8),
+                start_difficulty: opt_i64_to_u64(row.get(9)),
             },
         }))
     }
@@ -615,9 +617,11 @@ impl PostgresStore {
         now: SystemTime,
     ) -> Result<bool> {
         let min_payout = opt_u64_to_i64(settings.min_payout)?;
+        let start_difficulty = opt_u64_to_i64(settings.start_difficulty)?;
         let rows = self.conn().execute(
             "UPDATE miner_settings
-             SET min_payout = $4, default_solo = $5, hide_workers = $6, changed_at = $7
+             SET min_payout = $4, default_solo = $5, hide_workers = $6, changed_at = $7,
+                 private_stats = $8, start_difficulty = $9
              WHERE account = $1 AND password_hash IS NOT DISTINCT FROM $2 AND owner_ip_group = $3",
             &[
                 &account,
@@ -627,6 +631,8 @@ impl PostgresStore {
                 &settings.default_solo,
                 &settings.hide_workers,
                 &to_unix(now),
+                &settings.private_stats,
+                &start_difficulty,
             ],
         )?;
         Ok(rows == 1)
@@ -712,12 +718,12 @@ impl PostgresStore {
         Ok(row.map(|row| miner_alert_from_row(&row)))
     }
 
-    /// Alerts whose email is confirmed.
-    pub fn confirmed_miner_alerts(&self) -> Result<Vec<crate::miner_settings::MinerAlert>> {
+    /// Alerts with somewhere to go: a confirmed email, Discord or Telegram.
+    pub fn active_miner_alerts(&self) -> Result<Vec<crate::miner_settings::MinerAlert>> {
         let rows = self.conn().query(
             &format!(
                 "SELECT {MINER_ALERT_COLUMNS} FROM miner_alerts
-                 WHERE confirmed_at IS NOT NULL ORDER BY account"
+                 WHERE {ALERT_HAS_CHANNEL} ORDER BY account"
             ),
             &[],
         )?;
@@ -793,47 +799,258 @@ impl PostgresStore {
         Ok(Some(account))
     }
 
-    /// Removes the alert email of whoever holds `unsubscribe_token`.
+    /// Removes the alert email of whoever holds `unsubscribe_token`; Discord
+    /// and Telegram keep working.
     pub fn unsubscribe_miner_alert(&self, unsubscribe_token: &str) -> Result<Option<String>> {
         let row = self.conn().query_opt(
-            "DELETE FROM miner_alerts WHERE unsubscribe_token = $1 RETURNING account",
+            "SELECT account FROM miner_alerts WHERE unsubscribe_token = $1",
             &[&unsubscribe_token],
         )?;
         let account: Option<String> = row.map(|row| row.get(0));
         if let Some(account) = &account {
-            self.conn().execute(
-                "DELETE FROM miner_alert_offline WHERE account = $1",
-                &[account],
-            )?;
+            self.remove_miner_alert_email(account)?;
         }
         Ok(account)
     }
 
-    pub fn remove_miner_alert(&self, account: &str) -> Result<()> {
-        self.conn()
-            .execute("DELETE FROM miner_alerts WHERE account = $1", &[&account])?;
+    /// Clears the alert email; the row stays while Discord or Telegram is set.
+    pub fn remove_miner_alert_email(&self, account: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE miner_alerts SET email = '', confirmed_at = NULL, confirm_token_hash = NULL
+             WHERE account = $1",
+            &[&account],
+        )?;
+        self.drop_miner_alert_without_channel(account)
+    }
+
+    /// Forgets an alert row (and its rig state) once nothing is left to send to.
+    fn drop_miner_alert_without_channel(&self, account: &str) -> Result<()> {
+        let rows = self.conn().execute(
+            &format!(
+                "DELETE FROM miner_alerts WHERE account = $1 AND email = ''
+                   AND NOT ({ALERT_HAS_CHANNEL}) AND telegram_link_hash IS NULL"
+            ),
+            &[&account],
+        )?;
+        if rows == 1 {
+            self.clear_alert_rig_state(account)?;
+        }
+        Ok(())
+    }
+
+    fn clear_alert_rig_state(&self, account: &str) -> Result<()> {
         self.conn().execute(
             "DELETE FROM miner_alert_offline WHERE account = $1",
+            &[&account],
+        )?;
+        self.conn().execute(
+            "DELETE FROM miner_alert_slow WHERE account = $1",
             &[&account],
         )?;
         Ok(())
     }
 
+    /// Makes sure the account has an alert row (for Discord or Telegram
+    /// without an email). Returns whether alerts were already going anywhere.
+    pub fn ensure_miner_alert(
+        &self,
+        account: &str,
+        lang: &str,
+        unsubscribe_token: &str,
+    ) -> Result<bool> {
+        self.conn().execute(
+            "INSERT INTO miner_alerts (account, email, lang, confirm_sent_at, unsubscribe_token)
+             VALUES ($1, '', $2, 0, $3) ON CONFLICT (account) DO NOTHING",
+            &[&account, &lang, &unsubscribe_token],
+        )?;
+        Ok(self
+            .conn()
+            .query_one(
+                &format!("SELECT {ALERT_HAS_CHANNEL} FROM miner_alerts WHERE account = $1"),
+                &[&account],
+            )?
+            .get(0))
+    }
+
+    /// Alerts start from now for an account that had nowhere to send them:
+    /// earlier payouts and blocks are skipped and rigs that had already
+    /// stopped are recorded quietly.
+    fn start_alerts_from(&self, account: &str, now_unix: i64, offline_minutes: i32) -> Result<()> {
+        self.conn().execute(
+            "UPDATE miner_alerts SET
+                 payout_cursor = (SELECT COALESCE(MAX(id), 0) FROM payouts),
+                 block_cursor = (SELECT COALESCE(MAX(height), 0) FROM blocks)
+             WHERE account = $1",
+            &[&account],
+        )?;
+        let watch_since = now_unix - crate::miner_settings::ALERT_WATCH_WINDOW.as_secs() as i64;
+        let stopped_before = now_unix - i64::from(offline_minutes.max(1)) * 60;
+        self.conn().execute(
+            "INSERT INTO miner_alert_offline (account, worker, since)
+             SELECT miner, worker, MAX(created_at) FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND status IN ('verified', 'provisional')
+             GROUP BY miner, worker HAVING MAX(created_at) < $3
+             ON CONFLICT (account, worker) DO NOTHING",
+            &[&account, &watch_since, &stopped_before],
+        )?;
+        Ok(())
+    }
+
+    /// Saves (or with `None` removes) the Discord webhook. `was_active` is
+    /// what [`Self::ensure_miner_alert`] returned.
+    pub fn set_miner_alert_discord(
+        &self,
+        account: &str,
+        webhook: Option<&str>,
+        was_active: bool,
+        now: SystemTime,
+    ) -> Result<()> {
+        let row = self.conn().query_opt(
+            "UPDATE miner_alerts SET discord_webhook = $2 WHERE account = $1 RETURNING offline_minutes",
+            &[&account, &webhook],
+        )?;
+        match (webhook, row) {
+            (Some(_), Some(row)) if !was_active => {
+                self.start_alerts_from(account, to_unix(now), row.get(0))?
+            }
+            (None, _) => self.drop_miner_alert_without_channel(account)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Records a Connect Telegram link (its hash), replacing any earlier one.
+    pub fn start_miner_alert_telegram(
+        &self,
+        account: &str,
+        link_hash: &str,
+        now: SystemTime,
+    ) -> Result<()> {
+        self.conn().execute(
+            "UPDATE miner_alerts SET telegram_link_hash = $2, telegram_link_at = $3 WHERE account = $1",
+            &[&account, &link_hash, &to_unix(now)],
+        )?;
+        Ok(())
+    }
+
+    /// Links a Telegram chat to the account whose valid link carries
+    /// `link_hash`. Returns the account and its alert language.
+    pub fn finish_miner_alert_telegram(
+        &self,
+        link_hash: &str,
+        chat_id: i64,
+        name: &str,
+        now: SystemTime,
+    ) -> Result<Option<(String, String)>> {
+        let now_unix = to_unix(now);
+        let oldest = now_unix - crate::miner_settings::TELEGRAM_LINK_TTL.as_secs() as i64;
+        let was_active = self
+            .conn()
+            .query_opt(
+                &format!(
+                    "SELECT {ALERT_HAS_CHANNEL} FROM miner_alerts
+                     WHERE telegram_link_hash = $1 AND telegram_link_at >= $2"
+                ),
+                &[&link_hash, &oldest],
+            )?
+            .map(|row| row.get::<_, bool>(0));
+        let Some(was_active) = was_active else {
+            return Ok(None);
+        };
+        let row = self.conn().query_opt(
+            "UPDATE miner_alerts SET telegram_chat_id = $2, telegram_name = $3,
+                 telegram_link_hash = NULL, telegram_link_at = NULL
+             WHERE telegram_link_hash = $1 AND telegram_link_at >= $4
+             RETURNING account, lang, offline_minutes",
+            &[&link_hash, &chat_id, &name, &oldest],
+        )?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let account: String = row.get(0);
+        if !was_active {
+            self.start_alerts_from(&account, now_unix, row.get(2))?;
+        }
+        Ok(Some((account, row.get(1))))
+    }
+
+    /// Unlinks a Telegram chat from every account (the person pressed Stop or
+    /// blocked the bot). Returns how many accounts it was linked to.
+    pub fn clear_miner_alert_telegram_chat(&self, chat_id: i64) -> Result<u64> {
+        let rows = self.conn().query(
+            "UPDATE miner_alerts SET telegram_chat_id = NULL, telegram_name = NULL
+             WHERE telegram_chat_id = $1 RETURNING account",
+            &[&chat_id],
+        )?;
+        for row in &rows {
+            self.drop_miner_alert_without_channel(&row.get::<_, String>(0))?;
+        }
+        Ok(rows.len() as u64)
+    }
+
+    pub fn remove_miner_alert_telegram(&self, account: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE miner_alerts SET telegram_chat_id = NULL, telegram_name = NULL,
+                 telegram_link_hash = NULL, telegram_link_at = NULL
+             WHERE account = $1",
+            &[&account],
+        )?;
+        self.drop_miner_alert_without_channel(account)
+    }
+
+    /// Where an account's alerts go right now, without counting a send.
+    pub fn miner_alert_channels(
+        &self,
+        account: &str,
+    ) -> Result<Option<crate::miner_settings::AlertChannels>> {
+        let row = self.conn().query_opt(
+            &format!("SELECT {ALERT_CHANNEL_COLUMNS} FROM miner_alerts WHERE account = $1"),
+            &[&account],
+        )?;
+        Ok(row.map(|row| alert_channels_from_row(&row)))
+    }
+
+    /// Removes every alert channel and choice (a take-back).
+    pub fn remove_miner_alert(&self, account: &str) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM miner_alerts WHERE account = $1", &[&account])?;
+        self.clear_alert_rig_state(account)
+    }
+
     pub fn update_miner_alert_choices(
         &self,
         account: &str,
-        offline_minutes: u32,
-        notify_payouts: bool,
-        notify_solo_blocks: bool,
+        choices: &crate::miner_settings::AlertChoices,
+        now: SystemTime,
     ) -> Result<bool> {
+        let week = crate::miner_settings::utc_week(now);
+        // A newly turned-on weekly summary starts with next Monday's.
         let rows = self.conn().execute(
-            "UPDATE miner_alerts SET offline_minutes = $2, notify_payouts = $3, notify_solo_blocks = $4
+            "UPDATE miner_alerts SET offline_minutes = $2, notify_payouts = $3, notify_solo_blocks = $4,
+                 hashrate_drop_minutes = $5, notify_updates = $6,
+                 summary_week = CASE WHEN $7 AND NOT weekly_summary THEN $8 ELSE summary_week END,
+                 weekly_summary = $7
              WHERE account = $1",
-            &[&account, &(offline_minutes as i32), &notify_payouts, &notify_solo_blocks],
+            &[
+                &account,
+                &(choices.offline_minutes as i32),
+                &choices.notify_payouts,
+                &choices.notify_solo_blocks,
+                &(choices.hashrate_drop_minutes as i32),
+                &choices.notify_updates,
+                &choices.weekly_summary,
+                &week,
+            ],
         )?;
-        if offline_minutes == 0 {
+        if choices.offline_minutes == 0 {
             self.conn().execute(
                 "DELETE FROM miner_alert_offline WHERE account = $1",
+                &[&account],
+            )?;
+        }
+        if choices.hashrate_drop_minutes == 0 {
+            self.conn().execute(
+                "DELETE FROM miner_alert_slow WHERE account = $1",
                 &[&account],
             )?;
         }
@@ -981,27 +1198,171 @@ impl PostgresStore {
         Ok(())
     }
 
-    /// Counts one alert email for today's limit. False (nothing counted) when
-    /// the account already reached `limit` today.
-    /// Counts one alert email to `email` for today's limit. False (nothing
-    /// counted) when the account reached `limit` today, or its confirmed
-    /// email is no longer `email`.
+    /// Counts one alert for today's limit and returns where it goes now.
+    /// `None` (nothing counted) when the account reached `limit` today or has
+    /// nowhere left to send alerts.
     pub fn take_alert_send(
         &self,
         account: &str,
-        email: &str,
         day: i64,
         limit: u32,
-    ) -> Result<bool> {
-        let rows = self.conn().execute(
-            "UPDATE miner_alerts SET
-                 sent_today = CASE WHEN day = $3 THEN sent_today + 1 ELSE 1 END,
-                 day = $3
-             WHERE account = $1 AND email = $2 AND confirmed_at IS NOT NULL
-               AND (day <> $3 OR sent_today < $4)",
-            &[&account, &email, &day, &(limit as i32)],
+    ) -> Result<Option<crate::miner_settings::AlertChannels>> {
+        let row = self.conn().query_opt(
+            &format!(
+                "UPDATE miner_alerts SET
+                     sent_today = CASE WHEN day = $2 THEN sent_today + 1 ELSE 1 END,
+                     day = $2
+                 WHERE account = $1 AND ({ALERT_HAS_CHANNEL})
+                   AND (day <> $2 OR sent_today < $3)
+                 RETURNING {ALERT_CHANNEL_COLUMNS}"
+            ),
+            &[&account, &day, &(limit as i32)],
         )?;
-        Ok(rows == 1)
+        Ok(row.map(|row| alert_channels_from_row(&row)))
+    }
+
+    /// Per worker over `[baseline_since, now]`: first and last accepted
+    /// share, accepted difficulty before `recent_since` and since it.
+    pub fn alert_worker_rates(
+        &self,
+        account: &str,
+        baseline_since: SystemTime,
+        recent_since: SystemTime,
+    ) -> Result<Vec<crate::miner_settings::RigRates>> {
+        let rows = self.conn().query(
+            "SELECT worker, MIN(created_at), MAX(created_at),
+                    COALESCE(SUM(difficulty) FILTER (WHERE created_at < $3), 0)::bigint,
+                    COALESCE(SUM(difficulty) FILTER (WHERE created_at >= $3), 0)::bigint
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND status IN ('verified', 'provisional')
+             GROUP BY worker",
+            &[&account, &to_unix(baseline_since), &to_unix(recent_since)],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| crate::miner_settings::RigRates {
+                worker: row.get(0),
+                first_share: from_unix(row.get(1)),
+                last_share: from_unix(row.get(2)),
+                baseline_work: row.get::<_, i64>(3).max(0) as u64,
+                recent_work: row.get::<_, i64>(4).max(0) as u64,
+            })
+            .collect())
+    }
+
+    /// Rigs an account was told had a hashrate drop, with when.
+    pub fn alert_slow_workers(&self, account: &str) -> Result<HashMap<String, SystemTime>> {
+        let rows = self.conn().query(
+            "SELECT worker, since FROM miner_alert_slow WHERE account = $1",
+            &[&account],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), from_unix(row.get::<_, i64>(1))))
+            .collect())
+    }
+
+    pub fn mark_alert_workers_slow(
+        &self,
+        account: &str,
+        workers: &[String],
+        since: SystemTime,
+    ) -> Result<()> {
+        if workers.is_empty() {
+            return Ok(());
+        }
+        self.conn().execute(
+            "INSERT INTO miner_alert_slow (account, worker, since)
+             SELECT $1, worker, $3 FROM UNNEST($2::text[]) AS worker
+             ON CONFLICT (account, worker) DO NOTHING",
+            &[&account, &workers, &to_unix(since)],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_alert_workers_slow(&self, account: &str, workers: &[String]) -> Result<()> {
+        if workers.is_empty() {
+            return Ok(());
+        }
+        self.conn().execute(
+            "DELETE FROM miner_alert_slow WHERE account = $1 AND worker = ANY($2)",
+            &[&account, &workers],
+        )?;
+        Ok(())
+    }
+
+    /// The miner version each worker last reported since `since`.
+    pub fn alert_worker_versions(
+        &self,
+        account: &str,
+        since: SystemTime,
+    ) -> Result<Vec<(String, String)>> {
+        let rows = self.conn().query(
+            "SELECT DISTINCT ON (worker) worker, miner_version
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND miner_version IS NOT NULL
+             ORDER BY worker, created_at DESC",
+            &[&account, &to_unix(since)],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect())
+    }
+
+    pub fn set_alert_update_notified(&self, account: &str, version: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE miner_alerts SET update_notified = $2 WHERE account = $1",
+            &[&account, &version],
+        )?;
+        Ok(())
+    }
+
+    /// Marks `week`'s summary as handled; false when it already was.
+    pub fn take_alert_summary_week(&self, account: &str, week: i64) -> Result<bool> {
+        Ok(self.conn().execute(
+            "UPDATE miner_alerts SET summary_week = $2 WHERE account = $1 AND summary_week < $2",
+            &[&account, &week],
+        )? == 1)
+    }
+
+    /// An account's week in `[since, until)`: accepted difficulty, hours with
+    /// any accepted share, the rig with the most work, paid amount and count.
+    pub fn alert_week_summary(
+        &self,
+        account: &str,
+        since: SystemTime,
+        until: SystemTime,
+    ) -> Result<crate::miner_settings::WeekSummary> {
+        let (since, until) = (to_unix(since), to_unix(until));
+        let work = self.conn().query_one(
+            "SELECT COALESCE(SUM(difficulty), 0)::bigint, COUNT(DISTINCT created_at / 3600)
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND created_at < $3
+               AND status IN ('verified', 'provisional')",
+            &[&account, &since, &until],
+        )?;
+        let best = self.conn().query_opt(
+            "SELECT worker, SUM(difficulty)::bigint AS work FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND created_at < $3
+               AND status IN ('verified', 'provisional')
+             GROUP BY worker ORDER BY work DESC LIMIT 1",
+            &[&account, &since, &until],
+        )?;
+        let paid = self.conn().query_one(
+            "SELECT COALESCE(SUM(amount), 0)::bigint, COUNT(*) FROM payouts
+             WHERE address = $1 AND timestamp >= $2 AND timestamp < $3 AND reverted_at IS NULL",
+            &[&account, &since, &until],
+        )?;
+        Ok(crate::miner_settings::WeekSummary {
+            work: work.get::<_, i64>(0).max(0) as u64,
+            active_hours: work.get::<_, i64>(1).max(0) as u64,
+            best_rig: best
+                .as_ref()
+                .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1).max(0) as u64)),
+            paid: paid.get::<_, i64>(0).max(0) as u64,
+            payouts: paid.get::<_, i64>(1).max(0) as u64,
+        })
     }
 
     /// Gives back an alert counted by `take_alert_send` that was not sent.
@@ -1459,6 +1820,14 @@ CREATE TABLE IF NOT EXISTS miner_alert_offline (
     PRIMARY KEY (account, worker)
 );
 
+-- Rigs a "hashrate dropped" alert was sent for, until they recover.
+CREATE TABLE IF NOT EXISTS miner_alert_slow (
+    account TEXT NOT NULL,
+    worker TEXT NOT NULL,
+    since BIGINT NOT NULL,
+    PRIMARY KEY (account, worker)
+);
+
 CREATE TABLE IF NOT EXISTS stat_snapshots (
     id BIGSERIAL PRIMARY KEY,
     timestamp BIGINT NOT NULL,
@@ -1614,6 +1983,26 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .context("ensure pending_payouts.sent_at column")?;
         conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
             .context("ensure payouts.batch_id column")?;
+        conn.batch_execute(
+            "ALTER TABLE miner_settings ADD COLUMN IF NOT EXISTS private_stats BOOLEAN NOT NULL DEFAULT FALSE;
+             ALTER TABLE miner_settings ADD COLUMN IF NOT EXISTS start_difficulty BIGINT
+                 CHECK (start_difficulty IS NULL OR start_difficulty > 0);
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS hashrate_drop_minutes INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS notify_updates BOOLEAN NOT NULL DEFAULT FALSE;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS weekly_summary BOOLEAN NOT NULL DEFAULT FALSE;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS discord_webhook TEXT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_chat_id BIGINT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_name TEXT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_link_hash TEXT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_link_at BIGINT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS update_notified TEXT NOT NULL DEFAULT '';
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS summary_week BIGINT NOT NULL DEFAULT 0;
+             CREATE INDEX IF NOT EXISTS idx_miner_alerts_telegram_link ON miner_alerts(telegram_link_hash)
+                 WHERE telegram_link_hash IS NOT NULL;
+             CREATE INDEX IF NOT EXISTS idx_miner_alerts_telegram_chat ON miner_alerts(telegram_chat_id)
+                 WHERE telegram_chat_id IS NOT NULL;",
+        )
+        .context("ensure miner settings round 2 columns")?;
         conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
             .context("ensure pending_payouts.batch_id column")?;
         conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS send_daemon TEXT")
@@ -6321,7 +6710,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
-    pub(crate) fn get_vardiff_hints_for_address(
+    pub fn get_vardiff_hints_for_address(
         &self,
         address: &str,
         limit: usize,
@@ -6936,6 +7325,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .collect())
     }
 
+    /// Height of the highest block the pool recorded (0 before the first).
+    pub fn highest_block_height(&self) -> Result<u64> {
+        let row = self
+            .conn()
+            .query_one("SELECT COALESCE(MAX(height), 0)::bigint FROM blocks", &[])?;
+        Ok(row.get::<_, i64>(0).max(0) as u64)
+    }
+
     pub fn get_block_count_for_miner(&self, address: &str) -> Result<u64> {
         let row = self.conn().query_one(
             "SELECT COUNT(*)::bigint FROM blocks WHERE finder = $1",
@@ -7487,7 +7884,25 @@ fn log_share_partition_maintenance(report: &share_partitions::SharePartitionMain
 }
 
 const MINER_ALERT_COLUMNS: &str = "account, email, lang, confirmed_at, confirm_sent_at, unsubscribe_token,
-     offline_minutes, notify_payouts, notify_solo_blocks, payout_cursor, block_cursor, day, sent_today";
+     offline_minutes, notify_payouts, notify_solo_blocks, payout_cursor, block_cursor, day, sent_today,
+     hashrate_drop_minutes, notify_updates, weekly_summary, discord_webhook, telegram_chat_id,
+     telegram_name, (telegram_link_hash IS NOT NULL AND telegram_link_at >=
+         EXTRACT(EPOCH FROM now())::bigint - 1800), update_notified, summary_week";
+
+/// An alert row with somewhere to send to.
+const ALERT_HAS_CHANNEL: &str = "(confirmed_at IS NOT NULL AND email <> '')
+     OR discord_webhook IS NOT NULL OR telegram_chat_id IS NOT NULL";
+
+const ALERT_CHANNEL_COLUMNS: &str =
+    "CASE WHEN confirmed_at IS NOT NULL AND email <> '' THEN email END, discord_webhook, telegram_chat_id";
+
+fn alert_channels_from_row(row: &postgres::Row) -> crate::miner_settings::AlertChannels {
+    crate::miner_settings::AlertChannels {
+        email: row.get(0),
+        discord: row.get(1),
+        telegram: row.get(2),
+    }
+}
 
 fn miner_alert_from_row(row: &postgres::Row) -> crate::miner_settings::MinerAlert {
     crate::miner_settings::MinerAlert {
@@ -7504,6 +7919,15 @@ fn miner_alert_from_row(row: &postgres::Row) -> crate::miner_settings::MinerAler
         block_cursor: row.get(10),
         day: row.get(11),
         sent_today: row.get::<_, i32>(12).max(0) as u32,
+        hashrate_drop_minutes: row.get::<_, i32>(13).max(0) as u32,
+        notify_updates: row.get(14),
+        weekly_summary: row.get(15),
+        discord_webhook: row.get(16),
+        telegram_chat_id: row.get(17),
+        telegram_name: row.get(18),
+        telegram_pending: row.get(19),
+        update_notified: row.get(20),
+        summary_week: row.get(21),
     }
 }
 
@@ -7651,6 +8075,8 @@ mod tests {
             min_payout: Some(5 * crate::miner_settings::ATOMIC_PER_BNT),
             default_solo: true,
             hide_workers: true,
+            private_stats: true,
+            start_difficulty: Some(50_000),
         };
         let owner = (Some("hash-1"), "198.51.100.7");
         assert!(store

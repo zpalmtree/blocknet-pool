@@ -73,6 +73,12 @@ function errorText(error: unknown): string {
       return t('alertsInvalidEmail');
     case 'email_failed':
       return t('alertsSendFailed');
+    case 'discord_failed':
+      return t('alertsDiscordFailed');
+    case 'invalid_webhook':
+      return t('alertsDiscordInvalid');
+    case 'not_mining':
+      return t('alertsNotMining');
     default:
       return t('settingsError');
   }
@@ -131,8 +137,36 @@ interface MinerSettingsProps {
   onUnlockedChange?: (unlocked: boolean) => void;
 }
 
-function alertChoices(alerts: MinerAlertChoices): MinerAlertChoices {
-  return { offline_minutes: alerts.offline_minutes, notify_payouts: alerts.notify_payouts, notify_solo_blocks: alerts.notify_solo_blocks };
+const DEFAULT_ALERTS: Required<MinerAlertChoices> = {
+  offline_minutes: 30, notify_payouts: true, notify_solo_blocks: false,
+  hashrate_drop_minutes: 0, notify_updates: false, weekly_summary: false,
+};
+
+function alertChoices(alerts: MinerAlertChoices): Required<MinerAlertChoices> {
+  return {
+    offline_minutes: alerts.offline_minutes, notify_payouts: alerts.notify_payouts, notify_solo_blocks: alerts.notify_solo_blocks,
+    hashrate_drop_minutes: alerts.hashrate_drop_minutes ?? 0, notify_updates: alerts.notify_updates ?? false,
+    weekly_summary: alerts.weekly_summary ?? false,
+  };
+}
+
+type Draft = {
+  minPayout: string; solo: boolean; hide: boolean; privateStats: boolean;
+  /** The typed starting difficulty, kept while "Set" is chosen. */
+  difficulty: string; difficultySet: boolean; alerts: Required<MinerAlertChoices>;
+};
+
+/** The toggles as the server has them; typed fields keep what is being typed. */
+function followServer(draft: Draft, settings: MinerSettingsValues, alerts: MinerAlertChoices | null | undefined): Draft {
+  return {
+    ...draft, solo: settings.default_solo, hide: settings.hide_workers, privateStats: settings.private_stats ?? false,
+    difficultySet: settings.start_difficulty != null, alerts: alerts ? alertChoices(alerts) : draft.alerts,
+  };
+}
+
+/** Discord channel webhooks; anything else is refused before it reaches the pool. */
+function isDiscordWebhook(url: string): boolean {
+  return /^https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(url.trim());
 }
 
 export function MinerSettings({ api, account, onSaved, onUnlockedChange }: MinerSettingsProps) {
@@ -144,8 +178,11 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
   const [takingBack, setTakingBack] = useState(false);
   const [rigIp, setRigIp] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
-  const [draft, setDraft] = useState<{ minPayout: string; solo: boolean; hide: boolean; alerts: MinerAlertChoices } | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [alertEmail, setAlertEmail] = useState('');
+  const [discordUrl, setDiscordUrl] = useState('');
+  // The Connect Telegram link from this browser's last request.
+  const [telegramLink, setTelegramLink] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [saveNote, setSaveNote] = useState('');
   // Values of the newest change, saved or still on its way to the server.
@@ -153,21 +190,45 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
   const queued = useRef<MinerSettingsValues | null>(null);
   const saving = useRef(false);
   const minPayoutTimer = useRef<number | undefined>(undefined);
+  const difficultyTimer = useRef<number | undefined>(undefined);
 
   const adopt = useCallback((next: MinerSettingsState) => {
     setState(next);
     onUnlockedChange?.(next.unlocked);
     intended.current = next.settings ?? null;
-    setDraft(next.settings ? {
+    setDraft(next.settings ? followServer({
       minPayout: String(next.settings.min_payout),
-      solo: next.settings.default_solo,
-      hide: next.settings.hide_workers,
-      alerts: next.alerts ? alertChoices(next.alerts) : { offline_minutes: 30, notify_payouts: true, notify_solo_blocks: false },
-    } : null);
+      difficulty: next.settings.start_difficulty != null ? formatNumber(next.settings.start_difficulty) : '',
+      solo: false, hide: false, privateStats: false, difficultySet: false, alerts: DEFAULT_ALERTS,
+    }, next.settings, next.alerts) : null);
     setAlertEmail(next.alerts?.email ?? '');
+    setDiscordUrl('');
   }, [onUnlockedChange]);
 
-  useEffect(() => () => window.clearTimeout(minPayoutTimer.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(minPayoutTimer.current);
+    window.clearTimeout(difficultyTimer.current);
+  }, []);
+
+  // While Telegram waits for Start in the bot, check every few seconds so the
+  // row turns connected without a reload.
+  const pendingTelegram = !!state?.alerts?.telegram && 'pending' in state.alerts.telegram;
+  useEffect(() => {
+    if (!pendingTelegram) return;
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      if (Date.now() - started > 10 * 60_000) {
+        window.clearInterval(timer);
+        return;
+      }
+      api.minerSettings.get(account).then((next) => {
+        setState(next);
+        const settings = next.settings;
+        if (settings) setDraft((draft) => draft ? followServer(draft, settings, next.alerts) : draft);
+      }).catch(() => {});
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [pendingTelegram, api, account]);
 
   useEffect(() => {
     let active = true;
@@ -227,11 +288,8 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
       onUnlockedChange?.(result.unlocked);
       const settings = result.settings;
       intended.current = settings ?? null;
-      // Keep whatever is being typed in the amount field; the toggles follow the server.
-      const alerts = result.alerts;
-      setDraft((draft) => settings && draft ? {
-        ...draft, solo: settings.default_solo, hide: settings.hide_workers, alerts: alerts ? alertChoices(alerts) : draft.alerts,
-      } : draft);
+      // Keep whatever is being typed in the amount fields; the toggles follow the server.
+      setDraft((draft) => settings && draft ? followServer(draft, settings, result.alerts) : draft);
       const notes: string[] = [];
       if (settings && before && settings.min_payout !== before.min_payout) notes.push(t('settingsSavedMinNote'));
       if (settings && before && settings.default_solo !== before.default_solo) notes.push(t('settingsSavedModeNote'));
@@ -245,10 +303,7 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
       // Show what the server still has, not the change that failed.
       const saved = state?.settings;
       intended.current = saved ?? null;
-      const savedAlerts = state?.alerts;
-      if (saved) setDraft((draft) => draft ? {
-        ...draft, solo: saved.default_solo, hide: saved.hide_workers, alerts: savedAlerts ? alertChoices(savedAlerts) : draft.alerts,
-      } : draft);
+      if (saved) setDraft((draft) => draft ? followServer(draft, saved, state?.alerts) : draft);
       if (err instanceof SettingsError && (err.code === 'locked' || err.code === 'already_claimed')) {
         api.minerSettings.get(account).then(adopt).catch(() => {});
       }
@@ -353,9 +408,30 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
       }
       if (minPayout !== (intended.current ?? state.settings!).min_payout) change({ min_payout: minPayout });
     };
+    const range = state.difficulty;
+    /** Saves a typed starting difficulty once it is a whole number in range. */
+    const commitDifficulty = (text: string, final: boolean) => {
+      window.clearTimeout(difficultyTimer.current);
+      if (!range) return;
+      const value = Number(text.trim().replace(/[\s,._]/g, ''));
+      if (!text.trim() || !Number.isInteger(value) || value < range.min || value > range.max) {
+        if (final) setError(t('settingsDifficultyInvalid', [formatNumber(range.min), formatNumber(range.max)]));
+        return;
+      }
+      if (value !== (intended.current ?? state.settings!).start_difficulty) change({ start_difficulty: value });
+    };
+    const alerts = state.alerts;
+    const telegram = alerts?.telegram;
+    const canAlert = !!alerts && (alerts.confirmed || !!alerts.discord || (!!telegram && 'name' in telegram));
+    const removeEmail = () => void run(() => api.minerSettings.removeAlertEmail(account), () => setNotice(t('alertsRemoved')));
     body = (<>
       {notice && <p className="settings-saved" role="status">{notice}</p>}
-      <form className="settings-form" onSubmit={(event) => { event.preventDefault(); commitMinPayout(draft.minPayout, true); }}>
+      <form className="settings-form" onSubmit={(event) => {
+        event.preventDefault();
+        commitMinPayout(draft.minPayout, true);
+        if (draft.difficultySet) commitDifficulty(draft.difficulty, true);
+      }}>
+        <h3 className="settings-section">{t('settingsSectionPayouts')}</h3>
         <Row label={t('settingsMinPayout')} hint={t('settingsMinPayoutRange', [formatNumber(min), formatNumber(max)])}
           help={{ text: t('settingsMinPayoutHelp'), href: `${localizePath('/info')}#minimum-payout`, link: t('settingsHowPayoutsWork') }}>
           <div className="settings-amount">
@@ -380,57 +456,174 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
               onClick={() => { if (!draft.solo) { setDraft({ ...draft, solo: true }); change({ default_solo: true }); } }}>{t('typeSolo')}</button>
           </div>
         </Row>
-        <Row label={t('settingsWorkerNames')} hint={t('settingsHideWorkersHint')}>
+        {range && (
+          <Row label={t('settingsDifficulty')}
+            hint={<>{draft.difficultySet
+              ? t('settingsDifficultySetHint', [formatNumber(range.min), formatNumber(range.max)])
+              : t('settingsDifficultyAutoHint')}{range.current != null && <> {t('settingsDifficultyNow', [formatNumber(range.current)])}</>}</>}
+            help={{ text: t('settingsDifficultyHelp'), href: `${localizePath('/blog/')}track-your-miner-on-bntpool/`, link: t('settingsDifficultyMore') }}>
+            <div className="settings-inline">
+              <div className="start-choice" role="group" aria-label={t('settingsDifficulty')}>
+                <button type="button" className={draft.difficultySet ? '' : 'active'} aria-pressed={!draft.difficultySet}
+                  onClick={() => {
+                    if (!draft.difficultySet) return;
+                    setDraft({ ...draft, difficultySet: false });
+                    setError('');
+                    change({ start_difficulty: null });
+                  }}>{t('settingsDifficultyAuto')}</button>
+                <button type="button" className={draft.difficultySet ? 'active' : ''} aria-pressed={draft.difficultySet}
+                  onClick={() => {
+                    if (draft.difficultySet) return;
+                    const text = draft.difficulty || formatNumber(range.current ?? range.min);
+                    setDraft({ ...draft, difficultySet: true, difficulty: text });
+                    commitDifficulty(text, false);
+                  }}>{t('settingsDifficultySet')}</button>
+              </div>
+              {draft.difficultySet && (
+                <div className="settings-amount">
+                  <input type="text" inputMode="numeric" dir="ltr" enterKeyHint="done" aria-label={t('settingsDifficulty')} value={draft.difficulty}
+                    onChange={(event) => {
+                      const text = event.target.value;
+                      setDraft({ ...draft, difficulty: text });
+                      setError('');
+                      window.clearTimeout(difficultyTimer.current);
+                      difficultyTimer.current = window.setTimeout(() => commitDifficulty(text, false), 1200);
+                    }}
+                    onBlur={(event) => commitDifficulty(event.target.value, true)} />
+                </div>
+              )}
+            </div>
+          </Row>
+        )}
+        <h3 className="settings-section">{t('settingsSectionPrivacy')}</h3>
+        <Row label={t('settingsPublicStats')}>
           <div className="settings-checks">
-            <label><input type="checkbox" checked={draft.hide} onChange={(event) => {
+            <label><input type="checkbox" checked={draft.hide || draft.privateStats} disabled={draft.privateStats} onChange={(event) => {
               const hide = event.target.checked;
               setDraft({ ...draft, hide });
               change({ hide_workers: hide });
-            }} /> {t('settingsHideWorkers')}</label>
+            }} /> {t('settingsHideWorkerNames')}</label>
+            <span className="settings-check-note">{t('settingsHideWorkersHint')}</span>
+            <label><input type="checkbox" checked={draft.privateStats} onChange={(event) => {
+              const privateStats = event.target.checked;
+              setDraft({ ...draft, privateStats });
+              change({ private_stats: privateStats });
+            }} /> {t('settingsPrivateStats')}</label>
+            <span className="settings-check-note">{t('settingsPrivateStatsNote')}</span>
           </div>
         </Row>
         {state.alerts_available && (<>
-          <Row label={t('alertsEmail')} hint={!state.alerts
+          <h3 className="settings-section">{t('settingsSectionAlerts')}</h3>
+          <Row label={t('alertsEmailLabel')} hint={!alerts?.email
             ? t('alertsEmailHint')
-            : state.alerts.confirmed
-              ? <button type="button" className="link-button" disabled={busy}
-                  onClick={() => void run(() => api.minerSettings.removeAlertEmail(account), () => setNotice(t('alertsRemoved')))}>{t('alertsRemove')}</button>
-              : <>{t('alertsPendingHint', [state.alerts.email])}{' '}
+            : alerts.confirmed
+              ? <button type="button" className="link-button" disabled={busy} onClick={removeEmail}>{t('alertsRemove')}</button>
+              : <>{t('alertsPendingHint', [alerts.email])}{' '}
                   <button type="button" className="link-button" disabled={busy}
-                    onClick={() => void run(() => api.minerSettings.setAlertEmail(account, state.alerts!.email, locale),
-                      () => setNotice(t('alertsLinkSent', [state.alerts!.email])))}>{t('alertsResend')}</button>{' · '}
-                  <button type="button" className="link-button" disabled={busy}
-                    onClick={() => void run(() => api.minerSettings.removeAlertEmail(account), () => setNotice(t('alertsRemoved')))}>{t('alertsRemove')}</button></>}>
+                    onClick={() => void run(() => api.minerSettings.setAlertEmail(account, alerts.email, locale),
+                      () => setNotice(t('alertsLinkSent', [alerts.email])))}>{t('alertsResend')}</button>{' · '}
+                  <button type="button" className="link-button" disabled={busy} onClick={removeEmail}>{t('alertsRemove')}</button></>}>
             <div className="settings-email">
               <input type="email" dir="ltr" autoComplete="email" aria-label={t('alertsEmail')} placeholder="you@example.com"
                 value={alertEmail} onChange={(event) => setAlertEmail(event.target.value)} />
-              {(!state.alerts || alertEmail.trim() !== state.alerts.email) && (
+              {(!alerts?.email || alertEmail.trim() !== alerts.email) && (
                 <button type="button" className="btn btn-secondary" disabled={busy || !alertEmail.trim()}
                   onClick={() => void run(() => api.minerSettings.setAlertEmail(account, alertEmail.trim(), locale),
                     () => setNotice(t('alertsLinkSent', [alertEmail.trim()])))}>{t('alertsSendLink')}</button>
               )}
-              {state.alerts && alertEmail.trim() === state.alerts.email && (state.alerts.confirmed
+              {alerts?.email && alertEmail.trim() === alerts.email && (alerts.confirmed
                 ? <span className="badge settings-badge-ok">{t('alertsConfirmed')}</span>
                 : <span className="badge settings-badge-warn">{t('alertsNotConfirmed')}</span>)}
             </div>
           </Row>
-          <Row label={t('alertsWhen')} hint={state.alerts?.confirmed ? t('alertsLimitHint') : t('alertsAfterConfirmHint')}>
-            <div className={`settings-checks ${state.alerts?.confirmed ? '' : 'is-disabled'}`}>
+          <Row label={t('alertsDiscord')} hint={alerts?.discord
+            ? <button type="button" className="link-button" disabled={busy}
+                onClick={() => void run(() => api.minerSettings.removeDiscord(account), () => setNotice(t('alertsDiscordRemoved')))}>{t('alertsDisconnect')}</button>
+            : t('alertsDiscordHint')}>
+            {alerts?.discord ? (
+              <div className="settings-email">
+                <span className="settings-channel" dir="ltr">{alerts.discord}</span>
+                <span className="badge settings-badge-ok">{t('alertsConnected')}</span>
+              </div>
+            ) : (
+              <div className="settings-email">
+                <input type="url" dir="ltr" autoComplete="off" spellCheck={false} aria-label={t('alertsDiscord')}
+                  placeholder="https://discord.com/api/webhooks/…" value={discordUrl} onChange={(event) => setDiscordUrl(event.target.value)} />
+                <button type="button" className="btn btn-secondary" disabled={busy || !discordUrl.trim()}
+                  onClick={() => {
+                    if (!isDiscordWebhook(discordUrl)) return setError(t('alertsDiscordInvalid'));
+                    void run(() => api.minerSettings.setDiscord(account, discordUrl.trim(), locale), () => setNotice(t('alertsDiscordSaved')));
+                  }}>{t('alertsDiscordTest')}</button>
+              </div>
+            )}
+          </Row>
+          {state.telegram_available && (<Row label={t('alertsTelegram')} hint={telegram && 'name' in telegram
+            ? <button type="button" className="link-button" disabled={busy}
+                onClick={() => void run(() => api.minerSettings.removeTelegram(account), () => setNotice(t('alertsTelegramRemoved')))}>{t('alertsDisconnect')}</button>
+            : telegram && 'pending' in telegram
+              ? <>{t('alertsTelegramWaiting')}{(telegram.pending || telegramLink) && <>{' '}
+                  <a href={telegram.pending || telegramLink} target="_blank" rel="noreferrer">{t('alertsTelegramOpenAgain')}</a></>}</>
+              : t('alertsTelegramHint')}>
+            {telegram && 'name' in telegram ? (
+              <div className="settings-email">
+                <span className="settings-channel" dir="ltr">{telegram.name}</span>
+                <span className="badge settings-badge-ok">{t('alertsConnected')}</span>
+              </div>
+            ) : (
+              <button type="button" className="btn btn-secondary" disabled={busy}
+                onClick={() => {
+                  // Open the tab inside the click so pop-up blockers allow it,
+                  // then point it at the bot once the link is ready.
+                  const tab = window.open('', '_blank');
+                  let opened = false;
+                  void run(() => api.minerSettings.connectTelegram(account, locale), (next) => {
+                    const link = next.alerts?.telegram;
+                    if (link && 'pending' in link && link.pending) {
+                      setTelegramLink(link.pending);
+                      if (tab) {
+                        tab.opener = null;
+                        tab.location.href = link.pending;
+                        opened = true;
+                      }
+                    }
+                  }).then(() => { if (tab && !opened) tab.close(); });
+                }}>{t('alertsTelegramConnect')}</button>
+            )}
+          </Row>)}
+          <Row label={t('alertsWhenAny')} hint={canAlert ? t('alertsLimitHintAll') : t('alertsAfterChannelHint')}>
+            <div className={`settings-checks ${canAlert ? '' : 'is-disabled'}`}>
               <label>
-                <input type="checkbox" disabled={!state.alerts?.confirmed} checked={draft.alerts.offline_minutes > 0}
+                <input type="checkbox" disabled={!canAlert} checked={draft.alerts.offline_minutes > 0}
                   onChange={(event) => changeAlerts({ offline_minutes: event.target.checked ? 30 : 0 })} />
                 {' '}{t('alertsRigStops')}
-                <select aria-label={t('alertsRigStops')} disabled={!state.alerts?.confirmed || draft.alerts.offline_minutes === 0}
+                <select aria-label={t('alertsRigStops')} disabled={!canAlert || draft.alerts.offline_minutes === 0}
                   value={draft.alerts.offline_minutes || 30}
                   onChange={(event) => changeAlerts({ offline_minutes: Number(event.target.value) })}>
                   {[10, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{formatWaitShort(minutes)}</option>)}
                 </select>
               </label>
-              <span className="settings-check-note">{t('alertsRigStopsNote')}</span>
-              <label><input type="checkbox" disabled={!state.alerts?.confirmed} checked={draft.alerts.notify_payouts}
+              <span className="settings-check-note">{t('alertsRigStopsNoteAll')}</span>
+              <label>
+                <input type="checkbox" disabled={!canAlert} checked={draft.alerts.hashrate_drop_minutes > 0}
+                  onChange={(event) => changeAlerts({ hashrate_drop_minutes: event.target.checked ? 30 : 0 })} />
+                {' '}{t('alertsHashrateDrops')}
+                <select aria-label={t('alertsHashrateDrops')} disabled={!canAlert || draft.alerts.hashrate_drop_minutes === 0}
+                  value={draft.alerts.hashrate_drop_minutes || 30}
+                  onChange={(event) => changeAlerts({ hashrate_drop_minutes: Number(event.target.value) })}>
+                  {[30, 60, 120].map((minutes) => <option key={minutes} value={minutes}>{formatWaitShort(minutes)}</option>)}
+                </select>
+              </label>
+              <span className="settings-check-note">{t('alertsHashrateDropsNote')}</span>
+              <label><input type="checkbox" disabled={!canAlert} checked={draft.alerts.notify_payouts}
                 onChange={(event) => changeAlerts({ notify_payouts: event.target.checked })} /> {t('alertsPayout')}</label>
-              <label><input type="checkbox" disabled={!state.alerts?.confirmed} checked={draft.alerts.notify_solo_blocks}
+              <label><input type="checkbox" disabled={!canAlert} checked={draft.alerts.notify_solo_blocks}
                 onChange={(event) => changeAlerts({ notify_solo_blocks: event.target.checked })} /> {t('alertsSoloBlock')}</label>
+              <label><input type="checkbox" disabled={!canAlert} checked={draft.alerts.notify_updates}
+                onChange={(event) => changeAlerts({ notify_updates: event.target.checked })} /> {t('alertsUpdates')}</label>
+              <span className="settings-check-note">{t('alertsUpdatesNote')}</span>
+              <label><input type="checkbox" disabled={!canAlert} checked={draft.alerts.weekly_summary}
+                onChange={(event) => changeAlerts({ weekly_summary: event.target.checked })} /> {t('alertsWeekly')}</label>
+              <span className="settings-check-note">{t('alertsWeeklyNote')}</span>
             </div>
           </Row>
         </>)}

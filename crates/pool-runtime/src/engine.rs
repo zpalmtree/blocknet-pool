@@ -552,6 +552,10 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
     fn miner_default_solo(&self, _account: &str) -> Result<bool> {
         Ok(false)
     }
+    /// The starting share difficulty saved on My Stats.
+    fn miner_start_difficulty(&self, _account: &str) -> Result<Option<u64>> {
+        Ok(None)
+    }
     /// The minimum payout chosen on My Stats, in atomic units.
     fn miner_min_payout(&self, _account: &str) -> Result<Option<u64>> {
         Ok(None)
@@ -1355,6 +1359,22 @@ impl PoolEngine {
         }
         if let Some(bootstrap) = address_bootstrap {
             difficulty = difficulty.max(bootstrap);
+        }
+        // A starting difficulty saved on My Stats replaces the pool's pick; it
+        // never goes below the era's initial difficulty, and one saved in an
+        // earlier era is ignored.
+        if let Some(chosen) = self
+            .store
+            .miner_start_difficulty(address)
+            .unwrap_or_else(|err| {
+                tracing::warn!(address = %address, error = %err, "failed reading saved starting difficulty");
+                None
+            })
+            .and_then(|chosen| {
+                crate::miner_settings::start_difficulty_in_era(chosen, initial_difficulty, max_diff)
+            })
+        {
+            difficulty = chosen;
         }
         difficulty = difficulty.max(login_difficulty_floor(address, initial_difficulty));
         if era.faraday {
@@ -3537,6 +3557,7 @@ pub(crate) struct InMemoryStore {
     /// lost after COMMIT reached the server.
     ambiguous_commit_once: Mutex<bool>,
     default_solo: Mutex<HashSet<String>>,
+    start_difficulty: Mutex<HashMap<String, u64>>,
     source_work: Mutex<Vec<(String, String, i64, u64)>>,
 }
 
@@ -3552,6 +3573,12 @@ impl InMemoryStore {
 
     pub(crate) fn fail_next_share_insert_after_commit(&self) {
         *self.ambiguous_commit_once.lock() = true;
+    }
+
+    pub(crate) fn set_start_difficulty(&self, account: &str, difficulty: u64) {
+        self.start_difficulty
+            .lock()
+            .insert(account.to_string(), difficulty);
     }
 
     pub(crate) fn set_default_solo(&self, account: &str) {
@@ -3614,6 +3641,10 @@ impl InMemoryStore {
 impl ShareStore for InMemoryStore {
     fn miner_default_solo(&self, account: &str) -> Result<bool> {
         Ok(self.default_solo.lock().contains(account))
+    }
+
+    fn miner_start_difficulty(&self, account: &str) -> Result<Option<u64>> {
+        Ok(self.start_difficulty.lock().get(account).copied())
     }
 
     fn add_miner_source_work(&self, rows: &[(String, String, i64, u64)]) -> Result<()> {
@@ -4262,6 +4293,28 @@ mod tests {
                 submit_hash_cap()
             )
             .is_err());
+    }
+
+    #[test]
+    fn a_saved_starting_difficulty_replaces_the_pools_pick_within_the_era() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 1_000;
+        cfg.enable_vardiff = false;
+        let (engine, store, _validation) = source_test_engine(cfg, Arc::new(NonceHasher));
+        let chosen = test_miner_address();
+        let too_low = other_miner_address();
+        store.set_start_difficulty(&chosen, 50_000);
+        // Below the initial difficulty (e.g. saved in an earlier era): ignored.
+        store.set_start_difficulty(&too_low, 500);
+        engine
+            .login("203.0.113.1:4000", chosen, "rig", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .login("203.0.113.2:4000", too_low, "rig", 2, submit_hash_cap())
+            .expect("login");
+        assert_eq!(engine.session_difficulty("203.0.113.1:4000"), Some(50_000));
+        let initial = engine.difficulty_era().initial;
+        assert_eq!(engine.session_difficulty("203.0.113.2:4000"), Some(initial));
     }
 
     #[test]

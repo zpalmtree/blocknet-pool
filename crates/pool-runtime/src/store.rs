@@ -27,8 +27,9 @@ use pool_common::protocol::parse_hash_hex;
 pub struct PoolStore {
     inner: Arc<PostgresStore>,
     submit_risk: SubmitRiskCache,
-    /// Short-lived per-account cache of the saved mining mode read on login.
-    default_solo: parking_lot::Mutex<HashMap<String, (Instant, bool)>>,
+    /// Short-lived per-account cache of the saved mining mode and starting
+    /// difficulty read on login.
+    default_solo: parking_lot::Mutex<HashMap<String, (Instant, LoginSettings)>>,
 }
 
 /// How long a login may act on a cached mining mode. A change on My Stats
@@ -102,6 +103,43 @@ impl std::fmt::Debug for PoolStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("PoolStore::Postgres")
     }
+}
+
+impl PoolStore {
+    /// The saved settings a Stratum login reads, cached briefly.
+    fn login_settings(&self, account: &str) -> Result<LoginSettings> {
+        let now = Instant::now();
+        if let Some((cached_at, settings)) = self.default_solo.lock().get(account) {
+            if now.saturating_duration_since(*cached_at) < DEFAULT_SOLO_CACHE_TTL {
+                return Ok(*settings);
+            }
+        }
+        let settings = self
+            .inner
+            .miner_settings(account)?
+            .map(|record| LoginSettings {
+                default_solo: record.settings.default_solo,
+                start_difficulty: record.settings.start_difficulty,
+            })
+            .unwrap_or_default();
+        let mut cache = self.default_solo.lock();
+        if cache.len() >= DEFAULT_SOLO_CACHE_MAX_ENTRIES {
+            cache.retain(|_, (cached_at, _)| {
+                now.saturating_duration_since(*cached_at) < DEFAULT_SOLO_CACHE_TTL
+            });
+            if cache.len() >= DEFAULT_SOLO_CACHE_MAX_ENTRIES {
+                cache.clear();
+            }
+        }
+        cache.insert(account.to_string(), (now, settings));
+        Ok(settings)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct LoginSettings {
+    default_solo: bool,
+    start_difficulty: Option<u64>,
 }
 
 impl Deref for PoolStore {
@@ -502,27 +540,11 @@ impl ShareStore for PoolStore {
     }
 
     fn miner_default_solo(&self, account: &str) -> Result<bool> {
-        let now = Instant::now();
-        if let Some((cached_at, solo)) = self.default_solo.lock().get(account) {
-            if now.saturating_duration_since(*cached_at) < DEFAULT_SOLO_CACHE_TTL {
-                return Ok(*solo);
-            }
-        }
-        let solo = self
-            .inner
-            .miner_settings(account)?
-            .is_some_and(|record| record.settings.default_solo);
-        let mut cache = self.default_solo.lock();
-        if cache.len() >= DEFAULT_SOLO_CACHE_MAX_ENTRIES {
-            cache.retain(|_, (cached_at, _)| {
-                now.saturating_duration_since(*cached_at) < DEFAULT_SOLO_CACHE_TTL
-            });
-            if cache.len() >= DEFAULT_SOLO_CACHE_MAX_ENTRIES {
-                cache.clear();
-            }
-        }
-        cache.insert(account.to_string(), (now, solo));
-        Ok(solo)
+        Ok(self.login_settings(account)?.default_solo)
+    }
+
+    fn miner_start_difficulty(&self, account: &str) -> Result<Option<u64>> {
+        Ok(self.login_settings(account)?.start_difficulty)
     }
 
     fn miner_min_payout(&self, account: &str) -> Result<Option<u64>> {

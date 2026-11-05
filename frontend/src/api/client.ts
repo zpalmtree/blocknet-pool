@@ -249,6 +249,14 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/alert-email`, { email, lang }),
       removeAlertEmail: (account: string) =>
         settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/alert-email/remove`),
+      setDiscord: (account: string, webhook: string, lang: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/discord`, { webhook, lang }),
+      removeDiscord: (account: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/discord/remove`),
+      connectTelegram: (account: string, lang: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/telegram`, { lang }),
+      removeTelegram: (account: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/telegram/remove`),
       save: (account: string, settings: MinerSettingsValues) =>
         settingsRequest('PUT', `/api/miner-settings/${encodeURIComponent(account)}`, settings),
     },

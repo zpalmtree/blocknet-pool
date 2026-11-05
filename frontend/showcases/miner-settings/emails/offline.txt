@@ -2,7 +2,7 @@ Subject: rig-1 stopped mining
 
 rig-1 stopped mining
 
-rig-1 hasn't sent a share for 30 min. We'll email you when it starts again.
+rig-1 hasn't sent a share for 30 min. We'll tell you when it starts again.
 
 Last share: 2026-11-05 04:12 UTC
 rig-1: stopped

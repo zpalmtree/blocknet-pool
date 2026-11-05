@@ -494,7 +494,16 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             onUnlockedChange={setSettingsUnlocked} />
         </div>)}
 
-      {showLookupResult && view === 'stats' && (<div id="lookup-result" role="tabpanel" aria-labelledby="stats-tab-stats"
+      {showLookupResult && view === 'stats' && minerData?.private_stats && (<div id="lookup-result" role="tabpanel"
+          aria-labelledby="stats-tab-stats">
+          <div className="card stats-private">
+            <h2>{t('statsPrivateTitle')}</h2>
+            <p>{t('statsPrivateBody')}</p>
+            <button type="button" className="btn btn-primary" onClick={() => switchView('settings')}>{t('statsPrivateOpen')}</button>
+          </div>
+        </div>)}
+
+      {showLookupResult && view === 'stats' && !minerData?.private_stats && (<div id="lookup-result" role="tabpanel" aria-labelledby="stats-tab-stats"
           style={panelMinHeight ? { minHeight: panelMinHeight } : undefined}>
           {balanceUnavailable && (<div className="card stats-notice">{minerBalanceData ? t("m489") : t("m490")}</div>)}
           {verificationHold && (<div className="card stats-notice">

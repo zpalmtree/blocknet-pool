@@ -102,6 +102,13 @@ impl Config {
             if !alerts.site_url.starts_with("https://") && !alerts.site_url.starts_with("http://") {
                 anyhow::bail!("alerts.site_url must be an http(s) URL");
             }
+            let bot = alerts.telegram_bot.as_str();
+            if !alerts.telegram_token_file.trim().is_empty()
+                && (!(5..=32).contains(&bot.len())
+                    || !bot.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+            {
+                anyhow::bail!("alerts.telegram_bot must be a Telegram bot username");
+            }
         }
         if let Some(hints) = self.active_wallet_hints() {
             if hints.token_file.trim().is_empty() {

@@ -1,0 +1,11 @@
+rig-1 stopped mining
+rig-1 hasn't sent a share for 30 min. We'll tell you when it starts again.
+
+Last share: 2026-11-05 04:12 UTC
+rig-1: stopped
+laptop: 111.30 H/s
+Your hashrate now: 111.30 H/s
+
+Open My Stats: https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm
+
+bntpool.com alerts for 8yAUM9…1bVm

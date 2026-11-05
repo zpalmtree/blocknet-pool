@@ -29,8 +29,15 @@ real pool. The demo password is `correct horse`; the rig IP that wins a take-bac
   confirmed with alerts on (rig stopped for 10/30/60 minutes, payout sent, solo block found).
   From `unlocked`, typing an email and pressing Send link shows the waiting state.
 - `link-confirm`, `link-unsubscribe`, `link-expired`: the `/alerts` page that email links open.
+- `difficulty-set`: starting difficulty set to 50,000 (the floor is the pool's normal start).
+- `private-on`, `public-private`: stats kept private, in Settings and as a visitor sees the Stats tab.
+- `alerts-all`: email, Discord and Telegram connected with every alert on (hashrate drop,
+  old Seine, weekly summary included).
+- `discord-only`: Discord connected without an email, which is enough for alerts.
+- `telegram-pending`: Connect Telegram pressed, waiting for Start in the bot (the page checks
+  every few seconds).
 
-`emails/` holds every alert email rendered by the real templates
+`emails/` holds every alert email (and its chat text for Discord and Telegram) rendered by the real templates
 (`ALERT_SAMPLES_DIR=$PWD/frontend/showcases/miner-settings/emails cargo test -p
 blocknet-pool-api-app -- write_sample_mails_when_asked`), as HTML and plain text.
 

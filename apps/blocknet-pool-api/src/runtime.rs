@@ -28,9 +28,21 @@ pub(crate) fn build_api_state(cfg: &Config, runtime: &ApiRuntime) -> Result<ApiS
         return Ok(state);
     };
     let mailer = crate::alert_mail::SmtpMailer::new(alerts.clone())?;
+    let telegram_token = if alerts.telegram_token_file.trim().is_empty() {
+        None
+    } else {
+        Some(crate::alert_mail::load_telegram_token(
+            std::path::Path::new(alerts.telegram_token_file.trim()),
+        )?)
+    };
+    let telegram = telegram_token.is_some();
+    let chat = Arc::new(crate::alert_chat::HttpChat::new(telegram_token)?);
     Ok(state.with_alerts(Arc::new(crate::alerts::AlertService {
         config: alerts.clone(),
         mailer,
+        chat: Arc::clone(&chat) as Arc<dyn crate::alert_chat::ChatSender>,
+        telegram_bot: telegram.then(|| alerts.telegram_bot.clone()),
+        telegram_poller: telegram.then_some(chat),
     })))
 }
 

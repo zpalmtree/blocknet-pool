@@ -1,0 +1,13 @@
+Subject: Seine 0.3.2 is out
+
+Seine 0.3.2 is out
+
+These rigs run an older Seine than the latest release, 0.3.2.
+
+laptop: Seine 0.3.1
+rig-1: Seine 0.2.26
+
+Download Seine 0.3.2: https://seineminer.com/#download
+
+--
+You get this because alerts are on for miner 8yAUM9…1bVm on bntpool.com. Change alerts (https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm#settings) · Unsubscribe (https://bntpool.com/alerts?unsubscribe=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)

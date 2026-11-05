@@ -1,0 +1,9 @@
+Seine 0.3.2 is out
+These rigs run an older Seine than the latest release, 0.3.2.
+
+laptop: Seine 0.3.1
+rig-1: Seine 0.2.26
+
+Download Seine 0.3.2: https://seineminer.com/#download
+
+bntpool.com alerts for 8yAUM9…1bVm

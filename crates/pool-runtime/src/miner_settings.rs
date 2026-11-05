@@ -38,6 +38,11 @@ pub struct MinerSettings {
     pub default_solo: bool,
     /// Public miner stats show "Rig 1", "Rig 2" instead of worker names.
     pub hide_workers: bool,
+    /// Visitors see no hashrate, balance, payouts or rigs at all.
+    pub private_stats: bool,
+    /// Share difficulty this account's rigs start at; `None` lets the pool
+    /// choose. Vardiff still adjusts it after login.
+    pub start_difficulty: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +200,23 @@ pub struct MinerAlert {
     pub offline_minutes: u32,
     pub notify_payouts: bool,
     pub notify_solo_blocks: bool,
+    /// 0 turns hashrate-drop alerts off; otherwise how long a rig must stay
+    /// below half its usual hashrate.
+    pub hashrate_drop_minutes: u32,
+    /// Tell the miner when a rig runs an older Seine than the latest release.
+    pub notify_updates: bool,
+    pub weekly_summary: bool,
+    /// Discord channel webhook alerts are posted to.
+    pub discord_webhook: Option<String>,
+    /// Telegram chat alerts are sent to, and how to show it.
+    pub telegram_chat_id: Option<i64>,
+    pub telegram_name: Option<String>,
+    /// A Telegram link is waiting for Start in the bot.
+    pub telegram_pending: bool,
+    /// Latest Seine release the miner was already told about.
+    pub update_notified: String,
+    /// Monday-based UTC week (see [`utc_week`]) of the last weekly summary.
+    pub summary_week: i64,
     /// Highest payout id and block height already considered.
     pub payout_cursor: i64,
     pub block_cursor: i64,
@@ -203,9 +225,148 @@ pub struct MinerAlert {
     pub sent_today: u32,
 }
 
+/// Alert choices saved from My Stats.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AlertChoices {
+    pub offline_minutes: u32,
+    pub notify_payouts: bool,
+    pub notify_solo_blocks: bool,
+    pub hashrate_drop_minutes: u32,
+    pub notify_updates: bool,
+    pub weekly_summary: bool,
+}
+
+/// Where an account's alerts go: a confirmed email, a Discord webhook and a
+/// Telegram chat, each optional.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AlertChannels {
+    pub email: Option<String>,
+    pub discord: Option<String>,
+    pub telegram: Option<i64>,
+}
+
+impl AlertChannels {
+    pub fn any(&self) -> bool {
+        self.email.is_some() || self.discord.is_some() || self.telegram.is_some()
+    }
+}
+
+/// One rig's accepted work over an alert window (see `alert_worker_rates`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RigRates {
+    pub worker: String,
+    pub first_share: SystemTime,
+    pub last_share: SystemTime,
+    /// Accepted difficulty from the baseline start until the recent window.
+    pub baseline_work: u64,
+    /// Accepted difficulty in the recent window.
+    pub recent_work: u64,
+}
+
+/// An account's week for the weekly summary.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WeekSummary {
+    /// Accepted difficulty.
+    pub work: u64,
+    /// UTC hours with at least one accepted share.
+    pub active_hours: u64,
+    /// The rig with the most accepted difficulty.
+    pub best_rig: Option<(String, u64)>,
+    /// Atomic units paid in the week, and how many payouts.
+    pub paid: u64,
+    pub payouts: u64,
+}
+
 /// Days since the epoch, in UTC.
 pub fn utc_day(at: SystemTime) -> i64 {
     (at.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() / 86_400) as i64
+}
+
+/// Monday-based UTC week number: weeks since Monday 1969-12-29.
+pub fn utc_week(at: SystemTime) -> i64 {
+    (utc_day(at) + 3).div_euclid(7)
+}
+
+/// Midnight UTC on the Monday that starts `week`.
+pub fn utc_week_start(week: i64) -> SystemTime {
+    let days = (week * 7 - 3).max(0) as u64;
+    UNIX_EPOCH + Duration::from_secs(days * 86_400)
+}
+
+/// A saved starting difficulty that applies in the current difficulty era
+/// (`initial`..=`max`); `None` for one outside it, e.g. saved before a fork
+/// changed the difficulty scale.
+pub fn start_difficulty_in_era(chosen: u64, initial: u64, max: u64) -> Option<u64> {
+    (initial..=max.max(initial))
+        .contains(&chosen)
+        .then_some(chosen)
+}
+
+/// How long a rig must stay below half its usual hashrate, in minutes.
+/// Shares arrive about twice a minute, so shorter windows would read
+/// ordinary gaps between shares as drops.
+pub const ALERT_DROP_MINUTES: [u32; 3] = [30, 60, 120];
+
+/// A rig's usual hashrate is its average over this window, before the
+/// minutes being judged.
+pub const ALERT_DROP_BASELINE: Duration = Duration::from_secs(6 * 3600);
+
+/// Rigs with less history than this in the baseline are not judged.
+pub const ALERT_DROP_MIN_HISTORY: Duration = Duration::from_secs(3600);
+
+/// Below this part of the usual hashrate a rig has dropped...
+pub const ALERT_DROP_RATIO: f64 = 0.5;
+
+/// ...and at or above this part it is back.
+pub const ALERT_RECOVER_RATIO: f64 = 0.8;
+
+/// How long a Connect Telegram link works.
+pub const TELEGRAM_LINK_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// A Discord channel webhook URL, the only kind of Discord link accepted.
+pub fn discord_webhook_valid(url: &str) -> bool {
+    let Some(rest) = [
+        "https://discord.com/api/webhooks/",
+        "https://discordapp.com/api/webhooks/",
+        "https://canary.discord.com/api/webhooks/",
+        "https://ptb.discord.com/api/webhooks/",
+    ]
+    .iter()
+    .find_map(|prefix| url.strip_prefix(prefix)) else {
+        return false;
+    };
+    let Some((id, token)) = rest.split_once('/') else {
+        return false;
+    };
+    url.len() <= 200
+        && !id.is_empty()
+        && id.len() <= 25
+        && id.bytes().all(|b| b.is_ascii_digit())
+        && (20..=100).contains(&token.len())
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// "discord.com/api/webhooks/1204…3qXw" for showing a saved webhook.
+pub fn discord_webhook_display(url: &str) -> String {
+    let rest = url.strip_prefix("https://").unwrap_or(url);
+    let Some((path, token)) = rest.rsplit_once('/') else {
+        return rest.to_string();
+    };
+    let Some((base, id)) = path.rsplit_once('/') else {
+        return rest.to_string();
+    };
+    let id: String = id.chars().take(4).collect();
+    let tail: String = token
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{base}/{id}…{tail}")
 }
 
 /// A plausible email address: one `@`, a dotted domain, no spaces or
@@ -235,6 +396,43 @@ pub fn plausible_email(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn weeks_start_on_monday_utc() {
+        // 2026-11-02 is a Monday.
+        let monday = UNIX_EPOCH + Duration::from_secs(20_759 * 86_400);
+        let sunday_night = monday - Duration::from_secs(1);
+        assert_eq!(utc_week(monday), utc_week(sunday_night) + 1);
+        assert_eq!(
+            utc_week(monday + Duration::from_secs(6 * 86_400 + 86_399)),
+            utc_week(monday)
+        );
+        assert_eq!(utc_week_start(utc_week(monday)), monday);
+    }
+
+    #[test]
+    fn only_discord_channel_webhooks_are_accepted() {
+        let good = "https://discord.com/api/webhooks/1204567890123456789/AbCdEfGhIjKlMnOpQrStUvWxYz_0123456789-abcdEFGH3qXw";
+        assert!(discord_webhook_valid(good));
+        assert!(discord_webhook_valid(
+            &good.replace("discord.com", "discordapp.com")
+        ));
+        for bad in [
+            "http://discord.com/api/webhooks/1/abcdefghijklmnopqrstuvwxyz",
+            "https://discord.com.evil.example/api/webhooks/1/abcdefghijklmnopqrstuvwxyz",
+            "https://evil.example/?https://discord.com/api/webhooks/1/abcdefghijklmnopqrstuvwxyz",
+            "https://discord.com/api/webhooks/12a/abcdefghijklmnopqrstuvwxyz",
+            "https://discord.com/api/webhooks/1/abcdefghijklmnopqrstuvwxyz/extra",
+            "https://discord.com/api/webhooks/1/abc?wait=true",
+            "https://discord.com/api/webhooks/1/abcdefghijklmnopqrstuvwxyz#x",
+        ] {
+            assert!(!discord_webhook_valid(bad), "{bad}");
+        }
+        assert_eq!(
+            discord_webhook_display(good),
+            "discord.com/api/webhooks/1204…3qXw"
+        );
+    }
 
     fn record(owner: &str) -> MinerSettingsRecord {
         MinerSettingsRecord {

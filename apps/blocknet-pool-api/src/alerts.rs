@@ -18,12 +18,17 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use pool_runtime::miner_settings::{utc_day, MinerAlert, ALERT_DAILY_LIMIT, ALERT_WATCH_WINDOW};
+use pool_runtime::miner_settings::{
+    utc_day, utc_week, utc_week_start, AlertChannels, MinerAlert, ALERT_DAILY_LIMIT,
+    ALERT_DROP_BASELINE, ALERT_DROP_MIN_HISTORY, ALERT_DROP_RATIO, ALERT_RECOVER_RATIO,
+    ALERT_WATCH_WINDOW,
+};
 use pool_runtime::store::PoolStore;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use crate::alert_chat::ChatError;
 use crate::alert_mail::{civil_from_days, AlertsConfig, Mailer, OutgoingMail};
 
 const WORKER_INTERVAL: Duration = Duration::from_secs(60);
@@ -38,6 +43,11 @@ const ATOMIC_PER_BNT: f64 = 100_000_000.0;
 pub(crate) struct AlertService {
     pub config: AlertsConfig,
     pub mailer: Arc<dyn Mailer>,
+    pub chat: Arc<dyn crate::alert_chat::ChatSender>,
+    /// The bot's username while Telegram alerts are set up.
+    pub telegram_bot: Option<String>,
+    /// Runs the bot's update loop (production only).
+    pub telegram_poller: Option<Arc<crate::alert_chat::HttpChat>>,
 }
 
 pub(crate) fn token_hash(token: &str) -> String {
@@ -46,6 +56,17 @@ pub(crate) fn token_hash(token: &str) -> String {
 
 pub(crate) fn new_token() -> String {
     hex::encode(rand::random::<[u8; 32]>())
+}
+
+/// The shorter code a Connect Telegram link carries (Telegram allows 64
+/// characters after `start=`).
+pub(crate) fn new_link_code() -> String {
+    hex::encode(rand::random::<[u8; 16]>())
+}
+
+/// A message the Telegram bot replies with, in the given language.
+pub(crate) fn bot_text(lang: &str, key: &str, values: &[&str]) -> String {
+    t(supported_lang(lang), key, values)
 }
 
 fn catalog() -> &'static HashMap<String, HashMap<String, String>> {
@@ -240,6 +261,30 @@ impl Email<'_> {
         text.push('\n');
         (html, text)
     }
+
+    /// The alert as a short chat message: title, text, facts and the link,
+    /// then which address it is for.
+    fn chat_text(&self, account: &str) -> String {
+        let mut text = format!("{}\n", self.title);
+        for paragraph in &self.paragraphs {
+            text.push_str(&strip_tags(paragraph));
+            text.push('\n');
+        }
+        if !self.facts.is_empty() {
+            text.push('\n');
+            for (label, _, value_text) in &self.facts {
+                text.push_str(&format!("{}: {}\n", strip_tags(label), value_text));
+            }
+        }
+        if let Some((url, label)) = &self.button {
+            text.push_str(&format!("\n{label}: {url}\n"));
+        }
+        text.push_str(&format!(
+            "\n{}",
+            t(self.lang, "chatFooter", &[&short_account(account)])
+        ));
+        text
+    }
 }
 
 /// Text for the plain-text part: tags removed, links kept as "label (url)".
@@ -351,12 +396,14 @@ fn finish(
     email: Email<'_>,
 ) -> OutgoingMail {
     let (html, text) = email.render();
+    let chat = email.chat_text(&alert.account);
     OutgoingMail {
         to: alert.email.clone(),
         subject,
         text,
         html,
         unsubscribe_url: Some(one_click_url(config, &alert.unsubscribe_token)),
+        chat: Some(chat),
     }
 }
 
@@ -392,6 +439,7 @@ pub(crate) fn confirm_mail(
         text,
         html,
         unsubscribe_url: None,
+        chat: None,
     }
 }
 
@@ -627,6 +675,203 @@ pub(crate) fn solo_mail(
     )
 }
 
+/// A rig whose hashrate dropped or came back: now and its usual rate.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RateChange {
+    pub name: String,
+    pub now: f64,
+    pub usual: f64,
+}
+
+fn rate_facts(lang: &str, rigs: &[RateChange], dot: &str) -> Vec<(String, String, String)> {
+    rigs.iter()
+        .take(20)
+        .map(|rig| {
+            let value = t(
+                lang,
+                "rateNowUsual",
+                &[&human_rate(rig.now), &human_rate(rig.usual)],
+            );
+            (
+                format!("{dot}{}", escape(&rig_name(lang, &rig.name))),
+                escape(&value),
+                value,
+            )
+        })
+        .collect()
+}
+
+pub(crate) fn slow_mail(
+    config: &AlertsConfig,
+    alert: &MinerAlert,
+    slow: &[RateChange],
+) -> OutgoingMail {
+    let lang = alert.lang.as_str();
+    let after = duration_text(
+        lang,
+        Duration::from_secs(u64::from(alert.hashrate_drop_minutes) * 60),
+    );
+    let (subject, body) = if let [rig] = slow {
+        let name = rig_name(lang, &rig.name);
+        (
+            t(lang, "slowSubjectOne", &[&name]),
+            t(lang, "slowBodyOne", &[&name, &after]),
+        )
+    } else {
+        (
+            t(lang, "slowSubjectMany", &[&slow.len().to_string()]),
+            t(lang, "slowBodyMany", &[&after]),
+        )
+    };
+    let email = Email {
+        lang,
+        title: subject.clone(),
+        paragraphs: vec![escape(&body)],
+        facts: rate_facts(lang, slow, DOT_OFF),
+        button: Some(stats_button(config, alert)),
+        after: Vec::new(),
+        footer: alert_footer(config, alert),
+    };
+    finish(config, alert, subject, email)
+}
+
+pub(crate) fn steady_mail(
+    config: &AlertsConfig,
+    alert: &MinerAlert,
+    steady: &[RateChange],
+) -> OutgoingMail {
+    let lang = alert.lang.as_str();
+    let subject = if let [rig] = steady {
+        t(lang, "steadySubjectOne", &[&rig_name(lang, &rig.name)])
+    } else {
+        t(lang, "steadySubjectMany", &[&steady.len().to_string()])
+    };
+    let email = Email {
+        lang,
+        title: subject.clone(),
+        paragraphs: vec![escape(&t(lang, "steadyBody", &[]))],
+        facts: rate_facts(lang, steady, DOT_ON),
+        button: Some(stats_button(config, alert)),
+        after: Vec::new(),
+        footer: alert_footer(config, alert),
+    };
+    finish(config, alert, subject, email)
+}
+
+/// Rigs on an older Seine than `latest`: (worker, version).
+pub(crate) fn update_mail(
+    config: &AlertsConfig,
+    alert: &MinerAlert,
+    latest: &str,
+    rigs: &[(String, String)],
+) -> OutgoingMail {
+    let lang = alert.lang.as_str();
+    let facts = rigs
+        .iter()
+        .take(20)
+        .map(|(worker, version)| {
+            let value = format!("Seine {version}");
+            (
+                format!("{DOT_OFF}{}", escape(&rig_name(lang, worker))),
+                escape(&value),
+                value,
+            )
+        })
+        .collect();
+    let subject = t(lang, "updateSubject", &[latest]);
+    let email = Email {
+        lang,
+        title: subject.clone(),
+        paragraphs: vec![escape(&t(lang, "updateBody", &[latest]))],
+        facts,
+        button: Some((
+            "https://seineminer.com/#download".to_string(),
+            t(lang, "updateButton", &[latest]),
+        )),
+        after: Vec::new(),
+        footer: alert_footer(config, alert),
+    };
+    finish(config, alert, subject, email)
+}
+
+const WEEK: Duration = Duration::from_secs(7 * 86_400);
+
+fn utc_date(at: SystemTime) -> String {
+    utc_time(at).chars().take(10).collect()
+}
+
+pub(crate) fn weekly_mail(
+    config: &AlertsConfig,
+    alert: &MinerAlert,
+    week_start: SystemTime,
+    summary: &pool_runtime::miner_settings::WeekSummary,
+    unpaid: u64,
+) -> OutgoingMail {
+    let lang = alert.lang.as_str();
+    let first = utc_date(week_start);
+    let last = utc_date(week_start + WEEK - Duration::from_secs(1));
+    let paid = if summary.payouts == 1 {
+        t(lang, "weeklyPaidOne", &[&format_bnt(summary.paid)])
+    } else {
+        t(
+            lang,
+            "weeklyPaidMany",
+            &[&format_bnt(summary.paid), &summary.payouts.to_string()],
+        )
+    };
+    let unpaid = format!("{} BNT", format_bnt(unpaid));
+    let rate = human_rate(summary.work as f64 / WEEK.as_secs_f64());
+    let uptime = t(
+        lang,
+        "weeklyUptimeValue",
+        &[&((summary.active_hours.min(168) * 100 + 84) / 168).to_string()],
+    );
+    let mut facts = vec![
+        (
+            escape(&t(lang, "weeklyPaid", &[])),
+            escape(&paid),
+            paid.clone(),
+        ),
+        (
+            escape(&t(lang, "weeklyUnpaid", &[])),
+            escape(&unpaid),
+            unpaid.clone(),
+        ),
+        (
+            escape(&t(lang, "weeklyHashrate", &[])),
+            escape(&rate),
+            rate.clone(),
+        ),
+        (
+            escape(&t(lang, "weeklyUptime", &[])),
+            escape(&uptime),
+            uptime.clone(),
+        ),
+    ];
+    if let Some((worker, work)) = &summary.best_rig {
+        let value = format!(
+            "{} · {}",
+            rig_name(lang, worker),
+            human_rate(*work as f64 / WEEK.as_secs_f64())
+        );
+        facts.push((
+            escape(&t(lang, "weeklyBestRig", &[])),
+            escape(&value),
+            value,
+        ));
+    }
+    let email = Email {
+        lang,
+        title: t(lang, "weeklyTitle", &[]),
+        paragraphs: vec![escape(&t(lang, "weeklyBody", &[&first, &last]))],
+        facts,
+        button: Some(stats_button(config, alert)),
+        after: Vec::new(),
+        footer: alert_footer(config, alert),
+    };
+    finish(config, alert, t(lang, "weeklySubject", &[&first]), email)
+}
+
 fn format_fee(pct: f64) -> String {
     let text = format!("{:.2}", (pct * 100.0).round() / 100.0);
     text.trim_end_matches('0').trim_end_matches('.').to_string()
@@ -761,9 +1006,11 @@ pub(crate) struct WorkerContext {
     pub pool_fee_pct: f64,
     pub confirmations: u64,
     /// Since when shares have been arriving pool-wide without a gap (set by
-    /// the worker). Rigs are only judged stopped once the pool has been up
-    /// for their whole threshold, so a recovery is not read as rigs stopping.
+    /// the worker). Rigs are only judged once the pool has been up for their
+    /// whole threshold, so a recovery is not read as rigs stopping.
     pub pool_up_since: parking_lot::Mutex<Option<SystemTime>>,
+    /// The latest Seine release, for update alerts.
+    pub miner_release: pool_runtime::miner_release::MinerRelease,
 }
 
 pub(crate) fn spawn_worker(context: WorkerContext) {
@@ -779,9 +1026,16 @@ pub(crate) fn spawn_worker(context: WorkerContext) {
     });
 }
 
-/// One pass over every confirmed account.
+/// How long the pool has had shares arriving without a gap.
+fn pool_up_for(up_since: Option<SystemTime>, now: SystemTime) -> Duration {
+    up_since.map_or(Duration::ZERO, |since| {
+        now.duration_since(since).unwrap_or_default()
+    })
+}
+
+/// One pass over every account with somewhere to send alerts.
 pub(crate) async fn run_cycle(context: &WorkerContext, now: SystemTime) -> Result<()> {
-    let alerts = blocking(&context.store, |store| store.confirmed_miner_alerts()).await?;
+    let alerts = blocking(&context.store, |store| store.active_miner_alerts()).await?;
     if alerts.is_empty() {
         return Ok(());
     }
@@ -798,15 +1052,93 @@ pub(crate) async fn run_cycle(context: &WorkerContext, now: SystemTime) -> Resul
         }
         *up
     };
+    let up_for = pool_up_for(up_since, now);
     for alert in alerts {
-        let threshold = Duration::from_secs(u64::from(alert.offline_minutes) * 60);
-        let watch = up_since
-            .is_some_and(|since| now.duration_since(since).unwrap_or_default() >= threshold);
-        if let Err(err) = run_account(context, &alert, now, watch).await {
+        if let Err(err) = run_account(context, &alert, now, up_for).await {
             tracing::warn!(account = %alert.account, error = %err, "alert check failed");
         }
     }
     Ok(())
+}
+
+/// Sends one alert to every channel the account has now. `counted` alerts
+/// use up the day's allowance (given back if nothing accepted it). True when
+/// at least one channel took it; false when over the limit or no channel is
+/// left. Deleted webhooks and blocked bots are removed.
+async fn deliver(
+    context: &WorkerContext,
+    alert: &MinerAlert,
+    mut mail: OutgoingMail,
+    now: SystemTime,
+    counted: bool,
+) -> Result<bool> {
+    let account = alert.account.clone();
+    let day = utc_day(now);
+    let channels: Option<AlertChannels> = blocking(&context.store, move |store| {
+        if counted {
+            store.take_alert_send(&account, day, ALERT_DAILY_LIMIT)
+        } else {
+            Ok(store
+                .miner_alert_channels(&account)?
+                .filter(AlertChannels::any))
+        }
+    })
+    .await?;
+    let Some(channels) = channels else {
+        return Ok(false);
+    };
+    let mut sent = false;
+    let mut failure: Option<anyhow::Error> = None;
+    if let Some(email) = &channels.email {
+        mail.to = email.clone();
+        match context.service.mailer.send(&mail).await {
+            Ok(()) => sent = true,
+            Err(err) => failure = Some(err),
+        }
+    }
+    let chat = mail.chat.clone().unwrap_or_else(|| mail.text.clone());
+    if let Some(webhook) = &channels.discord {
+        match context.service.chat.discord(webhook, &chat).await {
+            Ok(()) => sent = true,
+            Err(ChatError::Gone) => {
+                tracing::info!(account = %alert.account, "discord webhook gone, removing it");
+                let account = alert.account.clone();
+                blocking(&context.store, move |store| {
+                    store.set_miner_alert_discord(&account, None, true, now)
+                })
+                .await?;
+            }
+            Err(ChatError::Failed(err)) => failure = Some(err),
+        }
+    }
+    if let Some(chat_id) = channels.telegram {
+        match context.service.chat.telegram(chat_id, &chat).await {
+            Ok(()) => sent = true,
+            Err(ChatError::Gone) => {
+                tracing::info!(account = %alert.account, "telegram chat gone, removing it");
+                blocking(&context.store, move |store| {
+                    store.clear_miner_alert_telegram_chat(chat_id)
+                })
+                .await?;
+            }
+            Err(ChatError::Failed(err)) => failure = Some(err),
+        }
+    }
+    if sent {
+        return Ok(true);
+    }
+    // Nothing accepted it: the day's allowance is not used up.
+    if counted {
+        let account = alert.account.clone();
+        let _ = blocking(&context.store, move |store| {
+            store.refund_alert_send(&account, day)
+        })
+        .await;
+    }
+    match failure {
+        Some(err) => Err(err),
+        None => Ok(false),
+    }
 }
 
 async fn send_counted(
@@ -815,38 +1147,20 @@ async fn send_counted(
     mail: OutgoingMail,
     now: SystemTime,
 ) -> Result<bool> {
-    let account = alert.account.clone();
-    let email = alert.email.clone();
-    let day = utc_day(now);
-    let allowed = blocking(&context.store, move |store| {
-        store.take_alert_send(&account, &email, day, ALERT_DAILY_LIMIT)
-    })
-    .await?;
-    if !allowed {
-        return Ok(false);
-    }
-    if let Err(err) = context.service.mailer.send(&mail).await {
-        // A failed send does not use up the day's allowance.
-        let account = alert.account.clone();
-        let _ = blocking(&context.store, move |store| {
-            store.refund_alert_send(&account, day)
-        })
-        .await;
-        return Err(err);
-    }
-    Ok(true)
+    deliver(context, alert, mail, now, true).await
 }
 
 async fn run_account(
     context: &WorkerContext,
     alert: &MinerAlert,
     now: SystemTime,
-    watch_rigs: bool,
+    pool_up_for: Duration,
 ) -> Result<()> {
     let config = &context.service.config;
     let account = alert.account.clone();
 
-    if alert.offline_minutes > 0 && watch_rigs {
+    let offline_threshold = Duration::from_secs(u64::from(alert.offline_minutes) * 60);
+    if alert.offline_minutes > 0 && pool_up_for >= offline_threshold {
         let activity_account = account.clone();
         let (activity, known) = blocking(&context.store, move |store| {
             Ok((
@@ -859,7 +1173,7 @@ async fn run_account(
             ))
         })
         .await?;
-        let threshold = now - Duration::from_secs(u64::from(alert.offline_minutes) * 60);
+        let threshold = now - offline_threshold;
         let rigs: Vec<Rig> = activity
             .into_iter()
             .map(|(name, last_share, work)| Rig {
@@ -894,7 +1208,7 @@ async fn run_account(
 
         if !stopped.is_empty() {
             let mail = offline_mail(config, alert, &stopped, &mining);
-            // Over today's limit the rigs are still marked, so the email is
+            // Over today's limit the rigs are still marked, so the alert is
             // not sent late; a send failure leaves them for the next pass.
             send_counted(context, alert, mail, now).await?;
             let marks: Vec<(String, SystemTime)> = stopped
@@ -917,6 +1231,19 @@ async fn run_account(
             })
             .await?;
         }
+    }
+
+    let drop_window = Duration::from_secs(u64::from(alert.hashrate_drop_minutes) * 60);
+    if alert.hashrate_drop_minutes > 0 && pool_up_for >= drop_window {
+        check_hashrate(context, alert, now, drop_window).await?;
+    }
+
+    if alert.notify_updates {
+        check_updates(context, alert, now).await?;
+    }
+
+    if alert.weekly_summary {
+        check_week(context, alert, now).await?;
     }
 
     let payout_account = account.clone();
@@ -976,6 +1303,198 @@ async fn run_account(
     Ok(())
 }
 
+/// What the hashrate check found for one rig.
+#[derive(Debug, PartialEq)]
+pub(crate) enum RateVerdict {
+    /// Below [`ALERT_DROP_RATIO`] of its usual rate for the whole window.
+    Dropped(RateChange),
+    /// Back to at least [`ALERT_RECOVER_RATIO`] of its usual rate.
+    Steady(RateChange),
+    /// Stopped sending shares (the stopped-mining alert covers that).
+    Stopped,
+    /// Not enough history, or in between.
+    Unclear,
+}
+
+/// Judges one rig: its rate over the last `window` against its average over
+/// the [`ALERT_DROP_BASELINE`] before that.
+pub(crate) fn rate_verdict(
+    rates: &pool_runtime::miner_settings::RigRates,
+    now: SystemTime,
+    window: Duration,
+) -> RateVerdict {
+    let recent_since = now - window;
+    if rates.last_share < now - HASHRATE_WINDOW {
+        return RateVerdict::Stopped;
+    }
+    let baseline_since = recent_since - ALERT_DROP_BASELINE;
+    let history_start = rates.first_share.max(baseline_since);
+    let history = recent_since
+        .duration_since(history_start)
+        .unwrap_or_default();
+    if history < ALERT_DROP_MIN_HISTORY || rates.baseline_work == 0 {
+        return RateVerdict::Unclear;
+    }
+    let usual = rates.baseline_work as f64 / history.as_secs_f64();
+    let now_rate = rates.recent_work as f64 / window.as_secs_f64();
+    let change = RateChange {
+        name: rates.worker.clone(),
+        now: now_rate,
+        usual,
+    };
+    if now_rate < usual * ALERT_DROP_RATIO {
+        RateVerdict::Dropped(change)
+    } else if now_rate >= usual * ALERT_RECOVER_RATIO {
+        RateVerdict::Steady(change)
+    } else {
+        RateVerdict::Unclear
+    }
+}
+
+async fn check_hashrate(
+    context: &WorkerContext,
+    alert: &MinerAlert,
+    now: SystemTime,
+    window: Duration,
+) -> Result<()> {
+    let config = &context.service.config;
+    let account = alert.account.clone();
+    let (rates, known) = blocking(&context.store, move |store| {
+        Ok((
+            store.alert_worker_rates(&account, now - window - ALERT_DROP_BASELINE, now - window)?,
+            store.alert_slow_workers(&account)?,
+        ))
+    })
+    .await?;
+    let mut dropped = Vec::new();
+    let mut steady = Vec::new();
+    let mut forget = Vec::new();
+    for rig in &rates {
+        match rate_verdict(rig, now, window) {
+            RateVerdict::Dropped(change) if !known.contains_key(&rig.worker) => {
+                dropped.push(change)
+            }
+            RateVerdict::Steady(change) if known.contains_key(&rig.worker) => steady.push(change),
+            RateVerdict::Stopped if known.contains_key(&rig.worker) => {
+                forget.push(rig.worker.clone())
+            }
+            _ => {}
+        }
+    }
+    // Rigs gone from the window entirely are forgotten too.
+    forget.extend(
+        known
+            .keys()
+            .filter(|worker| !rates.iter().any(|rig| &rig.worker == *worker))
+            .cloned(),
+    );
+    if !dropped.is_empty() {
+        send_counted(context, alert, slow_mail(config, alert, &dropped), now).await?;
+        let names: Vec<String> = dropped.iter().map(|rig| rig.name.clone()).collect();
+        let account = alert.account.clone();
+        blocking(&context.store, move |store| {
+            store.mark_alert_workers_slow(&account, &names, now)
+        })
+        .await?;
+    }
+    if !steady.is_empty() {
+        send_counted(context, alert, steady_mail(config, alert, &steady), now).await?;
+        forget.extend(steady.iter().map(|rig| rig.name.clone()));
+    }
+    if !forget.is_empty() {
+        let account = alert.account.clone();
+        blocking(&context.store, move |store| {
+            store.clear_alert_workers_slow(&account, &forget)
+        })
+        .await?;
+    }
+    Ok(())
+}
+
+/// Seine versions as (major, minor, patch); `None` for anything else.
+fn seine_version(raw: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = raw.trim().trim_start_matches('v');
+    let core = trimmed.split(['-', '+']).next().unwrap_or(trimmed);
+    let mut parts = core.split('.').map(|part| part.parse::<u64>().ok());
+    let version = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(version)
+}
+
+/// Rigs that mined in the last hour on a version older than `latest`.
+pub(crate) fn outdated_rigs(latest: &str, versions: &[(String, String)]) -> Vec<(String, String)> {
+    let Some(latest) = seine_version(latest) else {
+        return Vec::new();
+    };
+    let mut rigs: Vec<(String, String)> = versions
+        .iter()
+        .filter(|(_, version)| seine_version(version).is_some_and(|version| version < latest))
+        .cloned()
+        .collect();
+    rigs.sort();
+    rigs
+}
+
+async fn check_updates(context: &WorkerContext, alert: &MinerAlert, now: SystemTime) -> Result<()> {
+    let latest = context.miner_release.version();
+    if seine_version(&latest).is_none() || alert.update_notified == latest {
+        return Ok(());
+    }
+    // Versions only change on reconnect; every ten minutes is plenty.
+    let minute = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() / 60;
+    if !minute.is_multiple_of(10) {
+        return Ok(());
+    }
+    let account = alert.account.clone();
+    let versions = blocking(&context.store, move |store| {
+        store.alert_worker_versions(&account, now - Duration::from_secs(3600))
+    })
+    .await?;
+    let rigs = outdated_rigs(&latest, &versions);
+    if rigs.is_empty() {
+        return Ok(());
+    }
+    let mail = update_mail(&context.service.config, alert, &latest, &rigs);
+    // Over the day's limit the release still counts as told.
+    send_counted(context, alert, mail, now).await?;
+    let account = alert.account.clone();
+    blocking(&context.store, move |store| {
+        store.set_alert_update_notified(&account, &latest)
+    })
+    .await
+}
+
+async fn check_week(context: &WorkerContext, alert: &MinerAlert, now: SystemTime) -> Result<()> {
+    let week = utc_week(now);
+    if alert.summary_week >= week {
+        return Ok(());
+    }
+    let account = alert.account.clone();
+    let first = alert.summary_week == 0;
+    let taken = blocking(&context.store, move |store| {
+        store.take_alert_summary_week(&account, week)
+    })
+    .await?;
+    // The first week starts from when the summary was turned on.
+    if !taken || first {
+        return Ok(());
+    }
+    let start = utc_week_start(week - 1);
+    let account = alert.account.clone();
+    let (summary, unpaid) = blocking(&context.store, move |store| {
+        Ok((
+            store.alert_week_summary(&account, start, start + WEEK)?,
+            store.get_balance(&account)?.pending,
+        ))
+    })
+    .await?;
+    if summary.work == 0 && summary.paid == 0 {
+        return Ok(());
+    }
+    let mail = weekly_mail(&context.service.config, alert, start, &summary, unpaid);
+    deliver(context, alert, mail, now, false).await?;
+    Ok(())
+}
+
 async fn save_cursors(
     context: &WorkerContext,
     account: &str,
@@ -1001,6 +1520,15 @@ pub(crate) fn sample_alert(account: &str) -> MinerAlert {
         offline_minutes: 30,
         notify_payouts: true,
         notify_solo_blocks: false,
+        hashrate_drop_minutes: 30,
+        notify_updates: true,
+        weekly_summary: true,
+        discord_webhook: None,
+        telegram_chat_id: None,
+        telegram_name: None,
+        telegram_pending: false,
+        update_notified: String::new(),
+        summary_week: 0,
         payout_cursor: 0,
         block_cursor: 0,
         day: 0,
@@ -1078,6 +1606,58 @@ pub(crate) fn sample_mails(config: &AlertsConfig) -> Vec<(&'static str, Outgoing
             "solo",
             solo_mail(config, &alert, 72_140, 43_946_080_260, "rig-1", 60, 0.0),
         ),
+        (
+            "slow",
+            slow_mail(
+                config,
+                &alert,
+                &[RateChange {
+                    name: "rig-1".into(),
+                    now: 88.0,
+                    usual: 201.1,
+                }],
+            ),
+        ),
+        (
+            "steady",
+            steady_mail(
+                config,
+                &alert,
+                &[RateChange {
+                    name: "rig-1".into(),
+                    now: 198.4,
+                    usual: 201.1,
+                }],
+            ),
+        ),
+        (
+            "update",
+            update_mail(
+                config,
+                &alert,
+                "0.3.2",
+                &[
+                    ("laptop".into(), "0.3.1".into()),
+                    ("rig-1".into(), "0.2.26".into()),
+                ],
+            ),
+        ),
+        (
+            "weekly",
+            weekly_mail(
+                config,
+                &alert,
+                pool_runtime::miner_settings::utc_week_start(2965),
+                &pool_runtime::miner_settings::WeekSummary {
+                    work: 312 * 7 * 86_400,
+                    active_hours: 161,
+                    best_rig: Some(("rig-1".into(), 201 * 7 * 86_400)),
+                    paid: 4_865_000_000,
+                    payouts: 3,
+                },
+                42_000_000,
+            ),
+        ),
     ]
 }
 
@@ -1130,6 +1710,117 @@ mod tests {
         assert!(mail
             .text
             .contains("Unsubscribe (https://bntpool.com/alerts?unsubscribe="));
+    }
+
+    fn rates(
+        first_ago: u64,
+        last_ago: u64,
+        baseline: u64,
+        recent: u64,
+    ) -> (pool_runtime::miner_settings::RigRates, SystemTime) {
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        (
+            pool_runtime::miner_settings::RigRates {
+                worker: "rig-1".into(),
+                first_share: now - Duration::from_secs(first_ago),
+                last_share: now - Duration::from_secs(last_ago),
+                baseline_work: baseline,
+                recent_work: recent,
+            },
+            now,
+        )
+    }
+
+    #[test]
+    fn hashrate_drops_need_history_and_a_halved_rate() {
+        let window = Duration::from_secs(30 * 60);
+        // 6 h of history at 100 H/s before the window.
+        let usual = 100 * 6 * 3600;
+        let (rig, now) = rates(7 * 3600, 10, usual, 40 * 1800);
+        assert!(
+            matches!(rate_verdict(&rig, now, window), RateVerdict::Dropped(ref change)
+            if (change.usual - 100.0).abs() < 1e-9 && (change.now - 40.0).abs() < 1e-9)
+        );
+        let (rig, now) = rates(7 * 3600, 10, usual, 90 * 1800);
+        assert!(matches!(
+            rate_verdict(&rig, now, window),
+            RateVerdict::Steady(_)
+        ));
+        let (rig, now) = rates(7 * 3600, 10, usual, 65 * 1800);
+        assert_eq!(rate_verdict(&rig, now, window), RateVerdict::Unclear);
+        // Under an hour of history before the window: not judged.
+        let (rig, now) = rates(30 * 60 + 50 * 60, 10, 100 * 3000, 0);
+        assert_eq!(rate_verdict(&rig, now, window), RateVerdict::Unclear);
+        // No share for a while: the stopped alert covers it.
+        let (rig, now) = rates(7 * 3600, 20 * 60, usual, 0);
+        assert_eq!(rate_verdict(&rig, now, window), RateVerdict::Stopped);
+    }
+
+    #[test]
+    fn rigs_on_older_seine_releases_are_listed() {
+        let versions = vec![
+            ("b".to_string(), "0.3.1".to_string()),
+            ("a".to_string(), "v0.2.26".to_string()),
+            ("c".to_string(), "0.3.2".to_string()),
+            ("d".to_string(), "0.4.0-rc.1".to_string()),
+            ("e".to_string(), "custom".to_string()),
+        ];
+        assert_eq!(
+            outdated_rigs("0.3.2", &versions),
+            vec![
+                ("a".to_string(), "v0.2.26".to_string()),
+                ("b".to_string(), "0.3.1".to_string())
+            ]
+        );
+        assert!(outdated_rigs("", &versions).is_empty());
+    }
+
+    #[test]
+    fn chat_messages_carry_the_facts_and_the_stats_link() {
+        let config = AlertsConfig::default();
+        let alert = sample_alert("8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm");
+        let mail = payout_mail(&config, &alert, 1_245_000_000, 28_000, "abc", 4_865_000_000);
+        let chat = mail.chat.expect("chat text");
+        assert!(chat.starts_with("12.45 BNT is on its way\n"), "{chat}");
+        assert!(chat.contains("Amount: 12.45 BNT"), "{chat}");
+        assert!(
+            chat.contains("Open My Stats: https://bntpool.com/stats?miner=8yAUM9"),
+            "{chat}"
+        );
+        assert!(
+            chat.ends_with("bntpool.com alerts for 8yAUM9…1bVm"),
+            "{chat}"
+        );
+        assert!(!chat.contains('<'));
+        assert!(confirm_mail(&config, "a@b.co", "en", &alert.account, "t")
+            .chat
+            .is_none());
+    }
+
+    #[test]
+    fn weekly_summaries_round_uptime_and_name_the_best_rig() {
+        let config = AlertsConfig::default();
+        let alert = sample_alert("acct");
+        let summary = pool_runtime::miner_settings::WeekSummary {
+            work: 300 * 7 * 86_400,
+            active_hours: 161,
+            best_rig: Some(("rig-1".into(), 200 * 7 * 86_400)),
+            paid: 4_865_000_000,
+            payouts: 3,
+        };
+        let start = pool_runtime::miner_settings::utc_week_start(2965);
+        let mail = weekly_mail(&config, &alert, start, &summary, 42_000_000);
+        assert_eq!(mail.subject, "Your week on bntpool from 2026-10-26");
+        assert!(
+            mail.text.contains("2026-10-26 to 2026-11-01, UTC."),
+            "{}",
+            mail.text
+        );
+        assert!(mail.text.contains("Paid out: 48.65 BNT in 3 payouts"));
+        assert!(mail.text.contains("Unpaid now: 0.42 BNT"));
+        assert!(mail.text.contains("Average hashrate: 300.00 H/s"));
+        assert!(mail.text.contains("Mining time: 96% of the week"));
+        assert!(mail.text.contains("Best rig: rig-1 · 200.00 H/s"));
     }
 
     #[test]
@@ -1189,6 +1880,9 @@ mod tests {
                 format!("Subject: {}\n\n{}", mail.subject, mail.text),
             )
             .unwrap();
+            if let Some(chat) = &mail.chat {
+                std::fs::write(format!("{dir}/{name}.chat.txt"), chat).unwrap();
+            }
         }
     }
 }

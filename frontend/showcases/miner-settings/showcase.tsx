@@ -18,6 +18,12 @@ const STATES = {
   'link-confirm': 'Confirmation link opened (/alerts)',
   'link-unsubscribe': 'Unsubscribe link opened (/alerts)',
   'link-expired': 'Expired confirmation link (/alerts)',
+  'difficulty-set': 'Starting difficulty set to 50,000',
+  'private-on': 'Unlocked, stats private',
+  'public-private': 'Stats tab as a visitor sees private stats',
+  'alerts-all': 'Email, Discord and Telegram connected, all alerts on',
+  'discord-only': 'Discord only, no email',
+  'telegram-pending': 'Telegram waiting for Start in the bot',
   'no-password': 'Taken back elsewhere, no password yet',
   'public-hidden': 'Stats tab as a visitor sees hidden worker names',
   loading: 'Settings still loading',
@@ -48,16 +54,24 @@ const ts = (secondsAgo: number) => ({ secs_since_epoch: now - secondsAgo, nanos_
 const server = {
   claimed: state !== 'unclaimed',
   hasPassword: state !== 'unclaimed' && state !== 'no-password',
-  unlocked: ['unlocked', 'custom', 'exchange', 'alerts-pending', 'alerts-on'].includes(state),
+  unlocked: ['unlocked', 'custom', 'exchange', 'alerts-pending', 'alerts-on', 'difficulty-set', 'private-on', 'alerts-all',
+    'discord-only', 'telegram-pending'].includes(state),
   changedAt: now - 3 * 3600,
   minPayout: state === 'custom' ? 5 : state === 'exchange' ? 10 : 1,
   solo: state === 'custom',
   hide: state === 'custom' || state === 'public-hidden',
   unlockTries: 5,
   takeBackTries: 5,
-  alertEmail: state === 'alerts-pending' || state === 'alerts-on' ? 'miner@example.com' : '',
-  alertConfirmed: state === 'alerts-on',
-  alertChoices: { offline_minutes: 30, notify_payouts: true, notify_solo_blocks: false },
+  privateStats: state === 'private-on' || state === 'public-private',
+  startDifficulty: state === 'difficulty-set' ? 50_000 : null as number | null,
+  alertEmail: ['alerts-pending', 'alerts-on', 'alerts-all', 'telegram-pending'].includes(state) ? 'miner@example.com' : '',
+  alertConfirmed: ['alerts-on', 'alerts-all', 'telegram-pending'].includes(state),
+  discord: ['alerts-all', 'discord-only'].includes(state) ? 'discord.com/api/webhooks/1204…3qXw' : null as string | null,
+  telegram: (state === 'alerts-all' ? { name: '@rigfarm_ops' } : state === 'telegram-pending'
+    ? { pending: 'https://t.me/bntpool_alerts_bot?start=demo' } : null) as { name: string } | { pending: string } | null,
+  alertChoices: state === 'alerts-all'
+    ? { offline_minutes: 10, notify_payouts: true, notify_solo_blocks: true, hashrate_drop_minutes: 60, notify_updates: true, weekly_summary: true }
+    : { offline_minutes: 30, notify_payouts: true, notify_solo_blocks: false, hashrate_drop_minutes: 0, notify_updates: false, weekly_summary: false },
 };
 
 function settingsState(extra: Partial<MinerSettingsState> = {}): MinerSettingsState {
@@ -71,10 +85,17 @@ function settingsState(extra: Partial<MinerSettingsState> = {}): MinerSettingsSt
     default_min_payout: state === 'exchange' ? 10 : 1,
     max_min_payout: 10_000,
     your_ip: RIG_IP,
-    settings: server.unlocked ? { min_payout: server.minPayout, default_solo: server.solo, hide_workers: server.hide } : undefined,
+    settings: server.unlocked ? {
+      min_payout: server.minPayout, default_solo: server.solo, hide_workers: server.hide,
+      private_stats: server.privateStats, start_difficulty: server.startDifficulty,
+    } : undefined,
+    difficulty: { min: 60, max: 1_000_000_000, current: 9_400 },
     alerts_available: true,
+    telegram_available: true,
     alerts: server.unlocked
-      ? server.alertEmail ? { email: server.alertEmail, confirmed: server.alertConfirmed, ...server.alertChoices } : null
+      ? server.alertEmail || server.discord || server.telegram
+        ? { email: server.alertEmail, confirmed: server.alertConfirmed, discord: server.discord, telegram: server.telegram, ...server.alertChoices }
+        : null
       : undefined,
     ...extra,
   };
@@ -132,6 +153,17 @@ function settingsRoute(method: string, action: string, body: Record<string, unkn
     Object.assign(server, { alertEmail: String(body.email), alertConfirmed: false });
     return Response.json(settingsState());
   }
+  if (action === 'discord') {
+    if (!server.unlocked) return fail(401, 'locked');
+    if (path4 === 'remove') server.discord = null;
+    else server.discord = String(body.webhook).replace(/^https:\/\//, '').replace(/\/(\d{4})\d*\/([\w-]*)([\w-]{4})$/, '/$1…$3');
+    return Response.json(settingsState());
+  }
+  if (action === 'telegram') {
+    if (!server.unlocked) return fail(401, 'locked');
+    server.telegram = path4 === 'remove' ? null : { pending: 'https://t.me/bntpool_alerts_bot?start=demo' };
+    return Response.json(settingsState());
+  }
   if (method === 'PUT') {
     if (!server.unlocked) return fail(401, 'locked');
     if (saveMode === 'fail') {
@@ -145,8 +177,12 @@ function settingsRoute(method: string, action: string, body: Record<string, unkn
         resolve(Response.json(settingsState()));
       }, 4000));
     }
-    Object.assign(server, { minPayout: body.min_payout, solo: body.default_solo, hide: body.hide_workers });
-    if (body.alerts && server.alertEmail) server.alertChoices = body.alerts;
+    Object.assign(server, {
+      minPayout: body.min_payout, solo: body.default_solo, hide: body.hide_workers,
+      privateStats: body.private_stats ?? server.privateStats,
+      startDifficulty: body.start_difficulty === undefined ? server.startDifficulty : body.start_difficulty,
+    });
+    if (body.alerts && (server.alertEmail || server.discord || server.telegram)) server.alertChoices = body.alerts;
     touch();
     return Response.json(settingsState());
   }
@@ -170,6 +206,10 @@ const worker = (name: string, rate: number, lastShare: number) => ({
 });
 
 function miner(): MinerResponse {
+  if (server.privateStats && !server.unlocked) {
+    return { private_stats: true, hashrate: 0, mining_since: ts(0), workers: [], shares: [], blocks_found: 0,
+      total_accepted: 0, total_rejected: 0, payouts: [] } as unknown as MinerResponse;
+  }
   // A visitor sees numbered rigs when the owner hides names.
   const hidden = server.hide && !server.unlocked;
   return {
@@ -220,7 +260,7 @@ window.fetch = async (input, init) => {
   return json({});
 };
 
-const tab = state === 'public-hidden' ? '' : '#settings';
+const tab = state === 'public-hidden' || state === 'public-private' ? '' : '#settings';
 const linkToken = 'c'.repeat(64);
 if (state === 'link-confirm' || state === 'link-expired') {
   history.replaceState(null, '', `/alerts?confirm=${linkToken}&${params}`);

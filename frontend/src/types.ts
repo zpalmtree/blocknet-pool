@@ -189,6 +189,8 @@ export interface ActiveVerificationHold {
 }
 
 export interface MinerResponse {
+  /** The owner keeps stats private and this browser has not unlocked them; other fields are empty. */
+  private_stats?: boolean;
   hashrate: number;
   solo_hashrate?: number;
   mining_since: UnixLike;
@@ -529,7 +531,11 @@ export interface MinerSettingsValues {
   min_payout: number;
   default_solo: boolean;
   hide_workers: boolean;
-  /** Alert choices; ignored until an alert email is set. */
+  /** Visitors see no hashrate, balance, payouts or rigs. */
+  private_stats?: boolean;
+  /** Share difficulty this address's rigs start at; null lets the pool choose. */
+  start_difficulty?: number | null;
+  /** Alert choices; ignored until an alert channel is set. */
   alerts?: MinerAlertChoices;
 }
 
@@ -538,11 +544,21 @@ export interface MinerAlertChoices {
   offline_minutes: number;
   notify_payouts: boolean;
   notify_solo_blocks: boolean;
+  /** 0 turns hashrate-drop alerts off. */
+  hashrate_drop_minutes?: number;
+  /** A rig runs a Seine version older than the latest release. */
+  notify_updates?: boolean;
+  weekly_summary?: boolean;
 }
 
 export interface MinerAlertState extends MinerAlertChoices {
+  /** Empty when alerts only go to Discord or Telegram. */
   email: string;
   confirmed: boolean;
+  /** The saved Discord webhook, shortened for display. */
+  discord?: string | null;
+  /** The connected Telegram chat; `pending` while waiting for Start in the bot. */
+  telegram?: { name: string } | { pending: string } | null;
 }
 
 export interface MinerSettingsState {
@@ -563,8 +579,12 @@ export interface MinerSettingsState {
   settings?: MinerSettingsValues;
   /** The pool sends alert emails. */
   alerts_available?: boolean;
+  /** Alerts can also go to Telegram. */
+  telegram_available?: boolean;
   /** The alert email, for an unlocked caller; null when none is set. */
   alerts?: MinerAlertState | null;
+  /** Share difficulties a miner may start at, and about where this address's rigs are now. */
+  difficulty?: { min: number; max: number; current: number | null };
   /** After a take-back: the rig network's part of the account's work. */
   share?: number;
 }

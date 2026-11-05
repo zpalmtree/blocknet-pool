@@ -2,7 +2,7 @@ Subject: 3 rigs stopped mining
 
 3 rigs stopped mining
 
-These rigs haven't sent a share for 30 min. We'll email you when they start again.
+These rigs haven't sent a share for 30 min. We'll tell you when they start again.
 
 rig-1: since 2026-11-05 04:12 UTC
 rig-2: since 2026-11-05 04:12 UTC

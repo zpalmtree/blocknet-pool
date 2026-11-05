@@ -1,0 +1,12 @@
+Subject: rig-1's hashrate halved
+
+rig-1's hashrate halved
+
+rig-1 has run below half its usual hashrate for 30 min while still sending shares. A crashed GPU, overheating or a stuck process are common causes.
+
+rig-1: 88.00 H/s now, usually 201.10 H/s
+
+Open My Stats: https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm
+
+--
+You get this because alerts are on for miner 8yAUM9…1bVm on bntpool.com. Change alerts (https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm#settings) · Unsubscribe (https://bntpool.com/alerts?unsubscribe=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
