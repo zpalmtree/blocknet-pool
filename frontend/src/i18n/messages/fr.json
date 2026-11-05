@@ -406,14 +406,11 @@
   "newsEmpty": "Aucune nouveauté pour l’instant.",
   "newsSettingsTitle": "Paramètres dans Mes statistiques",
   "newsSettingsBody": "Protégez votre compte par un mot de passe, puis choisissez votre propre paiement minimum, le minage solo par défaut ou masquez les noms de vos workers sur les pages publiques.",
-  "newsSettingsShort": "Mot de passe, paiement minimum, solo par défaut et noms de workers masqués.",
   "newsSettingsLink": "Ouvrir Mes statistiques",
   "newsSoloTitle": "Minage solo",
   "newsSoloBody": "Ajoutez {0} devant votre adresse dans seine v0.3.1 ou plus récent et gardez la récompense entière de chaque bloc trouvé par vos machines. Aucun nœud à faire tourner.",
-  "newsSoloShort": "Gardez la récompense entière de chaque bloc trouvé par vos machines.",
   "newsSoloLink": "Guide du minage solo",
   "newsMinPayoutTitle": "Paiement minimum de 1 BNT",
   "newsMinPayoutBody": "Les paiements commencent désormais à 1 BNT vers votre propre portefeuille, ou à 10 BNT vers un dépôt sur une plateforme d’échange.",
-  "newsMinPayoutShort": "Les paiements commencent désormais à 1 BNT.",
   "newsMinPayoutLink": "Comment vous êtes payé"
 }

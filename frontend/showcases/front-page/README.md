@@ -35,7 +35,7 @@ pool, explorer or analytics endpoint. States:
   from the last 30 days.
 
 Add `news=on` to any state to see pool news as a visitor who hasn't dismissed it: a strip under the menu on
-every page except the archive, with the two newest items from the last 30 days (one line each, with its link),
+every page except the archive, with the two newest items from the last 30 days (one linked chip each),
 All news and a dismiss button, and a dot on the My Stats Settings tab until Settings is opened once. Without it every state
 shows the page as it looks once the news is dismissed. News captures live in `../pool-news/captures/`.
 
