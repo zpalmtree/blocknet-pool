@@ -289,6 +289,8 @@
   "payoutOf": "{0} / {1}",
   "lastPayout": "上次支付 {0}，{1}。",
   "payoutReady": "可以支付",
+  "payoutIn": "{0}後支付",
+  "payoutNow": "正在支付",
   "payoutQueuedTag": "支付已排隊",
   "fullStats": "完整統計",
   "workersOutdatedOne": "1 個工作節點正在執行舊版 seine。",

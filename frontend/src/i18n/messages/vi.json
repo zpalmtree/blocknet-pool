@@ -289,6 +289,8 @@
   "payoutOf": "{0} trên {1}",
   "lastPayout": "Lần thanh toán gần nhất {0}, {1}.",
   "payoutReady": "Sẵn sàng thanh toán",
+  "payoutIn": "Thanh toán sau {0}",
+  "payoutNow": "Đang thanh toán",
   "payoutQueuedTag": "Thanh toán đang xếp hàng",
   "fullStats": "Thống kê đầy đủ",
   "workersOutdatedOne": "1 công nhân đang chạy phiên bản seine cũ.",

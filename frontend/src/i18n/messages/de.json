@@ -289,6 +289,8 @@
   "payoutOf": "{0} von {1}",
   "lastPayout": "Letzte Auszahlung {0}, {1}.",
   "payoutReady": "Bereit zur Auszahlung",
+  "payoutIn": "Auszahlung in {0}",
+  "payoutNow": "Wird jetzt ausgezahlt",
   "payoutQueuedTag": "Auszahlung vorgemerkt",
   "fullStats": "Alle Statistiken",
   "workersOutdatedOne": "1 Worker nutzt eine ältere seine-Version.",

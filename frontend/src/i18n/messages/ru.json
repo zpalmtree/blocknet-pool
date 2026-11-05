@@ -289,6 +289,8 @@
   "payoutOf": "{0} из {1}",
   "lastPayout": "Последняя выплата {0}, {1}.",
   "payoutReady": "Готово к выплате",
+  "payoutIn": "Выплата через {0}",
+  "payoutNow": "Идёт выплата",
   "payoutQueuedTag": "Выплата в очереди",
   "fullStats": "Вся статистика",
   "workersOutdatedOne": "1 рабочий использует старую версию seine.",

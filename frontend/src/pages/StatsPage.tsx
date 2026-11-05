@@ -521,6 +521,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                 confirmed={balanceUnavailable ? undefined : liveBalance?.pending_confirmed}
                 queued={pendingQueued}
                 liveTick={liveTick}
+                nextSweepAt={payoutEta?.next_sweep_at}
               />
             </div>
             <dl className="stats-summary-nums">

@@ -289,6 +289,8 @@
   "payoutOf": "{0} / {1}",
   "lastPayout": "마지막 지급 {0}, {1}.",
   "payoutReady": "지급 준비 완료",
+  "payoutIn": "{0} 후 지급",
+  "payoutNow": "지금 지급 중",
   "payoutQueuedTag": "지급 대기 중",
   "fullStats": "전체 통계",
   "workersOutdatedOne": "워커 1대가 이전 버전의 seine을 실행 중입니다.",

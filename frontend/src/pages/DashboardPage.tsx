@@ -6,6 +6,7 @@ import { ExplorerLink } from '../components/ExplorerLink';
 import { HashrateChart } from '../components/HashrateChart';
 import { MiningType, POOL_ICON } from '../components/MiningType';
 import { PoolGuide } from '../components/PoolGuide';
+import { ReadyTag } from '../components/PayoutProgress';
 import { RangeTabs } from '../components/RangeTabs';
 import {
   formatCoinAmount,
@@ -31,6 +32,7 @@ import type {
   Range,
   StatsInsightsResponse,
   StatsResponse,
+  UnixLike,
 } from '../types';
 
 interface DashboardPageProps {
@@ -195,6 +197,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
               loading={returning.status === 'loading'}
               destination={destination}
               poolInfo={poolInfo}
+              nextSweepAt={insights?.payout_eta?.next_sweep_at}
               onForget={forgetMiner}
             />
           ) : (
@@ -335,10 +338,11 @@ interface MinerHeroProps {
   loading: boolean;
   destination: SavedDestination;
   poolInfo: InfoResponse | null;
+  nextSweepAt?: UnixLike | null;
   onForget: () => void;
 }
 
-function MinerHero({ miner, balance, loading, destination, poolInfo, onForget }: MinerHeroProps) {
+function MinerHero({ miner, balance, loading, destination, poolInfo, nextSweepAt, onForget }: MinerHeroProps) {
   const exchange = knownExchange(poolInfo, destination.address);
   const memoAccount = !!destination.memo;
   const who = exchange ? t('exchangeDeposit', [exchange.name]) : shortAddr(destination.address);
@@ -372,7 +376,7 @@ function MinerHero({ miner, balance, loading, destination, poolInfo, onForget }:
             {recentPayout && <span className="home-pay-sub">{t('lastPayout', [formatCoins(recentPayout.amount), timeAgo(recentPayout.timestamp)])}</span>}
           </>}
           {payout.state === 'ready' && <>
-            <div className="home-pay-top"><span className="home-tag"><i aria-hidden="true" />{t('payoutReady')}</span>
+            <div className="home-pay-top"><ReadyTag className="home-tag" nextSweepAt={nextSweepAt} />
               <strong dir="ltr">{formatCoins(payout.amount)}</strong></div>
             <div className="home-bar"><div style={{ width: '100%' }} /></div>
           </>}

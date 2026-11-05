@@ -289,6 +289,8 @@
   "payoutOf": "{0} z {1}",
   "lastPayout": "Ostatnia wypłata {0}, {1}.",
   "payoutReady": "Gotowe do wypłaty",
+  "payoutIn": "Wypłata za {0}",
+  "payoutNow": "Trwa wypłata",
   "payoutQueuedTag": "Wypłata w kolejce",
   "fullStats": "Pełne statystyki",
   "workersOutdatedOne": "1 worker korzysta ze starszej wersji seine.",

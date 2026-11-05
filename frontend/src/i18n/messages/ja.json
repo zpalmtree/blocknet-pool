@@ -289,6 +289,8 @@
   "payoutOf": "{0} / {1}",
   "lastPayout": "前回の支払い：{0}（{1}）。",
   "payoutReady": "支払い準備完了",
+  "payoutIn": "{0}後に支払い",
+  "payoutNow": "支払い中",
   "payoutQueuedTag": "支払い待ち",
   "fullStats": "すべての統計",
   "workersOutdatedOne": "1台のワーカーが古いバージョンの seine を実行しています。",

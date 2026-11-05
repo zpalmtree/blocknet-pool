@@ -289,6 +289,8 @@
   "payoutOf": "{0} จาก {1}",
   "lastPayout": "จ่ายล่าสุด {0} เมื่อ {1}",
   "payoutReady": "พร้อมจ่าย",
+  "payoutIn": "จ่ายในอีก {0}",
+  "payoutNow": "กำลังจ่าย",
   "payoutQueuedTag": "ยอดจ่ายอยู่ในคิว",
   "fullStats": "สถิติทั้งหมด",
   "workersOutdatedOne": "ผู้ขุด 1 เครื่องใช้ seine เวอร์ชันเก่า",

@@ -289,6 +289,8 @@
   "payoutOf": "{0} / {1}",
   "lastPayout": "Son ödeme {0}, {1}.",
   "payoutReady": "Ödemeye hazır",
+  "payoutIn": "{0} içinde ödeme",
+  "payoutNow": "Şimdi ödeniyor",
   "payoutQueuedTag": "Ödeme sırada",
   "fullStats": "Tüm istatistikler",
   "workersOutdatedOne": "1 çalışan eski bir seine sürümü kullanıyor.",
