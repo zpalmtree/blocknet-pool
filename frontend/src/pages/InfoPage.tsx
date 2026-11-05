@@ -70,8 +70,8 @@ export function InfoPage({ poolInfo }: InfoPageProps) {
   return (
     <div id="page-info">
       <div className="page-header">
-        <span className="page-kicker">{t('infoNav')}</span>
-        <h1>{t('infoHeading')}</h1>
+        <span className="page-kicker">{t('infoHeading')}</span>
+        <h1>{t('infoNav')}</h1>
       </div>
 
       <div className="card section" id="payouts">
