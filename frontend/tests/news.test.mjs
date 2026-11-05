@@ -18,7 +18,8 @@ test('items stay fresh for the window from their day', () => {
   const news = item('2026-12-01');
   assert.equal(isFresh(news, at('2026-11-30')), false, 'not yet published');
   assert.equal(isFresh(news, at('2026-12-01', 0)), true);
-  assert.equal(isFresh(news, at('2026-12-30', 23)), true);
+  assert.equal(isFresh(news, at('2026-12-14', 23)), true, 'last day');
+  assert.equal(isFresh(news, at('2026-12-15', 0)), false, 'gone after two weeks');
   assert.equal(isFresh(news, Date.parse('2026-12-01T00:00:00Z') + NEWS_FRESH_DAYS * 86_400_000), false);
 });
 
