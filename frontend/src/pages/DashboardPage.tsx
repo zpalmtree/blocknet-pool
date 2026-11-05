@@ -183,6 +183,10 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
 
   const payoutEta = insights?.payout_eta;
   const recentBlocks = (insights?.luck_history ?? []).filter((row) => !row.orphaned).slice(0, 5);
+  const lastFound = recentBlocks[0];
+  // The job height is the block being mined; the chain tip is one below it.
+  const jobHeight = stats?.chain.current_job_height;
+  const tipHeight = jobHeight != null && jobHeight > 0 ? jobHeight - 1 : null;
   const payoutShortfall = payoutEta?.wallet_spendable == null ? 0 : Math.max(0, payoutEta.pending_total_amount - payoutEta.wallet_spendable);
   const payoutLiquidityConstrained = payoutEta != null && payoutEta.pending_total_amount > 0 && payoutShortfall > 0;
 
@@ -260,7 +264,10 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
         </div>
         <div>
           <span className="home-num" dir="ltr">{networkHashrate > 0 ? humanRate(networkHashrate) : '-'}</span>
-          <span className="home-cap">{t('bandNetwork')}</span>
+          <span className="home-cap">
+            {t('bandNetwork')}
+            {tipHeight != null && <> · {tx('bandHeight', [<bdi key="height" dir="ltr">{tipHeight.toLocaleString(locale)}</bdi>])}</>}
+          </span>
         </div>
         <div>
           <span className="home-num" title={paidTotal != null ? formatCoins(paidTotal) : undefined}>{paidTotal != null ? formatCompactCoins(paidTotal) : '-'}</span>
@@ -291,7 +298,11 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
 
         <div className="home-feeds">
           <section aria-labelledby="home-blocks-title">
-            <div className="home-head"><h2 id="home-blocks-title">{t('recentBlocks')}</h2><a href={localizePath('/luck')}>{t('m431')}</a></div>
+            <div className="home-head">
+              <h2 id="home-blocks-title">{t('recentBlocks')}</h2>
+              {lastFound && <span className="home-head-meta" title={timestampTitle(lastFound.timestamp)}>{t('lastFound', [timeAgo(lastFound.timestamp)])}</span>}
+              <a href={localizePath('/luck')}>{t('m431')}</a>
+            </div>
             <ol className="home-list">
               {!recentBlocks.length ? <li className="home-empty">{t('m436')}</li> : recentBlocks.map((row) => (
                 <li key={`${row.block_height}-${row.block_hash}`}>

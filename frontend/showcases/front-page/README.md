@@ -8,8 +8,8 @@ The real App, front page and Luck page run against synthetic API responses; noth
 pool, explorer or analytics endpoint. States:
 
 - `first`: no saved lookup. The deep green hero leads with the pool fee, the Stratum address and a
-  miner lookup, followed by the number band (miners, pool hashrate, network hashrate, paid; two by two
-  under 1100 px, stacked on phones), Quick Start, recent blocks and payouts, the hashrate
+  miner lookup, followed by the number band (miners, pool hashrate, network hashrate with the chain height, paid; two by two
+  under 1100 px, stacked on phones), Quick Start, recent blocks (the heading says when the pool last found one) and payouts, the hashrate
   chart and the mining guide.
 - `below`, `ready`, `queued`, `paid`: a saved lookup turns the hero into the visitor's miner, with
   hashrate, one next-payout bar and Full stats; the side panel keeps Stratum and the pool fee. Below the minimum
@@ -52,4 +52,4 @@ badges, and labels and tables without all caps.
 The 37 captures in `captures/` (see `captures.html`) cover these states at 1280 px and 390 px, dark
 mode and Arabic. Every capture uses synthetic data. `chrome=off` also hides the scrollbar, so a
 full-page phone capture keeps its full 390 px width. Source: blocknet-pool branch front-page-redesign.
-Captured 2026-11-03 through the shared Playwright browser.
+Captured 2026-11-03 through the shared Playwright browser; front-page states recaptured 2026-11-05 with the chain height and last-found time.
