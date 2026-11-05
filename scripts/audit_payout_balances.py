@@ -70,14 +70,18 @@ def audit(database, config_path, include_addresses):
     has_destinations = subprocess.run(psql, input="SELECT to_regclass('payout_destinations') IS NOT NULL;", text=True, capture_output=True, check=True, timeout=20).stdout.strip() == "t"
     destination_fields = ", 'destination',d.address,'memo',d.memo" if has_destinations else ""
     destination_join = "LEFT JOIN payout_destinations d ON d.account_id=b.address" if has_destinations else ""
+    # Minimums miners chose on My Stats (never below the regular minimum).
+    has_settings = subprocess.run(psql, input="SELECT to_regclass('miner_settings') IS NOT NULL;", text=True, capture_output=True, check=True, timeout=20).stdout.strip() == "t"
+    settings_fields = ", 'chosen_minimum',s.min_payout" if has_settings else ""
+    settings_join = "LEFT JOIN miner_settings s ON s.account=b.address" if has_settings else ""
     shared_addresses = {entry["address"] for entry in config["shared_exchange_addresses"]} if "shared_exchange_addresses" in config else DEFAULT_SHARED_ADDRESSES
     if not config.get("enforce_shared_exchange_memos", False):
         shared_addresses = set()
     memo_minimum = max(minimum, round(float(config.get("memo_min_payout_amount", 0)) * 100_000_000))
     sql = f"""BEGIN READ ONLY;
 SET LOCAL statement_timeout = '15s';
-SELECT json_build_object('address',b.address,'pending',b.pending{destination_fields})
-FROM balances b {destination_join} WHERE b.pending > 0 ORDER BY b.pending DESC;
+SELECT json_build_object('address',b.address,'pending',b.pending{destination_fields}{settings_fields})
+FROM balances b {destination_join} {settings_join} WHERE b.pending > 0 ORDER BY b.pending DESC;
 COMMIT;"""
     result = subprocess.run(psql, input=sql, text=True, capture_output=True, check=True, timeout=20)
     report = {"minimum_atomic": minimum, "memo_minimum_atomic": memo_minimum, "eligible_count": 0, "eligible_atomic": 0,
@@ -94,6 +98,8 @@ COMMIT;"""
             report["blocked_atomic"] += row["pending"]
         else:
             account_minimum = memo_minimum if row["address"].startswith("memo:") else minimum
+            if row.get("chosen_minimum") is not None:
+                account_minimum = max(minimum, row["chosen_minimum"])
             bucket = "eligible" if row["pending"] >= account_minimum else "below_minimum"
             report[bucket + "_count"] += 1
             report[bucket + "_atomic"] += row["pending"]

@@ -308,6 +308,12 @@ impl Config {
                 .any(|entry| entry.address == address)
     }
 
+    /// The lowest minimum payout any account may choose on My Stats.
+    pub fn payout_floor(&self) -> f64 {
+        self.min_payout_amount
+    }
+
+    /// An account's minimum payout unless its miner chose another.
     pub fn payout_minimum(&self, account: &str) -> f64 {
         if account.starts_with(pool_common::destination::MEMO_ACCOUNT_PREFIX) {
             self.min_payout_amount.max(self.memo_min_payout_amount)

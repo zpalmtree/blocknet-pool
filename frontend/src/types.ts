@@ -529,7 +529,10 @@ export interface MinerSettingsState {
   has_password: boolean;
   unlocked: boolean;
   changed_at: number | null;
+  /** Lowest minimum any account may choose (BNT). */
   pool_min_payout: number;
+  /** This account's minimum without a choice; higher for exchange accounts. */
+  default_min_payout: number;
   max_min_payout: number;
   /** The caller's own IP group, to fill in the take-back form. */
   your_ip: string | null;

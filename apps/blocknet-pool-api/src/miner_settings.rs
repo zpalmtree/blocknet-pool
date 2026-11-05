@@ -361,23 +361,34 @@ impl MinerSettingsService {
         }
     }
 
-    fn pool_minimum(&self, account: &str) -> u64 {
+    /// An account's minimum payout unless its miner chose another
+    /// (higher for exchange accounts).
+    fn default_minimum(&self, account: &str) -> u64 {
         (self.runtime.payout_minimum(account) * ATOMIC_PER_BNT as f64).round() as u64
+    }
+
+    /// The lowest minimum payout any account may choose.
+    fn floor_minimum(&self) -> u64 {
+        (self.runtime.payout_floor() * ATOMIC_PER_BNT as f64).round() as u64
     }
 
     /// Highest minimum payout the account may choose: what one payout may send.
     fn max_min_payout(&self, account: &str) -> u64 {
         let atomic = |bnt: f64| (bnt.max(0.0) * ATOMIC_PER_BNT as f64).round() as u64;
         max_min_payout(
-            self.pool_minimum(account),
+            self.default_minimum(account),
             atomic(self.runtime.payout_max_per_recipient),
             atomic(self.runtime.payout_max_total_per_tick),
         )
     }
 
+    fn effective_minimum(&self, account: &str, chosen: Option<u64>) -> u64 {
+        effective_min_payout(self.default_minimum(account), self.floor_minimum(), chosen)
+    }
+
     /// The minimum payout that applies to an account, in BNT.
     pub(crate) fn effective_min_payout_coins(&self, account: &str, chosen: Option<u64>) -> f64 {
-        coins(effective_min_payout(self.pool_minimum(account), chosen))
+        coins(self.effective_minimum(account, chosen))
     }
 
     async fn blocking<T, F>(&self, operation: F) -> Result<T, ApiError>
@@ -573,20 +584,20 @@ impl MinerSettingsService {
         record: Option<&MinerSettingsRecord>,
         unlocked: bool,
     ) -> Value {
-        let pool_minimum = self.pool_minimum(&caller.account);
         let mut body = json!({
             "account": caller.account,
             "claimed": record.is_some(),
             "has_password": record.is_some_and(|record| record.password_hash.is_some()),
             "unlocked": unlocked,
             "changed_at": record.map(|record| to_unix(record.changed_at)),
-            "pool_min_payout": coins(pool_minimum),
+            "pool_min_payout": coins(self.floor_minimum()),
+            "default_min_payout": coins(self.default_minimum(&caller.account)),
             "max_min_payout": coins(self.max_min_payout(&caller.account)),
             "your_ip": caller.client,
         });
         if let (true, Some(record)) = (unlocked, record) {
             body["settings"] = json!({
-                "min_payout": coins(effective_min_payout(pool_minimum, record.settings.min_payout)),
+                "min_payout": coins(self.effective_minimum(&caller.account, record.settings.min_payout)),
                 "default_solo": record.settings.default_solo,
                 "hide_workers": record.settings.hide_workers,
             });
@@ -907,7 +918,8 @@ impl MinerSettingsService {
 
     async fn save(&self, caller: Caller, request: SettingsRequest) -> ApiResult {
         let record = self.require_unlocked(&caller).await?;
-        let pool_minimum = self.pool_minimum(&caller.account);
+        let default_minimum = self.default_minimum(&caller.account);
+        let floor = self.floor_minimum();
         let min_payout = match request.min_payout {
             None => None,
             Some(value) if value.is_finite() && value > 0.0 => {
@@ -920,12 +932,13 @@ impl MinerSettingsService {
                     ));
                 }
                 let maximum = self.max_min_payout(&caller.account);
-                let atomic = validate_min_payout(atomic as u64, pool_minimum, maximum).map_err(
-                    |message| ApiError::new(StatusCode::BAD_REQUEST, "invalid_settings", &message),
-                )?;
-                // The pool's own minimum is stored as "no choice", so it
-                // follows the pool if that changes.
-                (atomic != pool_minimum).then_some(atomic)
+                let atomic =
+                    validate_min_payout(atomic as u64, floor, maximum).map_err(|message| {
+                        ApiError::new(StatusCode::BAD_REQUEST, "invalid_settings", &message)
+                    })?;
+                // The account's default (10 BNT for exchange accounts on
+                // bntpool) is stored as "no choice", so it follows the pool.
+                (atomic != default_minimum).then_some(atomic)
             }
             Some(_) => {
                 return Err(ApiError::new(
@@ -1322,6 +1335,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{state}");
         assert_eq!(state["unlocked"], true);
         assert_eq!(state["settings"]["min_payout"], 1.0);
+        assert_eq!(state["pool_min_payout"], 1.0);
+        assert_eq!(state["default_min_payout"], 1.0);
         assert!(owner.cookie.is_some());
         let (status, _) = stranger
             .send(

@@ -552,6 +552,10 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
     fn miner_default_solo(&self, _account: &str) -> Result<bool> {
         Ok(false)
     }
+    /// The minimum payout chosen on My Stats, in atomic units.
+    fn miner_min_payout(&self, _account: &str) -> Result<Option<u64>> {
+        Ok(None)
+    }
     /// Adds accepted work; rows are `(account, ip_group, hour, work)` with
     /// unique keys.
     fn add_miner_source_work(&self, _rows: &[(String, String, i64, u64)]) -> Result<()> {
@@ -1407,8 +1411,17 @@ impl PoolEngine {
                 .capabilities
                 .push(pool_common::destination::CAP_PAYOUT_MEMO.into());
             result.payout_account = Some(address.to_string());
-            result.min_payout_atomic =
-                Some((self.cfg().payout_minimum(address) * 100_000_000.0).round() as u64);
+            // The minimum that applies, including one chosen on My Stats.
+            let atomic = |bnt: f64| (bnt * 100_000_000.0).round() as u64;
+            let chosen = self.store.miner_min_payout(address).unwrap_or_else(|err| {
+                tracing::warn!(address = %address, error = %err, "failed reading chosen payout minimum");
+                None
+            });
+            result.min_payout_atomic = Some(crate::miner_settings::effective_min_payout(
+                atomic(self.cfg().payout_minimum(address)),
+                atomic(self.cfg().payout_floor()),
+                chosen,
+            ));
         }
         Ok(result)
     }
@@ -7893,6 +7906,58 @@ mod tests {
                 &[pool_common::destination::CAP_PAYOUT_MEMO.into()]
             )
             .is_err());
+    }
+
+    #[test]
+    fn exchange_logins_report_a_minimum_chosen_below_the_exchange_default() {
+        let Some(store) = crate::store::PoolStore::test_store() else {
+            return;
+        };
+        let mut config = cfg();
+        config.payout_memos_enabled = true;
+        config.min_payout_amount = 1.0;
+        config.memo_min_payout_amount = 10.0;
+        let validation = Arc::new(ValidationEngine::new(
+            config.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let engine = PoolEngine::new(
+            config,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        let caps = vec![
+            "submit_claimed_hash".to_string(),
+            pool_common::destination::CAP_PAYOUT_MEMO.into(),
+        ];
+        let address = test_miner_address();
+        let chosen = engine
+            .prepare_payout_destination(&address, Some("LOW001"), &caps)
+            .unwrap();
+        let untouched = engine
+            .prepare_payout_destination(&address, Some("DEF001"), &caps)
+            .unwrap();
+        let now = SystemTime::now();
+        assert!(store
+            .claim_miner_settings(&chosen, "hash", "203.0.113.1", now)
+            .unwrap());
+        assert!(store
+            .update_miner_settings(
+                &chosen,
+                (Some("hash"), "203.0.113.1"),
+                &crate::miner_settings::MinerSettings {
+                    min_payout: Some(200_000_000),
+                    ..Default::default()
+                },
+                now,
+            )
+            .unwrap());
+        let ack = engine.login("low", chosen, "rig", 2, caps.clone()).unwrap();
+        assert_eq!(ack.min_payout_atomic, Some(200_000_000));
+        let ack = engine.login("default", untouched, "rig", 2, caps).unwrap();
+        assert_eq!(ack.min_payout_atomic, Some(1_000_000_000));
     }
 
     #[test]

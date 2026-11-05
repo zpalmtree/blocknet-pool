@@ -1392,7 +1392,8 @@ impl PayoutProcessor {
                 return;
             }
         };
-        // Minimums miners chose on My Stats; never below the pool's.
+        // Minimums miners chose on My Stats; never below the pool's regular
+        // minimum, even for exchange accounts.
         let chosen_minimums = match self.store.miner_min_payouts() {
             Ok(v) => v,
             Err(err) => {
@@ -1416,6 +1417,7 @@ impl PayoutProcessor {
             }
             let account_minimum = crate::miner_settings::effective_min_payout(
                 atomic_amount_from_coins(self.cfg.payout_minimum(&bal.address)),
+                atomic_amount_from_coins(self.cfg.payout_floor()),
                 chosen_minimums.get(&bal.address).copied(),
             );
             let existing_pending = match self.store.get_pending_payout(&bal.address) {

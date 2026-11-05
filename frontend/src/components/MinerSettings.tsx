@@ -35,11 +35,12 @@ function formatShare(share: number): string {
   return new Intl.NumberFormat(lang(), { style: 'percent', maximumFractionDigits: 0 }).format(share);
 }
 
-/** "45 minutes" or "3 hours", rounded up. */
+/** "in 45 minutes" or "in 3 hours", rounded up, in the page language. */
 function formatWait(seconds: number): string {
   const minutes = Math.max(1, Math.ceil(seconds / 60));
-  const [value, unit] = minutes < 90 ? [minutes, 'minute'] : [Math.ceil(minutes / 60), 'hour'];
-  return new Intl.NumberFormat(lang(), { style: 'unit', unit, unitDisplay: 'long' }).format(value);
+  const [value, unit]: [number, Intl.RelativeTimeFormatUnit] =
+    minutes < 90 ? [minutes, 'minute'] : [Math.ceil(minutes / 60), 'hour'];
+  return new Intl.RelativeTimeFormat(lang(), { numeric: 'always' }).format(value, unit);
 }
 
 /** A form message for a refused request. */

@@ -525,6 +525,13 @@ impl ShareStore for PoolStore {
         Ok(solo)
     }
 
+    fn miner_min_payout(&self, account: &str) -> Result<Option<u64>> {
+        Ok(self
+            .inner
+            .miner_settings(account)?
+            .and_then(|record| record.settings.min_payout))
+    }
+
     fn add_miner_source_work(&self, rows: &[(String, String, i64, u64)]) -> Result<()> {
         self.inner.add_miner_source_work(rows)
     }
