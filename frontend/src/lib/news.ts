@@ -24,7 +24,7 @@ export const NEWS: readonly NewsItem[] = [
 
 const DAY_MS = 86_400_000;
 /** Days an item stays in the news strip and keeps its "New" marks. */
-export const NEWS_FRESH_DAYS = 30;
+export const NEWS_FRESH_DAYS = 14;
 /** Most items the strip shows at once, one line each. */
 export const STRIP_LIMIT = 2;
 
