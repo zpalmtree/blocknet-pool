@@ -347,6 +347,7 @@ function MinerHero({ miner, balance, loading, destination, poolInfo, nextSweepAt
   const memoAccount = !!destination.memo;
   const who = exchange ? t('exchangeDeposit', [exchange.name]) : shortAddr(destination.address);
   const workers = miner?.workers ?? [];
+  const hidden = !!miner?.private_stats;
   // Exchange (memo) accounts have their own, higher minimum; the balance API reports it.
   const accountMinimum = balance?.min_payout_amount ?? (memoAccount ? poolInfo?.memo_min_payout_amount : poolInfo?.min_payout_amount);
   const minimum = minimumPayoutAtoms(accountMinimum);
@@ -360,8 +361,13 @@ function MinerHero({ miner, balance, loading, destination, poolInfo, nextSweepAt
         <span>{t('yourMiner')} · <bdi dir="ltr">{who}</bdi></span>
         <button type="button" className="home-link-button" onClick={onForget}>{t('notYou')}</button>
       </p>
-      <h1 className="home-me-hr" dir="ltr">{miner ? humanRate(miner.hashrate) : '-'}</h1>
-      {miner && !workers.length && (
+      <h1 className="home-me-hr" dir="ltr">{miner && !hidden ? humanRate(miner.hashrate) : '-'}</h1>
+      {hidden && (
+        <p className="home-me-sub">
+          {t('homePrivateStats')} <a href={`${localizePath('/stats')}#settings`}>{t('settingsUnlock')}</a>
+        </p>
+      )}
+      {miner && !hidden && !workers.length && (
         <p className="home-me-sub">
           {tx('noWorkersHelp', [<a key="help" href={`${localizePath('/blog/')}track-your-miner-on-bntpool/#zero-hashrate`}>{t('minerHelp')}</a>])}
         </p>

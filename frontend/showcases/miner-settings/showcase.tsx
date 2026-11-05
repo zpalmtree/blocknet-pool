@@ -125,6 +125,10 @@ function settingsRoute(method: string, action: string, body: Record<string, unkn
     server.unlocked = true;
     return Response.json(settingsState());
   }
+  if (action === 'sign-out') {
+    server.unlocked = false;
+    return Response.json(settingsState());
+  }
   if (action === 'take-back') {
     const ip = String(body.ip ?? '').trim();
     if (!/^[0-9a-f.:/]+$/i.test(ip)) return fail(400, 'invalid_ip');

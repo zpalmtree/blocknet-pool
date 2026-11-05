@@ -164,7 +164,8 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         typeof body === 'object' && body && 'error' in (body as Record<string, unknown>)
           ? String((body as Record<string, unknown>).error)
           : `HTTP ${res.status}`;
-      showError(msg);
+      // A private account is a state the page shows, not an error.
+      if (!(res.status === 403 && msg === 'private_stats')) showError(msg);
       throw new Error(msg);
     }
 
@@ -241,6 +242,8 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/claim`, { password }),
       unlock: (account: string, password: string) =>
         settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/unlock`, { password }),
+      signOut: (account: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/sign-out`),
       takeBack: (account: string, ip: string) =>
         settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/take-back`, { ip }),
       setPassword: (account: string, password: string) =>

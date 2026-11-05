@@ -545,6 +545,96 @@ impl PostgresStore {
         }))
     }
 
+    /// The owner stamp and last use (Unix seconds) of an unlocked session.
+    pub fn miner_settings_session(
+        &self,
+        token_hash: &str,
+        account: &str,
+    ) -> Result<Option<(String, i64)>> {
+        let row = self.conn().query_opt(
+            "SELECT owner_stamp, last_used FROM miner_settings_sessions
+             WHERE token_hash = $1 AND account = $2",
+            &[&token_hash, &account],
+        )?;
+        Ok(row.map(|row| (row.get(0), row.get(1))))
+    }
+
+    /// Whether any account is unlocked under this session token.
+    pub fn miner_settings_session_exists(&self, token_hash: &str) -> Result<bool> {
+        Ok(self
+            .conn()
+            .query_opt(
+                "SELECT 1 FROM miner_settings_sessions WHERE token_hash = $1 LIMIT 1",
+                &[&token_hash],
+            )?
+            .is_some())
+    }
+
+    /// Unlocks `account` under the session, keeping at most `max_accounts`
+    /// accounts per session (the least recently used go first).
+    pub fn put_miner_settings_session(
+        &self,
+        token_hash: &str,
+        account: &str,
+        owner_stamp: &str,
+        now: SystemTime,
+        max_accounts: usize,
+    ) -> Result<()> {
+        let now = to_unix(now);
+        let keep = i64::try_from(max_accounts).unwrap_or(i64::MAX);
+        let mut conn = self.conn();
+        let mut tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO miner_settings_sessions (token_hash, account, owner_stamp, last_used)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (token_hash, account)
+             DO UPDATE SET owner_stamp = EXCLUDED.owner_stamp, last_used = EXCLUDED.last_used",
+            &[&token_hash, &account, &owner_stamp, &now],
+        )?;
+        tx.execute(
+            "DELETE FROM miner_settings_sessions
+             WHERE token_hash = $1 AND account NOT IN (
+                 SELECT account FROM miner_settings_sessions WHERE token_hash = $1
+                 ORDER BY last_used DESC, account LIMIT $2)",
+            &[&token_hash, &keep],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Records a use of an unlocked session.
+    pub fn touch_miner_settings_session(
+        &self,
+        token_hash: &str,
+        account: &str,
+        now: SystemTime,
+    ) -> Result<()> {
+        self.conn().execute(
+            "UPDATE miner_settings_sessions SET last_used = GREATEST(last_used, $3)
+             WHERE token_hash = $1 AND account = $2",
+            &[&token_hash, &account, &to_unix(now)],
+        )?;
+        Ok(())
+    }
+
+    /// Locks `account` in the session. Returns whether other accounts remain
+    /// unlocked under it.
+    pub fn remove_miner_settings_session(&self, token_hash: &str, account: &str) -> Result<bool> {
+        self.conn().execute(
+            "DELETE FROM miner_settings_sessions WHERE token_hash = $1 AND account = $2",
+            &[&token_hash, &account],
+        )?;
+        self.miner_settings_session_exists(token_hash)
+    }
+
+    /// Forgets sessions last used before `before`.
+    pub fn prune_miner_settings_sessions(&self, before: SystemTime) -> Result<u64> {
+        self.conn().execute(
+            "DELETE FROM miner_settings_sessions WHERE last_used < $1",
+            &[&to_unix(before)],
+        )
+    }
+
     /// Sets the first password for an account. False when it already has one.
     pub fn claim_miner_settings(
         &self,
@@ -1779,6 +1869,18 @@ CREATE TABLE IF NOT EXISTS miner_settings (
     default_solo BOOLEAN NOT NULL DEFAULT FALSE,
     hide_workers BOOLEAN NOT NULL DEFAULT FALSE
 );
+
+-- Browsers with My Stats settings unlocked, by session token hash and
+-- account. owner_stamp ends a session once the password or owner changes.
+CREATE TABLE IF NOT EXISTS miner_settings_sessions (
+    token_hash TEXT NOT NULL,
+    account TEXT NOT NULL,
+    owner_stamp TEXT NOT NULL,
+    last_used BIGINT NOT NULL,
+    PRIMARY KEY (token_hash, account)
+);
+CREATE INDEX IF NOT EXISTS idx_miner_settings_sessions_last_used
+    ON miner_settings_sessions(last_used);
 
 -- Accepted share difficulty per account, IP group and hour, which decides
 -- settings take-backs.

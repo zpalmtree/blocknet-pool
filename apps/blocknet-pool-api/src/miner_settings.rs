@@ -1,9 +1,9 @@
 //! My Stats settings endpoints (rules in `pool_runtime::miner_settings`).
 //!
 //! An unlocked browser holds a random session token in an HttpOnly,
-//! SameSite=Strict cookie; sessions live in memory, end after
-//! [`SESSION_IDLE`] without use or when the browser closes, and stop working
-//! once the account's password or owner changes. Every write is JSON, so a
+//! SameSite=Strict cookie. Sessions are kept in the database by token hash,
+//! so they outlast API restarts; they end after [`SESSION_IDLE`] without use,
+//! on sign-out, or once the account's password or owner changes. Every write is JSON, so a
 //! cross-site form cannot send one. Password and take-back attempts are
 //! limited per account and per client IP group, and those limits fail
 //! closed when their tables are full.
@@ -37,8 +37,13 @@ use tokio::sync::Semaphore;
 use crate::protect::{client_key, ClientIpPolicy};
 
 pub(crate) const SESSION_COOKIE: &str = "pool_settings";
-const SESSION_IDLE: Duration = Duration::from_secs(30 * 60);
-const MAX_SESSIONS: usize = 50_000;
+const SESSION_IDLE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+/// How long the browser keeps the cookie; the server enforces [`SESSION_IDLE`].
+const SESSION_COOKIE_MAX_AGE: Duration = Duration::from_secs(400 * 24 * 60 * 60);
+/// How often a session's last use is written back while it is in use.
+const SESSION_TOUCH_EVERY: Duration = Duration::from_secs(60 * 60);
+/// How often expired sessions are deleted.
+const SESSION_PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
 const MAX_ACCOUNTS_PER_SESSION: usize = 16;
 
 const PASSWORD_MIN_CHARS: usize = 8;
@@ -133,29 +138,6 @@ impl AttemptLimiter {
     }
 }
 
-struct Session {
-    /// Account → (owner stamp at unlock, last use).
-    accounts: HashMap<String, (String, Instant)>,
-    last_used: Instant,
-}
-
-#[derive(Default)]
-struct Sessions {
-    by_token_hash: HashMap<String, Session>,
-}
-
-impl Sessions {
-    fn prune(&mut self, now: Instant) {
-        self.by_token_hash.retain(|_, session| {
-            session
-                .accounts
-                .retain(|_, (_, used)| now.saturating_duration_since(*used) < SESSION_IDLE);
-            !session.accounts.is_empty()
-                && now.saturating_duration_since(session.last_used) < SESSION_IDLE
-        });
-    }
-}
-
 struct Limits {
     unlock_by_account: AttemptLimiter,
     unlock_by_client: AttemptLimiter,
@@ -188,7 +170,8 @@ pub(crate) struct MinerSettingsService {
     alerts: Option<Arc<crate::alerts::AlertService>>,
     runtime: RuntimeConfig,
     client_ip: Arc<ClientIpPolicy>,
-    sessions: Mutex<Sessions>,
+    /// When expired sessions were last deleted.
+    sessions_pruned: Mutex<Option<Instant>>,
     limits: Mutex<Limits>,
     hashing: Semaphore,
     hide_workers: Mutex<HashMap<String, (Instant, PublicView)>>,
@@ -230,9 +213,17 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
 }
 
 fn session_cookie(token: &str) -> HeaderValue {
-    // No Max-Age: the browser drops it when it closes.
     HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE}={token}; Path=/api; HttpOnly; Secure; SameSite=Strict"
+        "{SESSION_COOKIE}={token}; Path=/api; Max-Age={}; HttpOnly; Secure; SameSite=Strict",
+        SESSION_COOKIE_MAX_AGE.as_secs()
+    ))
+    .expect("session cookie is ASCII")
+}
+
+/// Deletes the session cookie once no account is unlocked under it.
+fn clear_session_cookie() -> HeaderValue {
+    HeaderValue::from_str(&format!(
+        "{SESSION_COOKIE}=; Path=/api; Max-Age=0; HttpOnly; Secure; SameSite=Strict"
     ))
     .expect("session cookie is ASCII")
 }
@@ -439,7 +430,7 @@ impl MinerSettingsService {
             alerts,
             runtime,
             client_ip,
-            sessions: Mutex::new(Sessions::default()),
+            sessions_pruned: Mutex::new(None),
             limits: Mutex::new(Limits {
                 unlock_by_account: AttemptLimiter::new(),
                 unlock_by_client: AttemptLimiter::new(),
@@ -539,78 +530,104 @@ impl MinerSettingsService {
     }
 
     /// Whether this caller's session has the account unlocked for `record`.
-    fn unlocked(&self, caller: &Caller, record: &MinerSettingsRecord) -> bool {
+    async fn unlocked(
+        &self,
+        caller: &Caller,
+        record: &MinerSettingsRecord,
+    ) -> Result<bool, ApiError> {
         let Some(token) = &caller.token else {
-            return false;
+            return Ok(false);
         };
-        let now = Instant::now();
+        let hash = token_hash(token);
+        let account = caller.account.clone();
         let stamp = owner_stamp(record);
-        let mut sessions = self.sessions.lock();
-        let Some(session) = sessions.by_token_hash.get_mut(&token_hash(token)) else {
-            return false;
-        };
-        let Some((unlocked_stamp, used)) = session.accounts.get_mut(&caller.account) else {
-            return false;
-        };
-        if *unlocked_stamp != stamp || now.saturating_duration_since(*used) >= SESSION_IDLE {
-            session.accounts.remove(&caller.account);
-            return false;
-        }
-        *used = now;
-        session.last_used = now;
-        true
+        let now = SystemTime::now();
+        self.blocking(move |store| {
+            let Some((unlocked_stamp, last_used)) =
+                store.miner_settings_session(&hash, &account)?
+            else {
+                return Ok(false);
+            };
+            let idle = to_unix(now).saturating_sub(u64::try_from(last_used).unwrap_or(0));
+            if unlocked_stamp != stamp || idle >= SESSION_IDLE.as_secs() {
+                store.remove_miner_settings_session(&hash, &account)?;
+                return Ok(false);
+            }
+            if idle >= SESSION_TOUCH_EVERY.as_secs() {
+                store.touch_miner_settings_session(&hash, &account, now)?;
+            }
+            Ok(true)
+        })
+        .await
     }
 
     /// Unlocks the account in the caller's session, creating one if needed.
     /// Returns a new token to set as the cookie, if one was created.
-    fn unlock_session(&self, caller: &Caller, record: &MinerSettingsRecord) -> Option<String> {
-        let now = Instant::now();
+    async fn unlock_session(
+        &self,
+        caller: &Caller,
+        record: &MinerSettingsRecord,
+    ) -> Result<Option<String>, ApiError> {
         let stamp = owner_stamp(record);
-        let mut sessions = self.sessions.lock();
-        if let Some(token) = &caller.token {
-            if let Some(session) = sessions.by_token_hash.get_mut(&token_hash(token)) {
-                if session.accounts.len() >= MAX_ACCOUNTS_PER_SESSION
-                    && !session.accounts.contains_key(&caller.account)
-                {
-                    if let Some(oldest) = session
-                        .accounts
-                        .iter()
-                        .min_by_key(|(_, (_, used))| *used)
-                        .map(|(account, _)| account.clone())
-                    {
-                        session.accounts.remove(&oldest);
-                    }
-                }
-                session
-                    .accounts
-                    .insert(caller.account.clone(), (stamp, now));
-                session.last_used = now;
-                return None;
+        let account = caller.account.clone();
+        let existing = caller.token.clone();
+        let prune = {
+            let mut pruned = self.sessions_pruned.lock();
+            let due = pruned.is_none_or(|at| at.elapsed() >= SESSION_PRUNE_EVERY);
+            if due {
+                *pruned = Some(Instant::now());
             }
-        }
-        if sessions.by_token_hash.len() >= MAX_SESSIONS {
-            sessions.prune(now);
-            if sessions.by_token_hash.len() >= MAX_SESSIONS {
-                // Drop the least recently used session.
-                if let Some(oldest) = sessions
-                    .by_token_hash
-                    .iter()
-                    .min_by_key(|(_, session)| session.last_used)
-                    .map(|(hash, _)| hash.clone())
-                {
-                    sessions.by_token_hash.remove(&oldest);
-                }
+            due
+        };
+        self.blocking(move |store| {
+            let now = SystemTime::now();
+            if prune {
+                store.prune_miner_settings_sessions(
+                    now.checked_sub(SESSION_IDLE).unwrap_or(UNIX_EPOCH),
+                )?;
             }
+            // Reuse the browser's session when it still has one.
+            let (hash, new_token) = match existing {
+                Some(token) if store.miner_settings_session_exists(&token_hash(&token))? => {
+                    (token_hash(&token), None)
+                }
+                _ => {
+                    let token = hex::encode(rand::random::<[u8; 32]>());
+                    (token_hash(&token), Some(token))
+                }
+            };
+            store.put_miner_settings_session(
+                &hash,
+                &account,
+                &stamp,
+                now,
+                MAX_ACCOUNTS_PER_SESSION,
+            )?;
+            Ok(new_token)
+        })
+        .await
+    }
+
+    /// Locks the account in this browser. Other accounts it unlocked stay so.
+    async fn sign_out(&self, caller: Caller) -> ApiResult {
+        self.validate_account(&caller.account).await?;
+        let mut others = false;
+        if let Some(token) = caller.token.clone() {
+            let account = caller.account.clone();
+            others = self
+                .blocking(move |store| {
+                    store.remove_miner_settings_session(&token_hash(&token), &account)
+                })
+                .await?;
         }
-        let token = hex::encode(rand::random::<[u8; 32]>());
-        sessions.by_token_hash.insert(
-            token_hash(&token),
-            Session {
-                accounts: HashMap::from([(caller.account.clone(), (stamp, now))]),
-                last_used: now,
-            },
-        );
-        Some(token)
+        let record = self.record(&caller.account).await?;
+        let mut response = self.respond(&caller, record.as_ref(), false, None).await?;
+        if !others {
+            response
+                .headers_mut()
+                .append(header::SET_COOKIE, clear_session_cookie());
+        }
+        Ok(response)
     }
 
     fn forget_hide_cache(&self, account: &str) {
@@ -659,7 +676,9 @@ impl MinerSettingsService {
             token: Some(token),
         };
         match self.record(account).await {
-            Ok(Some(record)) if self.unlocked(&caller, &record) => PublicView::Full,
+            Ok(Some(record)) if self.unlocked(&caller, &record).await.unwrap_or(false) => {
+                PublicView::Full
+            }
             _ => view,
         }
     }
@@ -840,9 +859,10 @@ impl MinerSettingsService {
     async fn get_state(&self, caller: Caller) -> ApiResult {
         self.validate_account(&caller.account).await?;
         let record = self.record(&caller.account).await?;
-        let unlocked = record
-            .as_ref()
-            .is_some_and(|record| self.unlocked(&caller, record));
+        let unlocked = match &record {
+            Some(record) => self.unlocked(&caller, record).await?,
+            None => false,
+        };
         self.respond(&caller, record.as_ref(), unlocked, None).await
     }
 
@@ -892,7 +912,7 @@ impl MinerSettingsService {
             .record(&caller.account)
             .await?
             .ok_or_else(|| ApiError::internal(anyhow::anyhow!("claimed settings row missing")))?;
-        let token = self.unlock_session(&caller, &record);
+        let token = self.unlock_session(&caller, &record).await?;
         self.respond(&caller, Some(&record), true, token).await
     }
 
@@ -954,7 +974,7 @@ impl MinerSettingsService {
             .lock()
             .unlock_by_account
             .release(&caller.account);
-        let token = self.unlock_session(&caller, &record);
+        let token = self.unlock_session(&caller, &record).await?;
         self.respond(&caller, Some(&record), true, token).await
     }
 
@@ -1058,7 +1078,7 @@ impl MinerSettingsService {
                 let alert_account = caller.account.clone();
                 self.blocking(move |store| store.remove_miner_alert(&alert_account))
                     .await?;
-                let token = self.unlock_session(&caller, &record);
+                let token = self.unlock_session(&caller, &record).await?;
                 let mut body = self.state_body(&caller, Some(&record), true, None);
                 body["share"] = json!(share);
                 Ok(respond_body(body, token))
@@ -1070,7 +1090,7 @@ impl MinerSettingsService {
     async fn require_unlocked(&self, caller: &Caller) -> Result<MinerSettingsRecord, ApiError> {
         let locked = || ApiError::new(StatusCode::UNAUTHORIZED, "locked", "Unlock settings first.");
         let record = self.record(&caller.account).await?.ok_or_else(locked)?;
-        if self.unlocked(caller, &record) {
+        if self.unlocked(caller, &record).await? {
             Ok(record)
         } else {
             Err(locked())
@@ -1104,7 +1124,7 @@ impl MinerSettingsService {
             .await?
             .ok_or_else(|| ApiError::internal(anyhow::anyhow!("settings row missing")))?;
         // Other sessions end with the old password; this one stays open.
-        let token = self.unlock_session(&caller, &record);
+        let token = self.unlock_session(&caller, &record).await?;
         self.respond(&caller, Some(&record), true, token).await
     }
 
@@ -1547,6 +1567,16 @@ async fn handle_unlock(
     finish(service.unlock(caller, request).await)
 }
 
+async fn handle_sign_out(
+    State(service): State<Arc<MinerSettingsService>>,
+    Path(account): Path<String>,
+    connect: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+) -> Response {
+    let caller = service.caller(normalize_account(&account), &headers, peer(connect));
+    finish(service.sign_out(caller).await)
+}
+
 async fn handle_take_back(
     State(service): State<Arc<MinerSettingsService>>,
     Path(account): Path<String>,
@@ -1645,6 +1675,10 @@ where
         .route("/api/miner-settings/:account/claim", post(handle_claim))
         .route("/api/miner-settings/:account/unlock", post(handle_unlock))
         .route(
+            "/api/miner-settings/:account/sign-out",
+            post(handle_sign_out),
+        )
+        .route(
             "/api/miner-settings/:account/take-back",
             post(handle_take_back),
         )
@@ -1724,7 +1758,11 @@ mod tests {
         assert!(cookie.contains("HttpOnly"));
         assert!(cookie.contains("SameSite=Strict"));
         assert!(cookie.contains("Secure"));
-        assert!(!cookie.contains("Max-Age"));
+        assert!(cookie.contains("Max-Age=34560000"));
+        assert!(clear_session_cookie()
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0"));
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
@@ -1853,6 +1891,98 @@ mod tests {
             let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
             (status, value)
         }
+    }
+
+    #[tokio::test]
+    async fn sessions_outlast_restarts_until_sign_out_or_idle() {
+        let Ok(url) = std::env::var("BLOCKNET_POOL_TEST_POSTGRES_URL") else {
+            eprintln!("skipping postgres test: set BLOCKNET_POOL_TEST_POSTGRES_URL");
+            return;
+        };
+        let store = tokio::task::spawn_blocking(move || PoolStore::open(&url, 2))
+            .await
+            .unwrap()
+            .expect("open test store");
+        let service = |store: &Arc<PoolStore>| {
+            Arc::new(MinerSettingsService::new(
+                Arc::clone(store),
+                RuntimeConfig::default(),
+                Arc::new(ClientIpPolicy::default()),
+                None,
+            ))
+        };
+        let first = service(&store);
+        let account = test_address();
+        let second_account = test_address();
+        let path = format!("/api/miner-settings/{account}");
+        let mut owner = Client {
+            app: router(Arc::clone(&first)),
+            ip: "198.51.100.7",
+            cookie: None,
+        };
+        let (status, state) = owner
+            .send(
+                "POST",
+                &format!("{path}/claim"),
+                Some(json!({"password": "correct horse"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{state}");
+        let (status, _) = owner
+            .send(
+                "POST",
+                &format!("/api/miner-settings/{second_account}/claim"),
+                Some(json!({"password": "correct horse"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        let cookie = owner.cookie.clone().unwrap();
+        let token = cookie.strip_prefix("pool_settings=").unwrap().to_string();
+
+        // A new API process still knows the browser.
+        let restarted = service(&store);
+        owner.app = router(Arc::clone(&restarted));
+        let (_, state) = owner.send("GET", &path, None).await;
+        assert_eq!(state["unlocked"], true);
+        assert_eq!(owner.cookie.as_deref(), Some(cookie.as_str()));
+
+        // Signing out of one account keeps the other and the cookie.
+        let (status, state) = owner.send("POST", &format!("{path}/sign-out"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(state["unlocked"], false);
+        assert_eq!(owner.cookie.as_deref(), Some(cookie.as_str()));
+        let (_, state) = owner.send("GET", &path, None).await;
+        assert_eq!(state["unlocked"], false);
+        let second_path = format!("/api/miner-settings/{second_account}");
+        let (_, state) = owner.send("GET", &second_path, None).await;
+        assert_eq!(state["unlocked"], true);
+
+        // A session idle past the limit ends.
+        let hash = token_hash(&token);
+        let idle_account = second_account.clone();
+        let stale = SystemTime::now() - SESSION_IDLE - Duration::from_secs(60);
+        let reset = Arc::clone(&store);
+        tokio::task::spawn_blocking(move || {
+            reset.put_miner_settings_session(
+                &hash,
+                &idle_account,
+                &owner_stamp(&reset.miner_settings(&idle_account)?.unwrap()),
+                stale,
+                MAX_ACCOUNTS_PER_SESSION,
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let (_, state) = owner.send("GET", &second_path, None).await;
+        assert_eq!(state["unlocked"], false);
+
+        // Signing out of the last account clears the cookie.
+        let (status, _) = owner
+            .send("POST", &format!("{second_path}/sign-out"), None)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(owner.cookie.as_deref(), Some("pool_settings="));
     }
 
     #[tokio::test]

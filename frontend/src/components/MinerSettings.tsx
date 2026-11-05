@@ -636,6 +636,8 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
           </p>
           <button type="button" className="link-button" aria-expanded={changingPassword}
             onClick={() => setChangingPassword((value) => !value)}>{t('settingsChangePassword')}</button>
+          <button type="button" className="link-button" disabled={busy}
+            onClick={() => void run(() => api.minerSettings.signOut(account), () => setChangingPassword(false))}>{t('settingsSignOut')}</button>
         </div>
       </form>
       {changingPassword && (<div className="settings-change-password">

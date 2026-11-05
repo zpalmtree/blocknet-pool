@@ -17,6 +17,7 @@ const STATES = {
   queued: 'Returning miner, payout queued',
   paid: 'Returning miner, just paid',
   'no-workers': 'Returning miner, no workers online',
+  private: 'Returning miner who keeps stats private, signed out',
   exchange: 'Exchange deposit, below its 10 BNT minimum',
   'exchange-ready': 'Exchange deposit, over its minimum',
   'miner-error': 'Saved lookup that fails: falls back to the first-visit view',
@@ -164,6 +165,13 @@ window.fetch = async (input, init) => {
   if (path === '/api/payout-destination') return json({ account: 'memo:demo-account', min_payout_amount: 10 });
   if (path.startsWith('/api/miner/')) {
     if (state === 'miner-error') return Response.json({ error: 'Demo: lookup unavailable' }, { status: 500 });
+    if (state === 'private') {
+      if (path.endsWith('/balance') || path.endsWith('/hashrate')) {
+        return Response.json({ error: 'private_stats', message: 'This miner keeps their stats private.' }, { status: 403 });
+      }
+      return json({ private_stats: true, hashrate: 0, solo_hashrate: 0, workers: [], shares: [], payouts: [], blocks_found: 0,
+        total_accepted: 0, total_rejected: 0, verification_hold: null });
+    }
     if (path.endsWith('/balance')) return json(balance);
     if (path.endsWith('/hashrate')) return json(minerHistory);
     return json(miner);
