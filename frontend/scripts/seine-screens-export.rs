@@ -1,5 +1,6 @@
 // Exports the seine screens shown in Get Started's "Seine in Action" (src/data/seine-screens.json).
 // Uses seine's real terminal renderer with example data; no hashing, network I/O or wallet is started.
+// The example address has an invalid checksum, so seine rejects it if someone copies it from the page.
 //
 // 1. In a seine checkout, append this file to src/miner/thread_showcase.rs (do not commit it there).
 // 2. SEINE_POOL_SCREENS=/tmp/seine-screens.json cargo test --bin seine export_pool_get_started_screens -- --ignored
@@ -72,7 +73,10 @@ fn export_pool_get_started_screens() {
     mining.height = "71,742".into();
     mining.network_hashrate = "57.10 KH/s".into();
     mining.device_hashrates = vec![DeviceHashrate { name: "cpu#1".into(), current: "52.40 H/s".into(), average: "51.87 H/s".into() }];
-    let address = ("Welcome to seine. Mining rewards are paid to your Blocknet wallet.", "Your address or shortname (@name / $name)", "", "@yourname");
+    const EXAMPLE_ADDRESS: &str = "RovN4USn84DQZ3TFCKAdMrCwCT6ZyXU4n7ziywiaDxwgmWXqxcB829ngqyHDCjAinWGwHDguc3i1mkMrPm5oAzQQMEVNe";
+    assert!(crate::address::validate_mining_address(EXAMPLE_ADDRESS).is_err());
+    mining.pool_address = format!("{}...{}", &EXAMPLE_ADDRESS[..6], &EXAMPLE_ADDRESS[EXAMPLE_ADDRESS.len() - 6..]);
+    let address = ("Welcome to seine. Mining rewards are paid to your Blocknet wallet.", "Your address or shortname (@name / $name)", "", EXAMPLE_ADDRESS);
     let pool = ("Press Enter to mine on the default pool, or type another.", "Pool", "stratum+tcp://bntpool.com:3333", "");
     let mut out = serde_json::Map::new();
     for (name, prompt_cols, prompt_rows, dash_cols, dash_rows) in [("desktop", 60u16, 12u16, 120u16, 23u16), ("mobile", 46, 14, 46, 34)] {

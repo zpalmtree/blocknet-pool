@@ -60,7 +60,7 @@ function Lines({ capture }: { capture: TerminalCapture }) {
  * A seine screen drawn as text from seine's own terminal renderer, so it stays sharp at any size.
  * Phones get a narrower capture of the same screen.
  */
-export function SeineScreen({ desktop, mobile, caption }: { desktop: TerminalCapture; mobile: TerminalCapture; caption: string }) {
+export function SeineScreen({ desktop, mobile, caption }: { desktop: TerminalCapture; mobile: TerminalCapture; caption?: string }) {
   return (
     <figure className="seine-screen">
       <div className="seine-window" aria-hidden="true">
@@ -68,7 +68,7 @@ export function SeineScreen({ desktop, mobile, caption }: { desktop: TerminalCap
         <pre className="seine-term seine-term-desktop" style={{ '--cols': desktop.cols } as CSSProperties}><Lines capture={desktop} /></pre>
         <pre className="seine-term seine-term-mobile" style={{ '--cols': mobile.cols } as CSSProperties}><Lines capture={mobile} /></pre>
       </div>
-      <figcaption>{caption}</figcaption>
+      {caption && <figcaption>{caption}</figcaption>}
     </figure>
   );
 }

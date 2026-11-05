@@ -19,7 +19,8 @@
     "showcase:rewards": "vite --config showcases/small-rewards/vite.config.ts",
     "showcase:memos": "vite --config showcases/exchange-memos/vite.config.ts",
     "showcase:solo": "vite --config showcases/solo-mining/vite.config.ts",
-    "showcase:front": "vite --config showcases/front-page/vite.config.ts"
+    "showcase:front": "vite --config showcases/front-page/vite.config.ts",
+    "showcase:start": "vite --config showcases/get-started/vite.config.ts"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",
