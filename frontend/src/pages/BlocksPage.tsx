@@ -27,7 +27,6 @@ export function BlocksPage({ api, liveTick }: BlocksPageProps) {
   return (
     <div id="page-blocks">
       <div className="page-header">
-        <span className="page-kicker">{t("m368")}</span>
         <h1>{t("m369")}</h1>
         <p className="page-intro">{t("m370")}</p>
       </div>

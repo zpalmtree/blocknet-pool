@@ -31,7 +31,6 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
   return (
     <div id="page-luck">
       <div className="page-header">
-        <span className="page-kicker">{t("m441")}</span>
         <h1>{t("m442")}</h1>
         <p className="page-intro">{t("m443")}</p>
       </div>
