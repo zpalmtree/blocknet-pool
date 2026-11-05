@@ -1248,5 +1248,23 @@ mod tests {
             assert_eq!(shares[0].difficulty, amount);
         }
         assert!(store.payout_destination("memo:missing").is_err());
+        let memo_account = destinations[1].account_id();
+        assert_eq!(
+            store.payout_destination_address(&memo_account).unwrap(),
+            Some("shared-address".to_string())
+        );
+        assert_eq!(
+            store.payout_destination_address("shared-address").unwrap(),
+            None
+        );
+        assert_eq!(
+            store.payout_destination_address("memo:missing").unwrap(),
+            None
+        );
+        let listed = store.payout_destination_addresses().unwrap();
+        assert_eq!(listed.len(), 2);
+        assert!(listed
+            .iter()
+            .all(|(account, address)| account.starts_with("memo:") && address == "shared-address"));
     }
 }

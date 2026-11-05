@@ -2451,6 +2451,7 @@ html { scroll-padding-top: 72px; }
 .stats-lookup .lookup-form input { flex: 1 1 240px; min-width: 0; }
 .stats-lookup-links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; margin-top: 10px; font-size: 13px; }
 .stats-lookup-links:empty { display: none; }
+.stats-memo-account { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
 .link-button { padding: 0; border: 0; background: none; color: var(--accent-strong); font: inherit; font-weight: 700; cursor: pointer; }
 .link-button:hover { text-decoration: underline; text-underline-offset: 3px; }
 .stats-lookup-links .resolved-badge { color: var(--muted); font-family: 'JetBrains Mono', monospace; font-size: 12px; }

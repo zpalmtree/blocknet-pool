@@ -259,6 +259,8 @@
   "memoUnavailable": "Este pool aún no admite pagos con memo.",
   "memoLookupFailed": "No se pudo cargar este destino. Inténtalo de nuevo.",
   "memoPersonalMinimum": "Billeteras personales: pagos a partir de {0}.",
+  "memoAccount": "Cuenta con memo de {0}. El memo de depósito se mantiene privado.",
+  "memoAccountUnknown": "Cuenta con memo de exchange. El memo de depósito se mantiene privado.",
   "minerSettingsTitle": "Cambia con qué mina seine",
   "minerSettingsNvidia": "Solo GPU NVIDIA, CPU desactivada",
   "minerSettingsAmd": "Solo GPU AMD, CPU desactivada",

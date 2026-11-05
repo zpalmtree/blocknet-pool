@@ -259,6 +259,8 @@
   "memoUnavailable": "Pembayaran dengan memo belum diaktifkan di pool ini.",
   "memoLookupFailed": "Tujuan ini tidak dapat dimuat. Coba lagi.",
   "memoPersonalMinimum": "Dompet pribadi: pembayaran mulai {0}.",
+  "memoAccount": "Akun memo {0}. Memo setorannya tetap privat.",
+  "memoAccountUnknown": "Akun memo bursa. Memo setorannya tetap privat.",
   "minerSettingsTitle": "Ubah dengan apa seine menambang",
   "minerSettingsNvidia": "Hanya GPU NVIDIA, CPU mati",
   "minerSettingsAmd": "Hanya GPU AMD, CPU mati",

@@ -259,6 +259,8 @@
   "memoUnavailable": "Виплати з мемо ще не ввімкнено в цьому пулі.",
   "memoLookupFailed": "Не вдалося завантажити дані одержувача. Спробуйте ще раз.",
   "memoPersonalMinimum": "Особисті гаманці: виплати від {0}.",
+  "memoAccount": "Акаунт із мемо {0}. Мемо для депозиту залишається прихованим.",
+  "memoAccountUnknown": "Акаунт із мемо біржі. Мемо для депозиту залишається прихованим.",
   "minerSettingsTitle": "Що майнить seine",
   "minerSettingsNvidia": "Лише GPU NVIDIA, CPU вимкнено",
   "minerSettingsAmd": "Лише GPU AMD, CPU вимкнено",

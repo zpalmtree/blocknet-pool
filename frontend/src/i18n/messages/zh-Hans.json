@@ -259,6 +259,8 @@
   "memoUnavailable": "此矿池尚未启用带备注的付款。",
   "memoLookupFailed": "无法加载此收款目标。请重试。",
   "memoPersonalMinimum": "个人钱包：满 {0} 起付款。",
+  "memoAccount": "{0} 备注账户。充值备注不会公开。",
+  "memoAccountUnknown": "交易所备注账户。充值备注不会公开。",
   "minerSettingsTitle": "更改 seine 的挖矿设备",
   "minerSettingsNvidia": "只用 NVIDIA GPU，关闭 CPU",
   "minerSettingsAmd": "只用 AMD GPU，关闭 CPU",

@@ -1,5 +1,6 @@
 import type {
   AdminBalanceItem,
+  AdminPayoutAccount,
   AdminBalanceOverviewResponse,
   AdminReconciliationIssuesResponse,
   AdminShareDiagnosticsResponse,
@@ -262,6 +263,8 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
       fetchJson<AdminReconciliationIssuesResponse>('/api/admin/reconciliation/issues', { auth: true }),
     getAdminShareDiagnostics: () =>
       fetchJson<AdminShareDiagnosticsResponse>('/api/admin/shares', { auth: true }),
+    getAdminPayoutAccounts: () =>
+      fetchJson<AdminPayoutAccount[]>('/api/admin/payout-accounts', { auth: true }),
     getAdminBalances: (limit: number, offset: number, sort: string, search?: string) =>
       fetchJson<PagedResponse<AdminBalanceItem>>(withQuery('/api/admin/balances', { limit, offset, sort, search }), {
         auth: true,

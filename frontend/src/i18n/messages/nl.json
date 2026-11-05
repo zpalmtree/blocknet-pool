@@ -259,6 +259,8 @@
   "memoUnavailable": "Uitbetalingen met memo zijn nog niet ingeschakeld op deze pool.",
   "memoLookupFailed": "Deze bestemming kon niet worden geladen. Probeer opnieuw.",
   "memoPersonalMinimum": "Persoonlijke wallets: uitbetalingen vanaf {0}.",
+  "memoAccount": "{0}-memoaccount. De stortingsmemo blijft privé.",
+  "memoAccountUnknown": "Exchange-memoaccount. De stortingsmemo blijft privé.",
   "minerSettingsTitle": "Wijzig waarmee seine mint",
   "minerSettingsNvidia": "Alleen NVIDIA-GPU, CPU uit",
   "minerSettingsAmd": "Alleen AMD-GPU, CPU uit",

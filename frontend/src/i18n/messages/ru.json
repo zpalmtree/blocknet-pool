@@ -259,6 +259,8 @@
   "memoUnavailable": "Выплаты с мемо пока не включены на этом пуле.",
   "memoLookupFailed": "Не удалось загрузить данные получателя. Повторите попытку.",
   "memoPersonalMinimum": "Личные кошельки: выплаты от {0}.",
+  "memoAccount": "Аккаунт с мемо {0}. Мемо для депозита остаётся скрытым.",
+  "memoAccountUnknown": "Аккаунт с мемо биржи. Мемо для депозита остаётся скрытым.",
   "minerSettingsTitle": "Что майнит seine",
   "minerSettingsNvidia": "Только GPU NVIDIA, CPU выключен",
   "minerSettingsAmd": "Только GPU AMD, CPU выключен",

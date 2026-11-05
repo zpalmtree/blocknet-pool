@@ -259,6 +259,8 @@
   "memoUnavailable": "このプールではメモ付き支払いがまだ有効になっていません。",
   "memoLookupFailed": "この送金先を読み込めませんでした。もう一度お試しください。",
   "memoPersonalMinimum": "個人ウォレット：{0}から支払い。",
+  "memoAccount": "{0} のメモアカウントです。入金メモは非公開のままです。",
+  "memoAccountUnknown": "取引所のメモアカウントです。入金メモは非公開のままです。",
   "minerSettingsTitle": "seineのマイニング対象を変える",
   "minerSettingsNvidia": "NVIDIA GPUのみ、CPUはオフ",
   "minerSettingsAmd": "AMD GPUのみ、CPUはオフ",

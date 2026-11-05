@@ -259,6 +259,8 @@
   "memoUnavailable": "Bu havuzda notlu ödemeler henüz etkin değil.",
   "memoLookupFailed": "Bu hedef yüklenemedi. Tekrar deneyin.",
   "memoPersonalMinimum": "Kişisel cüzdanlar: {0} ve üzeri ödemeler.",
+  "memoAccount": "{0} memo hesabı. Yatırma memosu gizli kalır.",
+  "memoAccountUnknown": "Borsa memo hesabı. Yatırma memosu gizli kalır.",
   "minerSettingsTitle": "seine’ın neyle kazdığını değiştirin",
   "minerSettingsNvidia": "Yalnızca NVIDIA GPU, CPU kapalı",
   "minerSettingsAmd": "Yalnızca AMD GPU, CPU kapalı",

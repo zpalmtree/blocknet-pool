@@ -308,6 +308,14 @@ impl Config {
                 .any(|entry| entry.address == address)
     }
 
+    /// The registry name of a shared exchange address.
+    pub fn shared_exchange_name(&self, address: &str) -> Option<&str> {
+        self.shared_exchange_addresses
+            .iter()
+            .find(|entry| entry.address == address)
+            .map(|entry| entry.name.as_str())
+    }
+
     /// An account's minimum payout, and the lowest a miner may choose on My
     /// Stats: exchange (memo) accounts keep the higher memo minimum.
     pub fn payout_minimum(&self, account: &str) -> f64 {

@@ -259,6 +259,8 @@
   "memoUnavailable": "Pool này chưa bật thanh toán có memo.",
   "memoLookupFailed": "Không thể tải thông tin người nhận này. Hãy thử lại.",
   "memoPersonalMinimum": "Ví cá nhân: thanh toán từ {0}.",
+  "memoAccount": "Tài khoản memo {0}. Memo nạp tiền được giữ kín.",
+  "memoAccountUnknown": "Tài khoản memo sàn giao dịch. Memo nạp tiền được giữ kín.",
   "minerSettingsTitle": "Đổi thứ seine dùng để đào",
   "minerSettingsNvidia": "Chỉ GPU NVIDIA, tắt CPU",
   "minerSettingsAmd": "Chỉ GPU AMD, tắt CPU",

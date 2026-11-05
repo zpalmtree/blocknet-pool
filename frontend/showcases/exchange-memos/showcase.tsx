@@ -4,13 +4,14 @@ import { createRoot } from 'react-dom/client';
 import { createApiClient } from '../../src/api/client';
 import { initializeLanguage } from '../../src/i18n';
 import { StatsPage } from '../../src/pages/StatsPage';
+import { AdminPage } from '../../src/pages/AdminPage';
 import { rememberDestination } from '../../src/lib/storage';
 import { StartPage } from '../../src/pages/StartPage';
 import type { InfoResponse } from '../../src/types';
 import type { MinerResponse } from '../../src/types';
 import '../../src/styles.css';
 
-const states = ['rollout-off', 'rollout-off-setup', 'regular', 'required', 'success', 'empty', 'loading', 'error', 'invalid', 'unknown', 'setup', 'disabled', 'rotated'];
+const states = ['rollout-off', 'rollout-off-setup', 'regular', 'required', 'success', 'empty', 'loading', 'error', 'invalid', 'unknown', 'setup', 'disabled', 'rotated', 'pasted-key', 'pasted-key-unknown', 'admin'];
 const params = new URLSearchParams(location.search);
 const state = states.includes(params.get('state') || '') ? params.get('state')! : 'success';
 const rolloutOff = state.startsWith('rollout-off');
@@ -21,7 +22,10 @@ const sharedAddress = 'ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96
 const rotatedAddress = '2'.repeat(90);
 const address = state === 'rotated' ? rotatedAddress : state === 'regular' || state === 'unknown' ? '1'.repeat(90) : sharedAddress;
 const memo = rolloutOff ? '' : state === 'invalid' ? 'é'.repeat(63) : ['regular', 'required', 'empty', 'setup', 'disabled', 'rotated'].includes(state) ? '' : 'DEMO001';
-rememberDestination(state === 'empty' ? null : { address, memo });
+const fixtureKey = (suffix: string) => `memo:${suffix.repeat(64 / suffix.length)}`;
+const pastedKey = fixtureKey(state === 'pasted-key-unknown' ? 'b7' : 'a3');
+const pasted = state.startsWith('pasted-key');
+rememberDestination(state === 'empty' || state === 'admin' ? null : pasted ? { address: pastedKey, memo: '' } : { address, memo });
 const info = {
   min_payout_amount: regularMinimum, memo_min_payout_amount: 10, payout_memos_enabled: !rolloutOff && state !== 'disabled',
   pool_name: 'Demo pool', pool_url: 'stratum+tcp://demo.invalid:3333', stratum_port: 3333,
@@ -76,8 +80,25 @@ window.fetch = async (input, init) => {
         validation_detail: held ? 'Demo verification pending' : '', confirmations_remaining: 30,
       }] : [] },
     });
-    return Response.json({ ...miner, workers: miner.workers.map(worker => ({ ...worker, worker: secondCustomer ? 'customer-two' : 'customer-one' })) });
+    const account = decodeURIComponent(path.split('/')[3]);
+    const payout_account = !account.startsWith('memo:') ? undefined
+      : { exchange: account === fixtureKey('b7') ? null : 'SafeTrade' };
+    return Response.json({ ...miner, payout_account, workers: miner.workers.map(worker => ({ ...worker, worker: secondCustomer ? 'customer-two' : 'customer-one' })) });
   }
+  if (path === '/api/admin/payout-accounts') return Response.json([
+    { account: fixtureKey('a3'), address: sharedAddress, exchange: 'SafeTrade' },
+    { account: fixtureKey('b7'), address: '1'.repeat(90), exchange: null },
+  ]);
+  if (path.startsWith('/api/miners')) {
+    const row = (address: string, hashrate: number, workers: number) => ({
+      address, worker_count: workers, hashrate, shares_accepted: 1200, shares_rejected: 3,
+      blocks_found: 0, last_share_at: now - 30,
+    });
+    const items = [row(fixtureKey('a3'), 3160, 68), row('3'.repeat(90), 1450, 4), row(fixtureKey('b7'), 220, 2), row(fixtureKey('c5'), 90, 1)];
+    return Response.json({ items, total: items.length });
+  }
+  // The admin fixture serves only the miners table; other admin panels stay unavailable.
+  if (state === 'admin') return Response.json({ error: 'Demo: not in this fixture' }, { status: 503 });
   return Response.json({ round: {}, payout_eta: null, luck_history: [], rejections: {} });
 };
 
@@ -92,8 +113,10 @@ function Showcase() {
       }}>{states.map(value => <option key={value}>{value}</option>)}</select></label>
     </header>
     <main className="container">
-      {error && <p role="alert">{error}</p>}
-      {state === 'setup' || state === 'disabled' || state === 'rollout-off-setup' ? <StartPage poolInfo={info} /> : <StatsPage api={api} theme={theme} liveTick={0} />}
+      {error && state !== 'admin' && <p role="alert">{error}</p>}
+      {state === 'admin'
+        ? <AdminPage api={api} liveTick={0} apiKey="demo" apiKeyInput="demo" setApiKeyInput={() => {}} onSaveApiKey={() => {}} onJumpToStats={() => {}} />
+        : state === 'setup' || state === 'disabled' || state === 'rollout-off-setup' ? <StartPage poolInfo={info} /> : <StatsPage api={api} theme={theme} liveTick={0} />}
     </main>
   </>;
 }

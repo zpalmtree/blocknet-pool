@@ -833,8 +833,24 @@ struct MinerDetailResponse {
     total_accepted: u64,
     total_rejected: u64,
     latest_miner_version: String,
+    /// Present for exchange memo accounts; never carries the memo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payout_account: Option<PayoutAccountResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct PayoutAccountResponse {
+    /// Registry name of the exchange, when the address is a known shared one.
+    exchange: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AdminPayoutAccountItem {
+    account: String,
+    address: String,
+    exchange: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -955,6 +971,10 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
         .route("/api/admin/perf", get(handle_admin_perf))
         .route("/api/admin/site-metrics", get(handle_site_metrics))
         .route("/api/admin/balances", get(handle_admin_balances))
+        .route(
+            "/api/admin/payout-accounts",
+            get(handle_admin_payout_accounts),
+        )
         .route(
             "/api/admin/balance-overview",
             get(handle_admin_balance_overview),
@@ -2096,6 +2116,28 @@ async fn handle_admin_perf(State(state): State<ApiState>) -> impl IntoResponse {
     let mut snapshot = state.performance.snapshot();
     snapshot.database_reads = state.store.read_performance();
     Json(snapshot).into_response()
+}
+
+/// Memo accounts with their payout address and exchange name, never the memo.
+async fn handle_admin_payout_accounts(State(state): State<ApiState>) -> Response {
+    let store = Arc::clone(&state.store);
+    match spawn_blocking_result(move || store.payout_destination_addresses()).await {
+        Ok(rows) => Json(
+            rows.into_iter()
+                .map(|(account, address)| AdminPayoutAccountItem {
+                    exchange: state
+                        .config
+                        .runtime
+                        .shared_exchange_name(&address)
+                        .map(str::to_owned),
+                    account,
+                    address,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+        Err(err) => internal_error("failed loading payout accounts", err),
+    }
 }
 
 async fn handle_admin_balances(
@@ -5450,6 +5492,7 @@ impl ApiState {
                 let risk_state = store.get_address_risk(&addr)?;
                 let validation_state = store.validation_hold_state(&addr, provisional_cutoff)?;
                 let has_any_activity = store.miner_has_any_activity(&addr)?;
+                let destination_address = store.payout_destination_address(&addr)?;
                 let workers = worker_snapshot
                     .join()
                     .map_err(|_| anyhow::anyhow!("worker snapshot reader panicked"))??;
@@ -5467,6 +5510,7 @@ impl ApiState {
                     risk_state,
                     validation_state,
                     has_any_activity,
+                    destination_address,
                 ))
             })
         })
@@ -5497,6 +5541,7 @@ impl ApiState {
             risk_state,
             validation_state,
             has_any_activity,
+            destination_address,
         ) = db_result;
 
         let verification_hold = miner_verification_hold(
@@ -5578,6 +5623,13 @@ impl ApiState {
             total_accepted,
             total_rejected,
             latest_miner_version,
+            payout_account: destination_address.map(|address| PayoutAccountResponse {
+                exchange: self
+                    .config
+                    .runtime
+                    .shared_exchange_name(&address)
+                    .map(str::to_owned),
+            }),
             error: (!has_any_activity).then(|| "miner not found".to_string()),
         };
 

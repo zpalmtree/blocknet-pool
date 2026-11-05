@@ -259,6 +259,8 @@
   "memoUnavailable": "Memo payouts are not enabled on this pool yet.",
   "memoLookupFailed": "Could not load this destination. Try again.",
   "memoPersonalMinimum": "Personal wallets: payouts from {0}.",
+  "memoAccount": "{0} memo account. Its deposit memo stays private.",
+  "memoAccountUnknown": "Exchange memo account. Its deposit memo stays private.",
   "minerSettingsTitle": "Change what seine mines with",
   "minerSettingsNvidia": "NVIDIA GPU only, CPU off",
   "minerSettingsAmd": "AMD GPU only, CPU off",

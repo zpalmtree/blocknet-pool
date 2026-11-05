@@ -259,6 +259,8 @@
   "memoUnavailable": "Auszahlungen mit Memo sind in diesem Pool noch nicht aktiviert.",
   "memoLookupFailed": "Dieses Ziel konnte nicht geladen werden. Versuche es erneut.",
   "memoPersonalMinimum": "Persönliche Wallets: Auszahlungen ab {0}.",
+  "memoAccount": "{0}-Memo-Konto. Das Einzahlungs-Memo bleibt privat.",
+  "memoAccountUnknown": "Börsen-Memo-Konto. Das Einzahlungs-Memo bleibt privat.",
   "minerSettingsTitle": "Ändern, womit seine mint",
   "minerSettingsNvidia": "Nur NVIDIA-GPU, CPU aus",
   "minerSettingsAmd": "Nur AMD-GPU, CPU aus",

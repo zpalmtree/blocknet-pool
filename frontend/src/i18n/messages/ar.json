@@ -259,6 +259,8 @@
   "memoUnavailable": "لم تُفعّل الدفعات ذات المذكرة في هذا المجمع بعد.",
   "memoLookupFailed": "تعذر تحميل بيانات هذه الوجهة. حاول مجددًا.",
   "memoPersonalMinimum": "المحافظ الشخصية: دفعات بدءًا من {0}.",
+  "memoAccount": "حساب مذكرة {0}. تبقى مذكرة الإيداع خاصة.",
+  "memoAccountUnknown": "حساب مذكرة لمنصة تداول. تبقى مذكرة الإيداع خاصة.",
   "minerSettingsTitle": "غيّر ما يعدّنه seine",
   "minerSettingsNvidia": "GPU من NVIDIA فقط، وإيقاف CPU",
   "minerSettingsAmd": "GPU من AMD فقط، وإيقاف CPU",

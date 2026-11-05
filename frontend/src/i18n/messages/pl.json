@@ -259,6 +259,8 @@
   "memoUnavailable": "Wypłaty z memo nie są jeszcze włączone w tej puli.",
   "memoLookupFailed": "Nie udało się wczytać tego odbiorcy. Spróbuj ponownie.",
   "memoPersonalMinimum": "Portfele osobiste: wypłaty od {0}.",
+  "memoAccount": "Konto z memo {0}. Memo wpłaty pozostaje prywatne.",
+  "memoAccountUnknown": "Konto z memo giełdy. Memo wpłaty pozostaje prywatne.",
   "minerSettingsTitle": "Zmień, na czym kopie seine",
   "minerSettingsNvidia": "Tylko GPU NVIDIA, CPU wyłączone",
   "minerSettingsAmd": "Tylko GPU AMD, CPU wyłączone",

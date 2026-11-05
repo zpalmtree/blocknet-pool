@@ -259,6 +259,8 @@
   "memoUnavailable": "พูลนี้ยังไม่เปิดใช้การจ่ายเงินที่มีเมโม",
   "memoLookupFailed": "โหลดข้อมูลปลายทางนี้ไม่ได้ โปรดลองอีกครั้ง",
   "memoPersonalMinimum": "กระเป๋าส่วนตัว: จ่ายเงินตั้งแต่ {0}",
+  "memoAccount": "บัญชีเมโม {0} เมโมการฝากจะถูกเก็บเป็นส่วนตัว",
+  "memoAccountUnknown": "บัญชีเมโมของกระดานเทรด เมโมการฝากจะถูกเก็บเป็นส่วนตัว",
   "minerSettingsTitle": "เปลี่ยนสิ่งที่ seine ใช้ขุด",
   "minerSettingsNvidia": "ใช้เฉพาะ GPU NVIDIA ปิด CPU",
   "minerSettingsAmd": "ใช้เฉพาะ GPU AMD ปิด CPU",

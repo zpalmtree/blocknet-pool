@@ -259,6 +259,8 @@
   "memoUnavailable": "이 풀에서는 메모 지급이 아직 활성화되지 않았습니다.",
   "memoLookupFailed": "이 수취 정보를 불러올 수 없습니다. 다시 시도하세요.",
   "memoPersonalMinimum": "개인 지갑: {0}부터 지급됩니다.",
+  "memoAccount": "{0} 메모 계정입니다. 입금 메모는 공개되지 않습니다.",
+  "memoAccountUnknown": "거래소 메모 계정입니다. 입금 메모는 공개되지 않습니다.",
   "minerSettingsTitle": "seine가 채굴하는 대상 바꾸기",
   "minerSettingsNvidia": "NVIDIA GPU만 사용, CPU 끔",
   "minerSettingsAmd": "AMD GPU만 사용, CPU 끔",

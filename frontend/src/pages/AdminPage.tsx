@@ -68,6 +68,7 @@ import {
 } from './adminDisplay';
 import type {
   AdminBalanceItem,
+  AdminPayoutAccount,
   AdminBalanceOverviewResponse,
   AdminReconciliationIssuesResponse,
   AdminShareDiagnosticsResponse,
@@ -97,6 +98,22 @@ interface AdminPageProps {
 interface DaemonLogLine {
   id: number;
   segments: ParsedAnsiSegment[];
+}
+
+/** Short label for an account; memo accounts name their exchange, never the memo. */
+function accountName(account: string, payoutAccounts: Map<string, AdminPayoutAccount>): string {
+  if (!account.startsWith('memo:')) return shortAddr(account);
+  const hash = account.slice('memo:'.length);
+  const id = `${hash.slice(0, 6)}…${hash.slice(-4)}`;
+  const entry = payoutAccounts.get(account);
+  if (entry?.exchange) return `${entry.exchange} memo ${id}`;
+  if (entry) return `Memo to ${shortAddr(entry.address)} ${id}`;
+  return `Memo ${id}`;
+}
+
+function accountTitle(account: string, payoutAccounts: Map<string, AdminPayoutAccount>): string {
+  const entry = payoutAccounts.get(account);
+  return entry ? `${account}\nPays ${entry.address} with a deposit memo` : account;
 }
 
 export function AdminPage({
@@ -396,6 +413,21 @@ export function AdminPage({
   useEffect(() => {
     refreshAdminData();
   }, [refreshAdminData]);
+
+  const [payoutAccounts, setPayoutAccounts] = useState<Map<string, AdminPayoutAccount>>(new Map());
+  useEffect(() => {
+    if (!apiKey) return;
+    let stale = false;
+    api
+      .getAdminPayoutAccounts()
+      .then((rows) => {
+        if (!stale) setPayoutAccounts(new Map(rows.map((row) => [row.account, row])));
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [api, apiKey, tab]);
 
   useEffect(() => {
     if (!apiKey || liveTick <= 0) return;
@@ -1326,7 +1358,7 @@ export function AdminPage({
                   ) : (
                     minersItems.map((m) => (
                       <tr key={m.address}>
-                        <td>
+                        <td title={accountTitle(m.address, payoutAccounts)}>
                           <a
                             href="/stats"
                             onClick={(e) => {
@@ -1334,7 +1366,7 @@ export function AdminPage({
                               onJumpToStats(m.address);
                             }}
                           >
-                            {shortAddr(m.address)}
+                            {accountName(m.address, payoutAccounts)}
                           </a>
                         </td>
                         <td>{m.worker_count || 0}</td>
@@ -1503,7 +1535,7 @@ export function AdminPage({
                       ) : (
                         filteredRewardParticipants.map((row) => (
                           <tr key={row.address}>
-                            <td title={row.address}>
+                            <td title={accountTitle(row.address, payoutAccounts)}>
                               <a
                                 href="/stats"
                                 onClick={(e) => {
@@ -1511,7 +1543,7 @@ export function AdminPage({
                                   onJumpToStats(row.address);
                                 }}
                               >
-                                {shortAddr(row.address)}
+                                {accountName(row.address, payoutAccounts)}
                               </a>
                               {row.finder ? (
                                 <div style={SMALL_MUTED_TOP_STYLE}>finder</div>
@@ -2039,7 +2071,7 @@ export function AdminPage({
                     ) : (
                       activeVerificationHolds.map((hold) => (
                         <tr key={hold.address}>
-                          <td title={hold.address}>
+                          <td title={accountTitle(hold.address, payoutAccounts)}>
                             <a
                               href="/stats"
                               onClick={(e) => {
@@ -2047,7 +2079,7 @@ export function AdminPage({
                                 onJumpToStats(hold.address);
                               }}
                             >
-                              {shortAddr(hold.address)}
+                              {accountName(hold.address, payoutAccounts)}
                             </a>
                           </td>
                           <td>
@@ -2410,7 +2442,7 @@ export function AdminPage({
                   ) : (
                     balancesItems.map((b) => (
                       <tr key={b.address}>
-                        <td title={b.address}>
+                        <td title={accountTitle(b.address, payoutAccounts)}>
                           <a
                             href="/stats"
                             onClick={(e) => {
@@ -2418,7 +2450,7 @@ export function AdminPage({
                               onJumpToStats(b.address);
                             }}
                           >
-                            {shortAddr(b.address)}
+                            {accountName(b.address, payoutAccounts)}
                           </a>
                         </td>
                         <td className="mono">{formatCoins(Math.max(0, b.clean_payable))}</td>
@@ -2709,7 +2741,7 @@ export function AdminPage({
                                   <div>
                                     {issue.addresses.slice(0, 3).map((address) => (
                                       <div key={address} className="mono">
-                                        {shortAddr(address)}
+                                        {accountName(address, payoutAccounts)}
                                       </div>
                                     ))}
                                   </div>

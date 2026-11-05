@@ -57,5 +57,8 @@
   "copy_review": "Payout footer reduced to minimum and status. Small rewards: all 30 captures refreshed. Exchange: balance-bearing captures refreshed; unaffected setup and lookup-only captures retained. Seine document contains source-based terminal text examples.",
   "captured_at": "2026-10-31 21:04 EDT",
   "comparison_revision_base": "ead730b",
-  "comparison_review": "18 exchange stats/setup captures refreshed for personal-wallet minimum comparison. Unaffected normal and lookup-only states retained."
+  "comparison_review": "18 exchange stats/setup captures refreshed for personal-wallet minimum comparison. Unaffected normal and lookup-only states retained.",
+  "pasted_key_revision_base": "1e58f87",
+  "pasted_key_review": "Six captures added for pasted memo account keys (known and unknown exchange) and admin memo labels; other captures unchanged.",
+  "pasted_key_captured_at": "2026-11-05 00:18 EST"
 }

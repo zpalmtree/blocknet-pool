@@ -199,6 +199,14 @@ export interface MinerResponse {
   total_accepted: number;
   total_rejected: number;
   latest_miner_version: string;
+  /** Present for exchange memo accounts; never carries the memo. */
+  payout_account?: { exchange: string | null };
+}
+
+export interface AdminPayoutAccount {
+  account: string;
+  address: string;
+  exchange: string | null;
 }
 
 export interface MinerListItem {

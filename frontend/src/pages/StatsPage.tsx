@@ -57,7 +57,9 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [poolInfo, setPoolInfo] = useState<InfoResponse | null>(null);
   const [lookupError, setLookupError] = useState('');
   const exchange = knownExchange(poolInfo, minerInput);
-  const showMemo = memoOpen || !!exchange;
+  // A pasted `memo:` account key already includes its memo.
+  const pastedAccount = minerInput.trim().startsWith('memo:');
+  const showMemo = !pastedAccount && (memoOpen || !!exchange);
   useEffect(() => {
     let active = true;
     api.getInfo().then(info => { if (active) setPoolInfo(info); }).catch(() => {});
@@ -180,8 +182,8 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
   const loadMinerLookup = useCallback(
     async (input?: string, memoOverride?: string) => {
-      const memo = memoOverride ?? memoInput;
       let addr = stripSoloLogin((input ?? minerInput).trim());
+      const memo = addr.startsWith('memo:') ? '' : (memoOverride ?? memoInput);
       let resolved: { address: string; handle: string } | null = null;
       if (!addr || !validMemo(memo)) return;
       if (knownExchange(poolInfo, addr) && !memo) { setMemoOpen(true); return; }
@@ -348,6 +350,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
   const lookupDisabled = useMemo(() => {
     const raw = minerInput.trim();
+    if (raw.startsWith('memo:')) return !!minerAddress && raw === appliedDestination.address;
     if (!raw || !validMemo(memoInput) || (!!exchange && !memoInput)) return true;
     if (looksLikeHandle(raw)) return false;
     return !!minerAddress && raw === appliedDestination.address && memoInput === appliedDestination.memo;
@@ -445,7 +448,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           </button>
         </div>
         <div className="stats-lookup-links">
-          {!showMemo && <button type="button" className="link-button" onClick={() => setMemoOpen(true)}>{t('memoAdd')}</button>}
+          {!showMemo && !pastedAccount && <button type="button" className="link-button" onClick={() => setMemoOpen(true)}>{t('memoAdd')}</button>}
           {(minerInput || minerAddress) && <button type="button" className="link-button" onClick={clearLookup}>{t("m013")}</button>}
           {resolvedHandle && minerAddress && (<span className="resolved-badge" dir="ltr">
               ${resolvedHandle} → {appliedDestination.address.slice(0, 8)}…{appliedDestination.address.slice(-6)}
@@ -460,6 +463,13 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           <p id="stats-memo-help" role={exchange && !memoInput ? 'alert' : undefined}>{exchange ? t('memoRequired', [exchange.name]) : t('memoLimit')}</p>
           {!validMemo(memoInput) && <p role="alert">{t('memoLimit')}</p>}
         </div>}
+        {pastedAccount && minerAddress === minerInput.trim() && minerData?.payout_account && (
+          <p className="stats-memo-account">
+            {minerData.payout_account.exchange
+              ? t('memoAccount', [minerData.payout_account.exchange])
+              : t('memoAccountUnknown')}
+          </p>
+        )}
         {lookupError && <p className="stats-lookup-error" role="alert">{lookupError}</p>}
       </div>
 

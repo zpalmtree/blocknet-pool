@@ -742,6 +742,33 @@ impl PostgresStore {
         Ok(destination)
     }
 
+    /// The payout address behind a memo account, without its memo.
+    pub fn payout_destination_address(&self, account: &str) -> Result<Option<String>> {
+        if !account.starts_with(pool_common::destination::MEMO_ACCOUNT_PREFIX) {
+            return Ok(None);
+        }
+        Ok(self
+            .conn()
+            .query_opt(
+                "SELECT address FROM payout_destinations WHERE account_id=$1",
+                &[&account],
+            )?
+            .map(|row| row.get(0)))
+    }
+
+    /// Every memo account and its payout address, without memos.
+    pub fn payout_destination_addresses(&self) -> Result<Vec<(String, String)>> {
+        Ok(self
+            .conn()
+            .query(
+                "SELECT account_id, address FROM payout_destinations ORDER BY account_id",
+                &[],
+            )?
+            .into_iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect())
+    }
+
     pub fn read_performance(
         &self,
     ) -> std::collections::BTreeMap<String, crate::telemetry::TimedOperationSummary> {
