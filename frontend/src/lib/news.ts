@@ -27,8 +27,11 @@ export const NEWS: readonly NewsItem[] = [
 const DAY_MS = 86_400_000;
 /** Days an item stays in the news strip and keeps its "New" marks. */
 export const NEWS_FRESH_DAYS = 30;
+/** Most items the strip shows at once, one line each. */
+export const STRIP_LIMIT = 2;
 
-const DISMISSED_KEY = 'pool_news_dismissed_v1';
+// The titleKeys of dismissed items, as a JSON array.
+export const DISMISSED_KEY = 'pool_news_dismissed_v2';
 const SEEN_KEY = (feature: Feature) => `pool_news_seen_${feature}_v1`;
 
 export function newsTime(item: NewsItem): number {
@@ -45,14 +48,12 @@ export function publishedNews(now = Date.now(), items: readonly NewsItem[] = NEW
   return items.filter((item) => newsTime(item) <= now);
 }
 
-/**
- * The item the news strip shows: the newest fresh one published after the day the visitor last
- * dismissed the strip, or null.
- */
-export function stripNews(now = Date.now(), dismissedThrough: string | null = readDismissed(),
-  items: readonly NewsItem[] = NEWS): NewsItem | null {
+/** The items the news strip shows: fresh ones the visitor hasn't dismissed, newest first, at most STRIP_LIMIT. */
+export function stripNews(now = Date.now(), dismissed: readonly string[] = readDismissed(),
+  items: readonly NewsItem[] = NEWS): NewsItem[] {
   return publishedNews(now, items)
-    .find((item) => isFresh(item, now) && (dismissedThrough == null || item.date > dismissedThrough)) ?? null;
+    .filter((item) => isFresh(item, now) && !dismissed.includes(item.titleKey))
+    .slice(0, STRIP_LIMIT);
 }
 
 function storageGet(key: string): string | null {
@@ -67,18 +68,27 @@ function storageSet(key: string, value: string) {
   try {
     localStorage.setItem(key, value);
   } catch {
-    // Blocked storage: the section or dot comes back on the next visit.
+    // Blocked storage: the strip or dot comes back on the next visit.
   }
 }
 
-function readDismissed(): string | null {
-  const value = storageGet(DISMISSED_KEY);
-  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+function readDismissed(): string[] {
+  try {
+    const value: unknown = JSON.parse(storageGet(DISMISSED_KEY) ?? '[]');
+    return Array.isArray(value) ? value.filter((key): key is string => typeof key === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
-/** Hides the strip until an item newer than the dismissed one is published. */
-export function dismissStripNews(item: NewsItem) {
-  storageSet(DISMISSED_KEY, item.date);
+/**
+ * Hides every item the strip shows; items published later still appear. Keys of items no longer
+ * in the catalog are dropped so the list stays short.
+ */
+export function dismissStripNews(shown: readonly NewsItem[]) {
+  const known = new Set(NEWS.map((item) => item.titleKey));
+  const keys = new Set([...readDismissed().filter((key) => known.has(key)), ...shown.map((item) => item.titleKey)]);
+  storageSet(DISMISSED_KEY, JSON.stringify([...keys]));
 }
 
 /** Whether a tab should carry the "new" dot: a fresh item announces it and it hasn't been opened since. */

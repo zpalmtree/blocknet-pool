@@ -34,9 +34,9 @@ pool, explorer or analytics endpoint. States:
 - `news`: What's new, the news archive linked from the footer, newest first, with a New chip on items
   from the last 30 days.
 
-Add `news=on` to any state to see pool news as a visitor who hasn't dismissed it: a one-line strip under the
-menu on every page except the archive, with the newest item from the last 30 days, its link, All news and a
-dismiss button, and a dot on the My Stats Settings tab until Settings is opened once. Without it every state
+Add `news=on` to any state to see pool news as a visitor who hasn't dismissed it: a strip under the menu on
+every page except the archive, with the two newest items from the last 30 days (one line each, with its link),
+All news and a dismiss button, and a dot on the My Stats Settings tab until Settings is opened once. Without it every state
 shows the page as it looks once the news is dismissed. News captures live in `../pool-news/captures/`.
 
 Every page shares the front page's style: a Mint page under the dark green nav and a deep green

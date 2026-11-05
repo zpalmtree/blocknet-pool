@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NEWS, NEWS_FRESH_DAYS, featureIsNew, isFresh, publishedNews, stripNews } from '../src/lib/news.ts';
+import { NEWS, NEWS_FRESH_DAYS, STRIP_LIMIT, featureIsNew, isFresh, publishedNews, stripNews } from '../src/lib/news.ts';
 
 const at = (day, hour = 12) => Date.parse(`${day}T${String(hour).padStart(2, '0')}:00:00Z`);
 const item = (date, extra = {}) => ({ date, titleKey: `t${date}`, bodyKey: 'b', shortKey: 's', linkKey: 'l', href: '/', ...extra });
@@ -26,15 +26,24 @@ test('unpublished items are hidden everywhere', () => {
   assert.deepEqual(publishedNews(at('2026-12-07'), ITEMS).map((news) => news.date), ['2026-12-05', '2026-11-01']);
 });
 
-test('the strip shows the newest fresh item', () => {
-  assert.equal(stripNews(at('2026-12-21'), null, ITEMS)?.date, '2026-12-20');
-  assert.equal(stripNews(at('2026-12-07'), null, ITEMS)?.date, '2026-12-05', 'unpublished items skipped');
-  assert.equal(stripNews(at('2027-02-01'), null, ITEMS), null, 'nothing fresh: no strip');
+const dates = (items) => items.map((news) => news.date);
+
+test('the strip shows the newest fresh items, up to the limit', () => {
+  assert.equal(STRIP_LIMIT, 2);
+  assert.deepEqual(dates(stripNews(at('2026-12-21'), [], ITEMS)), ['2026-12-20', '2026-12-10']);
+  assert.deepEqual(dates(stripNews(at('2026-12-07'), [], ITEMS)), ['2026-12-05'], 'unpublished items skipped');
+  assert.deepEqual(stripNews(at('2027-02-01'), [], ITEMS), [], 'nothing fresh: no strip');
 });
 
-test('dismissing hides the strip until a newer item arrives', () => {
-  assert.equal(stripNews(at('2026-12-12'), '2026-12-10', ITEMS), null, 'older fresh items stay hidden');
-  assert.equal(stripNews(at('2026-12-21'), '2026-12-10', ITEMS)?.date, '2026-12-20');
+test('dismissed items stay hidden and later ones still show', () => {
+  const dismissed = ['t2026-12-10', 't2026-12-05'];
+  assert.deepEqual(stripNews(at('2026-12-12'), dismissed, ITEMS), []);
+  assert.deepEqual(dates(stripNews(at('2026-12-21'), dismissed, ITEMS)), ['2026-12-20']);
+});
+
+test('the shipped catalog shows its two newest items together', () => {
+  const shown = stripNews(Date.parse(`${NEWS[0].date}T12:00:00Z`), [], NEWS);
+  assert.deepEqual(shown.map((news) => news.titleKey), NEWS.slice(0, STRIP_LIMIT).map((news) => news.titleKey));
 });
 
 test('a feature is new while its item is fresh and until it is opened', () => {
