@@ -116,7 +116,7 @@
     "description": "See how bntpool.com pays Blocknet miners: the pool fee, PPLNS reward window, block confirmations, minimum payouts and solo mining.",
     "image": "og-payouts.png",
     "index": true,
-    "label": "Pool info",
+    "label": "Pool Info",
     "guides": [
       {
         "href": "/blog/how-pplns-payouts-work/",

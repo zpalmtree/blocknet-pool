@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NEWS, FRONT_PAGE_LIMIT, NEWS_FRESH_DAYS, featureIsNew, frontPageNews, isFresh, publishedNews } from '../src/lib/news.ts';
+import { NEWS, NEWS_FRESH_DAYS, featureIsNew, isFresh, publishedNews, stripNews } from '../src/lib/news.ts';
 
 const at = (day, hour = 12) => Date.parse(`${day}T${String(hour).padStart(2, '0')}:00:00Z`);
-const item = (date, extra = {}) => ({ date, titleKey: `t${date}`, bodyKey: 'b', linkKey: 'l', href: '/', ...extra });
+const item = (date, extra = {}) => ({ date, titleKey: `t${date}`, bodyKey: 'b', shortKey: 's', linkKey: 'l', href: '/', ...extra });
 const ITEMS = [item('2026-12-20'), item('2026-12-10', { feature: 'settings' }), item('2026-12-05'), item('2026-11-01')];
 
 test('the catalog is newest first with valid dates', () => {
@@ -26,15 +26,15 @@ test('unpublished items are hidden everywhere', () => {
   assert.deepEqual(publishedNews(at('2026-12-07'), ITEMS).map((news) => news.date), ['2026-12-05', '2026-11-01']);
 });
 
-test('the front page lists fresh items, newest first, up to the limit', () => {
-  const shown = frontPageNews(at('2026-12-21'), null, ITEMS);
-  assert.deepEqual(shown.map((news) => news.date), ['2026-12-20', '2026-12-10', '2026-12-05'].slice(0, FRONT_PAGE_LIMIT));
-  assert.deepEqual(frontPageNews(at('2027-02-01'), null, ITEMS), [], 'nothing fresh: no section');
+test('the strip shows the newest fresh item', () => {
+  assert.equal(stripNews(at('2026-12-21'), null, ITEMS)?.date, '2026-12-20');
+  assert.equal(stripNews(at('2026-12-07'), null, ITEMS)?.date, '2026-12-05', 'unpublished items skipped');
+  assert.equal(stripNews(at('2027-02-01'), null, ITEMS), null, 'nothing fresh: no strip');
 });
 
-test('dismissing hides what was shown until a newer item arrives', () => {
-  assert.deepEqual(frontPageNews(at('2026-12-12'), '2026-12-10', ITEMS), []);
-  assert.deepEqual(frontPageNews(at('2026-12-21'), '2026-12-10', ITEMS).map((news) => news.date), ['2026-12-20']);
+test('dismissing hides the strip until a newer item arrives', () => {
+  assert.equal(stripNews(at('2026-12-12'), '2026-12-10', ITEMS), null, 'older fresh items stay hidden');
+  assert.equal(stripNews(at('2026-12-21'), '2026-12-10', ITEMS)?.date, '2026-12-20');
 });
 
 test('a feature is new while its item is fresh and until it is opened', () => {

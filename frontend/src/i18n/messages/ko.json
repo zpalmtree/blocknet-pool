@@ -406,11 +406,14 @@
   "newsEmpty": "아직 소식이 없습니다.",
   "newsSettingsTitle": "내 통계의 설정",
   "newsSettingsBody": "비밀번호로 계정을 잠근 뒤 최소 지급액을 직접 정하고, 솔로 채굴을 기본으로 하거나 공개 페이지에서 워커 이름을 숨길 수 있습니다.",
+  "newsSettingsShort": "비밀번호, 최소 지급액, 솔로 기본 설정, 워커 이름 숨기기.",
   "newsSettingsLink": "내 통계 열기",
   "newsSoloTitle": "솔로 채굴",
   "newsSoloBody": "seine v0.3.1 이상에서 주소 앞에 {0}을 붙이면 내 리그가 찾은 모든 블록의 보상 전액을 받습니다. 노드를 운영할 필요가 없습니다.",
+  "newsSoloShort": "내 리그가 찾은 모든 블록의 보상 전액을 받으세요.",
   "newsSoloLink": "솔로 채굴 가이드",
   "newsMinPayoutTitle": "최소 지급액 1 BNT",
   "newsMinPayoutBody": "이제 내 지갑으로는 1 BNT부터, 거래소 입금 주소로는 10 BNT부터 지급됩니다.",
+  "newsMinPayoutShort": "이제 1 BNT부터 지급됩니다.",
   "newsMinPayoutLink": "지급 방식"
 }

@@ -406,11 +406,14 @@
   "newsEmpty": "暂无动态。",
   "newsSettingsTitle": "我的统计新增设置",
   "newsSettingsBody": "用密码锁定账户后，可以自选最低付款额、默认单人挖矿，或在公开页面隐藏矿机名称。",
+  "newsSettingsShort": "密码、最低付款额、默认单人挖矿和隐藏矿机名称。",
   "newsSettingsLink": "打开我的统计",
   "newsSoloTitle": "单人挖矿",
   "newsSoloBody": "在 seine v0.3.1 或更高版本中，在地址前加上 {0}，您的矿机找到的每个区块的全部奖励都归您。无需运行节点。",
+  "newsSoloShort": "您的矿机找到的每个区块的全部奖励都归您。",
   "newsSoloLink": "单人挖矿指南",
   "newsMinPayoutTitle": "最低付款额 1 BNT",
   "newsMinPayoutBody": "现在付款到您自己的钱包最低 1 BNT，付款到交易所充值地址最低 10 BNT。",
+  "newsMinPayoutShort": "现在最低 1 BNT 即可付款。",
   "newsMinPayoutLink": "付款方式"
 }

@@ -406,11 +406,14 @@
   "newsEmpty": "お知らせはまだありません。",
   "newsSettingsTitle": "マイ統計に設定タブ",
   "newsSettingsBody": "パスワードでアカウントを保護すると、最小支払い額の変更、ソロマイニングを既定にする設定、公開ページでのワーカー名の非表示ができます。",
+  "newsSettingsShort": "パスワード、最小支払い額、ソロを既定に、ワーカー名の非表示。",
   "newsSettingsLink": "マイ統計を開く",
   "newsSoloTitle": "ソロマイニング",
   "newsSoloBody": "seine v0.3.1 以降でアドレスの前に {0} を付けると、リグが見つけたブロックの報酬を全額受け取れます。ノードの運用は不要です。",
+  "newsSoloShort": "リグが見つけたブロックの報酬を全額受け取れます。",
   "newsSoloLink": "ソロマイニングのガイド",
   "newsMinPayoutTitle": "最小支払い額 1 BNT",
   "newsMinPayoutBody": "支払いは自分のウォレットなら 1 BNT から、取引所の入金先なら 10 BNT から行われるようになりました。",
+  "newsMinPayoutShort": "支払いは 1 BNT からになりました。",
   "newsMinPayoutLink": "支払いの仕組み"
 }

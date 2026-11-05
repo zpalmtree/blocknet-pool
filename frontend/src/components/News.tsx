@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { locale, localizePath, t, tx } from '../i18n';
-import { dismissFrontPageNews, frontPageNews, isFresh, newsTime, publishedNews, type NewsItem } from '../lib/news';
+import { dismissStripNews, isFresh, newsTime, publishedNews, stripNews, type NewsItem } from '../lib/news';
 
 const SOLO = <code key="solo" className="mono inline-code" dir="ltr">solo:</code>;
 
@@ -16,32 +16,23 @@ function newsDate(item: NewsItem, withYear: boolean): string {
 
 const body = (item: NewsItem) => tx(item.bodyKey, [SOLO]);
 
-/** Recent news at the top of the front page; hidden once nothing is fresh or the visitor dismisses it. */
-export function NewsSection() {
-  const [items, setItems] = useState(() => frontPageNews());
-  if (!items.length) return null;
+const CLOSE = <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>;
+
+/** One line under the menu with the newest fresh item; hidden once nothing is fresh or the visitor dismisses it. */
+export function NewsStrip() {
+  const [item, setItem] = useState(() => stripNews());
+  if (!item) return null;
   return (
-    <section aria-labelledby="home-news-title">
-      <div className="home-head">
-        <h2 id="home-news-title">{t('newsNav')}</h2>
-        <div className="news-head-actions">
-          <a href={localizePath('/news')}>{t('newsAll')}</a>
-          <button type="button" className="news-dismiss" aria-label={t('newsDismiss')} title={t('newsDismiss')}
-            onClick={() => { dismissFrontPageNews(items); setItems([]); }}>
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
-          </button>
-        </div>
+    <div className="news-strip" role="region" aria-label={t('newsNav')}>
+      <div className="news-strip-inner">
+        <span className="news-strip-tag">{t('newsNew')}</span>
+        <span className="news-strip-text"><strong>{t(item.titleKey)}</strong><span className="news-strip-short"><span aria-hidden="true"> · </span>{t(item.shortKey)}</span></span>
+        <a href={newsHref(item.href)}>{t(item.linkKey)}</a>
+        <a className="news-strip-all" href={localizePath('/news')}>{t('newsAll')}</a>
+        <button type="button" className="news-strip-close" aria-label={t('newsDismiss')} title={t('newsDismiss')}
+          onClick={() => { dismissStripNews(item); setItem(null); }}>{CLOSE}</button>
       </div>
-      <ol className="news-rows card">
-        {items.map((item) => (
-          <li key={item.titleKey}>
-            <time className="news-date" dateTime={item.date}>{newsDate(item, false)}</time>
-            <div className="news-text"><strong>{t(item.titleKey)}</strong><span>{body(item)}</span></div>
-            <a href={newsHref(item.href)}>{t(item.linkKey)}</a>
-          </li>
-        ))}
-      </ol>
-    </section>
+    </div>
   );
 }
 

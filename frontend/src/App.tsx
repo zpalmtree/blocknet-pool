@@ -15,7 +15,7 @@ import { LuckPage } from './pages/LuckPage';
 import { PayoutsPage } from './pages/PayoutsPage';
 import { StartPage } from './pages/StartPage';
 import { InfoPage } from './pages/InfoPage';
-import { NewsPage } from './components/News';
+import { NewsPage, NewsStrip } from './components/News';
 import { AdminPage, StatsPage, WalletPage, PageBoundary, preloadPage } from './components/DeferredPages';
 import type { InfoResponse, Route } from './types';
 
@@ -28,8 +28,8 @@ export function App() {
     { route: 'payouts', label: t("m004") },
     { route: 'info', label: t('infoNav') },
   ];
-  // The news archive (the front page shows recent items), then pages node operators and the
-  // pool operator need and miners rarely do.
+  // The news archive (the strip under the menu shows the newest item), then pages node operators
+  // and the pool operator need and miners rarely do.
   const FOOTER_ITEMS: { route: Route; label: string }[] = [
     { route: 'news', label: t('newsNav') },
     { route: 'checkpoints', label: t("m007") },
@@ -347,6 +347,8 @@ export function App() {
           </button>
         </div>
       </nav>
+      {/* Not on the archive itself or the operator and wallet pages. */}
+      {!(isNotFound || route === 'news' || route === 'admin' || route === 'wallet') && <NewsStrip />}
 
       <div id="error-bar" style={{ display: errorMsg ? 'block' : 'none' }}>
         {errorMsg}

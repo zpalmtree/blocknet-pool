@@ -406,11 +406,14 @@
   "newsEmpty": "Ainda não há novidades.",
   "newsSettingsTitle": "Configurações em Minhas estatísticas",
   "newsSettingsBody": "Proteja sua conta com uma senha e depois escolha seu próprio pagamento mínimo, minere solo por padrão ou oculte os nomes dos seus workers nas páginas públicas.",
+  "newsSettingsShort": "Senha, pagamento mínimo, solo por padrão e nomes de workers ocultos.",
   "newsSettingsLink": "Abrir Minhas estatísticas",
   "newsSoloTitle": "Mineração solo",
   "newsSoloBody": "Coloque {0} antes do seu endereço no seine v0.3.1 ou mais recente e fique com a recompensa inteira de cada bloco que seus rigs encontrarem. Sem rodar um nó.",
+  "newsSoloShort": "Fique com a recompensa inteira de cada bloco que seus rigs encontrarem.",
   "newsSoloLink": "Guia de mineração solo",
   "newsMinPayoutTitle": "Pagamento mínimo de 1 BNT",
   "newsMinPayoutBody": "Os pagamentos agora começam em 1 BNT para sua própria carteira, ou 10 BNT para um depósito em exchange.",
+  "newsMinPayoutShort": "Os pagamentos agora começam em 1 BNT.",
   "newsMinPayoutLink": "Como você recebe"
 }

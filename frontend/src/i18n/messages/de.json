@@ -406,11 +406,14 @@
   "newsEmpty": "Noch keine Neuigkeiten.",
   "newsSettingsTitle": "Einstellungen in Meine Statistiken",
   "newsSettingsBody": "Sichere dein Konto mit einem Passwort und wähle dann deine eigene Mindestauszahlung, Solo-Mining als Standard oder blende deine Worker-Namen auf öffentlichen Seiten aus.",
+  "newsSettingsShort": "Passwort, Mindestauszahlung, Solo als Standard und verborgene Worker-Namen.",
   "newsSettingsLink": "Meine Statistiken öffnen",
   "newsSoloTitle": "Solo-Mining",
   "newsSoloBody": "Setze {0} vor deine Adresse in seine v0.3.1 oder neuer und behalte die gesamte Belohnung jedes Blocks, den deine Rigs finden. Kein eigener Node nötig.",
+  "newsSoloShort": "Behalte die gesamte Belohnung jedes Blocks, den deine Rigs finden.",
   "newsSoloLink": "Anleitung zum Solo-Mining",
   "newsMinPayoutTitle": "1 BNT Mindestauszahlung",
   "newsMinPayoutBody": "Auszahlungen beginnen jetzt bei 1 BNT an deine eigene Wallet oder bei 10 BNT an eine Börseneinzahlung.",
+  "newsMinPayoutShort": "Auszahlungen beginnen jetzt bei 1 BNT.",
   "newsMinPayoutLink": "So wirst du bezahlt"
 }
