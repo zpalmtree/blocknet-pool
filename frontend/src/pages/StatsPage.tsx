@@ -301,6 +301,19 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
     [api, minerInput, memoInput, poolInfo, range]
   );
 
+  // Unlocking (or signing out) changes what the server returns for a private
+  // account, so reload the stats instead of waiting for the next refresh.
+  const unlockedRef = useRef(false);
+  useEffect(() => { unlockedRef.current = false; }, [minerAddress]);
+  const handleUnlockedChange = useCallback((unlocked: boolean) => {
+    setSettingsUnlocked(unlocked);
+    if (unlockedRef.current === unlocked) return;
+    unlockedRef.current = unlocked;
+    void refreshMinerData();
+    void refreshMinerBalance(true);
+    void loadMinerHashrate();
+  }, [refreshMinerData, refreshMinerBalance, loadMinerHashrate]);
+
   // Only the pool payout ETA is used here, for the liquidity notice.
   const loadInsights = useCallback(async () => {
     try {
@@ -491,7 +504,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
       {showLookupResult && view === 'settings' && (<div id="miner-settings" role="tabpanel" aria-labelledby="stats-tab-settings"
           style={panelMinHeight ? { minHeight: panelMinHeight } : undefined}>
           <MinerSettings api={api} account={minerAddress} onSaved={() => void refreshMinerBalance(false)}
-            onUnlockedChange={setSettingsUnlocked} />
+            onUnlockedChange={handleUnlockedChange} />
         </div>)}
 
       {showLookupResult && view === 'stats' && minerData?.private_stats && (<div id="lookup-result" role="tabpanel"
