@@ -406,14 +406,11 @@
   "newsEmpty": "No news yet.",
   "newsSettingsTitle": "Settings on My Stats",
   "newsSettingsBody": "Lock your account with a password, then pick your own minimum payout, mine solo by default or hide your worker names from public pages.",
-  "newsSettingsShort": "Password, minimum payout, solo default and hidden worker names.",
   "newsSettingsLink": "Open My Stats",
   "newsSoloTitle": "Solo mining",
   "newsSoloBody": "Put {0} in front of your address in seine v0.3.1 or newer and keep the whole reward of every block your rigs find. No node to run.",
-  "newsSoloShort": "Keep the whole reward of every block your rigs find.",
   "newsSoloLink": "Solo mining guide",
   "newsMinPayoutTitle": "1 BNT minimum payout",
   "newsMinPayoutBody": "Payouts now start at 1 BNT to your own wallet, or 10 BNT to an exchange deposit.",
-  "newsMinPayoutShort": "Payouts now start at 1 BNT.",
   "newsMinPayoutLink": "How you get paid"
 }

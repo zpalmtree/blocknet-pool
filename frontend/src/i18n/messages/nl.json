@@ -406,14 +406,11 @@
   "newsEmpty": "Nog geen nieuws.",
   "newsSettingsTitle": "Instellingen in Mijn statistieken",
   "newsSettingsBody": "Beveilig je account met een wachtwoord en kies daarna je eigen minimale uitbetaling, standaard solo-minen of verberg je workernamen op openbare pagina's.",
-  "newsSettingsShort": "Wachtwoord, minimale uitbetaling, standaard solo en verborgen workernamen.",
   "newsSettingsLink": "Mijn statistieken openen",
   "newsSoloTitle": "Solo-minen",
   "newsSoloBody": "Zet {0} voor je adres in seine v0.3.1 of nieuwer en houd de volledige beloning van elk blok dat je rigs vinden. Geen eigen node nodig.",
-  "newsSoloShort": "Houd de volledige beloning van elk blok dat je rigs vinden.",
   "newsSoloLink": "Gids voor solo-minen",
   "newsMinPayoutTitle": "Minimale uitbetaling van 1 BNT",
   "newsMinPayoutBody": "Uitbetalingen beginnen nu bij 1 BNT naar je eigen wallet, of bij 10 BNT naar een stortingsadres van een exchange.",
-  "newsMinPayoutShort": "Uitbetalingen beginnen nu bij 1 BNT.",
   "newsMinPayoutLink": "Zo word je betaald"
 }

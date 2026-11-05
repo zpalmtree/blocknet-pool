@@ -406,14 +406,11 @@
   "newsEmpty": "Nie ma jeszcze wiadomości.",
   "newsSettingsTitle": "Ustawienia w Moich statystykach",
   "newsSettingsBody": "Zabezpiecz konto hasłem, a potem wybierz własną minimalną wypłatę, domyślne kopanie solo albo ukryj nazwy swoich workerów na stronach publicznych.",
-  "newsSettingsShort": "Hasło, minimalna wypłata, domyślne solo i ukryte nazwy workerów.",
   "newsSettingsLink": "Otwórz Moje statystyki",
   "newsSoloTitle": "Kopanie solo",
   "newsSoloBody": "Dodaj {0} przed adresem w seine v0.3.1 lub nowszym i zatrzymaj całą nagrodę za każdy blok znaleziony przez twoje koparki. Bez własnego węzła.",
-  "newsSoloShort": "Zatrzymaj całą nagrodę za każdy blok znaleziony przez twoje koparki.",
   "newsSoloLink": "Poradnik kopania solo",
   "newsMinPayoutTitle": "Minimalna wypłata 1 BNT",
   "newsMinPayoutBody": "Wypłaty zaczynają się teraz od 1 BNT na własny portfel albo od 10 BNT na depozyt giełdowy.",
-  "newsMinPayoutShort": "Wypłaty zaczynają się teraz od 1 BNT.",
   "newsMinPayoutLink": "Jak otrzymujesz wypłaty"
 }

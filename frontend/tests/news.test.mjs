@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { NEWS, NEWS_FRESH_DAYS, STRIP_LIMIT, featureIsNew, isFresh, publishedNews, stripNews } from '../src/lib/news.ts';
 
 const at = (day, hour = 12) => Date.parse(`${day}T${String(hour).padStart(2, '0')}:00:00Z`);
-const item = (date, extra = {}) => ({ date, titleKey: `t${date}`, bodyKey: 'b', shortKey: 's', linkKey: 'l', href: '/', ...extra });
+const item = (date, extra = {}) => ({ date, titleKey: `t${date}`, bodyKey: 'b', linkKey: 'l', href: '/', ...extra });
 const ITEMS = [item('2026-12-20'), item('2026-12-10', { feature: 'settings' }), item('2026-12-05'), item('2026-11-01')];
 
 test('the catalog is newest first with valid dates', () => {

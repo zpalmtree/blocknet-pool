@@ -6,8 +6,8 @@ http://localhost:5201/showcases/front-page/?state=first&news=on for the front pa
 the archive. Add `theme=dark`, `lang=ar` or `chrome=off` as usual. Every state uses synthetic data.
 
 - News strip: under the menu on every page except `/news`, Admin and the wallet. It shows the two newest items
-  from the last 30 days, one line each with the title, a short summary and the item's link, beside one New tag,
-  All news and a dismiss button. Phones keep the tag, titles, links and dismiss button. Dismissing hides the
+  from the last 30 days, each as an outlined chip (New tag, title, arrow) linking to the item, then All news and
+  a dismiss button. Phones drop All news and let the chips wrap. Dismissing hides the
   items shown; later items still appear. With nothing from the last 30 days there is no strip.
 - `/news`: every published item, newest first, with a New chip on items from the last 30 days. It is linked
   from the strip and the footer (not the main menu), listed in the sitemap and prerendered in every language.

@@ -5,8 +5,6 @@ export interface NewsItem {
   date: string;
   titleKey: string;
   bodyKey: string;
-  /** One short sentence for the news strip under the menu. */
-  shortKey: string;
   linkKey: string;
   href: string;
   /** The tab this item announces; it carries a "new" dot until opened. */
@@ -16,11 +14,11 @@ export interface NewsItem {
 export type Feature = 'settings';
 
 export const NEWS: readonly NewsItem[] = [
-  { date: '2026-11-04', titleKey: 'newsSettingsTitle', bodyKey: 'newsSettingsBody', shortKey: 'newsSettingsShort', linkKey: 'newsSettingsLink',
+  { date: '2026-11-04', titleKey: 'newsSettingsTitle', bodyKey: 'newsSettingsBody', linkKey: 'newsSettingsLink',
     href: '/stats#settings', feature: 'settings' },
-  { date: '2026-11-04', titleKey: 'newsSoloTitle', bodyKey: 'newsSoloBody', shortKey: 'newsSoloShort', linkKey: 'newsSoloLink',
+  { date: '2026-11-04', titleKey: 'newsSoloTitle', bodyKey: 'newsSoloBody', linkKey: 'newsSoloLink',
     href: '/blog/solo-mine-blocknet-on-bntpool/' },
-  { date: '2026-11-02', titleKey: 'newsMinPayoutTitle', bodyKey: 'newsMinPayoutBody', shortKey: 'newsMinPayoutShort', linkKey: 'newsMinPayoutLink',
+  { date: '2026-11-02', titleKey: 'newsMinPayoutTitle', bodyKey: 'newsMinPayoutBody', linkKey: 'newsMinPayoutLink',
     href: '/info#minimum-payout' },
 ];
 

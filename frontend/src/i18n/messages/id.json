@@ -406,14 +406,11 @@
   "newsEmpty": "Belum ada berita.",
   "newsSettingsTitle": "Pengaturan di Statistik saya",
   "newsSettingsBody": "Kunci akun Anda dengan kata sandi, lalu pilih pembayaran minimum sendiri, tambang solo secara default, atau sembunyikan nama worker Anda dari halaman publik.",
-  "newsSettingsShort": "Kata sandi, pembayaran minimum, solo sebagai default, dan nama worker tersembunyi.",
   "newsSettingsLink": "Buka Statistik saya",
   "newsSoloTitle": "Penambangan solo",
   "newsSoloBody": "Tambahkan {0} di depan alamat Anda di seine v0.3.1 atau yang lebih baru dan simpan seluruh hadiah setiap blok yang ditemukan rig Anda. Tanpa menjalankan node.",
-  "newsSoloShort": "Simpan seluruh hadiah setiap blok yang ditemukan rig Anda.",
   "newsSoloLink": "Panduan penambangan solo",
   "newsMinPayoutTitle": "Pembayaran minimum 1 BNT",
   "newsMinPayoutBody": "Pembayaran kini mulai dari 1 BNT ke dompet Anda sendiri, atau 10 BNT ke deposit exchange.",
-  "newsMinPayoutShort": "Pembayaran kini mulai dari 1 BNT.",
   "newsMinPayoutLink": "Cara Anda dibayar"
 }

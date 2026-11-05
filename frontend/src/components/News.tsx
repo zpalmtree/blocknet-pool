@@ -18,27 +18,25 @@ const body = (item: NewsItem) => tx(item.bodyKey, [SOLO]);
 
 const CLOSE = <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>;
 
-/** Up to STRIP_LIMIT lines under the menu with the newest fresh items; hidden once none is fresh or the visitor dismisses them. */
+/** Up to STRIP_LIMIT items under the menu, one chip each; hidden once none is fresh or the visitor dismisses them. */
 export function NewsStrip() {
   const [items, setItems] = useState(() => stripNews());
   if (!items.length) return null;
   return (
     <div className="news-strip" role="region" aria-label={t('newsNav')}>
       <div className="news-strip-inner">
-        <span className="news-strip-tag">{t('newsNew')}</span>
         <ul className="news-strip-items">
           {items.map((item) => (
             <li key={item.titleKey}>
-              <span className="news-strip-text"><strong>{t(item.titleKey)}</strong><span className="news-strip-short"><span aria-hidden="true"> · </span>{t(item.shortKey)}</span></span>
-              <a href={newsHref(item.href)}>{t(item.linkKey)}</a>
+              <a className="news-strip-chip" href={newsHref(item.href)}>
+                <span className="news-strip-tag">{t('newsNew')}</span>{t(item.titleKey)}<span className="news-strip-arrow" aria-hidden="true">→</span>
+              </a>
             </li>
           ))}
         </ul>
-        <div className="news-strip-actions">
-          <a className="news-strip-all" href={localizePath('/news')}>{t('newsAll')}</a>
-          <button type="button" className="news-strip-close" aria-label={t('newsDismiss')} title={t('newsDismiss')}
-            onClick={() => { dismissStripNews(items); setItems([]); }}>{CLOSE}</button>
-        </div>
+        <a className="news-strip-all" href={localizePath('/news')}>{t('newsAll')}</a>
+        <button type="button" className="news-strip-close" aria-label={t('newsDismiss')} title={t('newsDismiss')}
+          onClick={() => { dismissStripNews(items); setItems([]); }}>{CLOSE}</button>
       </div>
     </div>
   );
