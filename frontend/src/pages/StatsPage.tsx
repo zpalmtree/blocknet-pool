@@ -81,6 +81,19 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [view, setView] = useState<'stats' | 'settings'>(() =>
     typeof location !== 'undefined' && location.hash === '#settings' ? 'settings' : 'stats');
   const [settingsUnlocked, setSettingsUnlocked] = useState(false);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const [panelMinHeight, setPanelMinHeight] = useState(0);
+  // A short panel replacing a long one would shrink the page under the
+  // current scroll position and jump it up; keep the tabs where they are.
+  const switchView = (next: 'stats' | 'settings') => {
+    if (next === view) return;
+    const tabs = tabsRef.current;
+    if (tabs && typeof window !== 'undefined') {
+      const panelTop = tabs.getBoundingClientRect().bottom + window.scrollY;
+      setPanelMinHeight(Math.max(0, Math.ceil(window.scrollY + window.innerHeight - panelTop)));
+    }
+    setView(next);
+  };
 
   // A late registry response must not leave address-only results under a memo warning.
   useEffect(() => {
@@ -443,20 +456,22 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
       {!minerAddress && !lookupLoading && (<p className="section-lead" style={{ marginBottom: 16 }}>{tx("statsEmpty", [<a href={localizePath("/start")}>{t("m002")}</a>])}</p>)}
 
-      {showLookupResult && (<div className="sub-tabs stats-tabs" role="tablist" aria-label={t('m616')}>
+      {showLookupResult && (<div ref={tabsRef} className="sub-tabs stats-tabs" role="tablist" aria-label={t('m616')}>
           <button type="button" role="tab" id="stats-tab-stats" aria-selected={view === 'stats'} aria-controls="lookup-result"
-            className={view === 'stats' ? 'active' : ''} onClick={() => setView('stats')}>{t('statsTab')}</button>
+            className={view === 'stats' ? 'active' : ''} onClick={() => switchView('stats')}>{t('statsTab')}</button>
           <button type="button" role="tab" id="stats-tab-settings" aria-selected={view === 'settings'} aria-controls="miner-settings"
-            className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}>
+            className={view === 'settings' ? 'active' : ''} onClick={() => switchView('settings')}>
             <SettingsLockIcon open={settingsUnlocked} />{t('settingsTab')}</button>
         </div>)}
 
-      {showLookupResult && view === 'settings' && (<div id="miner-settings" role="tabpanel" aria-labelledby="stats-tab-settings">
+      {showLookupResult && view === 'settings' && (<div id="miner-settings" role="tabpanel" aria-labelledby="stats-tab-settings"
+          style={panelMinHeight ? { minHeight: panelMinHeight } : undefined}>
           <MinerSettings api={api} account={minerAddress} onSaved={() => void refreshMinerBalance(false)}
             onUnlockedChange={setSettingsUnlocked} />
         </div>)}
 
-      {showLookupResult && view === 'stats' && (<div id="lookup-result" role="tabpanel" aria-labelledby="stats-tab-stats">
+      {showLookupResult && view === 'stats' && (<div id="lookup-result" role="tabpanel" aria-labelledby="stats-tab-stats"
+          style={panelMinHeight ? { minHeight: panelMinHeight } : undefined}>
           {balanceUnavailable && (<div className="card stats-notice">{minerBalanceData ? t("m489") : t("m490")}</div>)}
           {verificationHold && (<div className="card stats-notice">
                 {verificationHold.mode === 'quarantined' ? t("m505", [timestampTitle(verificationQuarantineUntil) || t('m600')]) : t("m506", [timestampTitle(verificationOnlyUntil) || t('m600')])}

@@ -13,7 +13,7 @@ real pool. The demo password is `correct horse`; the rig IP that wins a take-bac
 - `unclaimed`: no password yet; anyone can set the first one.
 - `locked`: enter the password, or take the address back from a rig. Five wrong passwords an
   hour lock out further tries.
-- `unlocked`: minimum payout (pool minimum to 100 BNT), mining mode for logins without
+- `unlocked`: minimum payout (pool minimum up to what one payout may send, 10,000 BNT on bntpool), mining mode for logins without
   `solo:`, and hiding worker names, each with a ? note for the first two linking to Pool info.
   Saving a new minimum updates the payout bar on the Stats tab.
 - `custom`: unlocked with a 5 BNT minimum, solo and hidden names.

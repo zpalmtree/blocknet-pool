@@ -57,7 +57,7 @@ function settingsState(extra: Partial<MinerSettingsState> = {}): MinerSettingsSt
     unlocked: server.unlocked,
     changed_at: server.claimed ? server.changedAt : null,
     pool_min_payout: 1,
-    max_min_payout: 100,
+    max_min_payout: 10_000,
     your_ip: RIG_IP,
     settings: server.unlocked ? { min_payout: server.minPayout, default_solo: server.solo, hide_workers: server.hide } : undefined,
     ...extra,

@@ -14,8 +14,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Atomic units per BNT.
 pub const ATOMIC_PER_BNT: u64 = 100_000_000;
 
-/// Highest minimum payout a miner may choose.
-pub const MAX_MIN_PAYOUT_ATOMIC: u64 = 100 * ATOMIC_PER_BNT;
+/// Highest minimum payout a miner may choose when the pool sets no limit on
+/// what one payout may send.
+pub const FALLBACK_MAX_MIN_PAYOUT_ATOMIC: u64 = 100_000 * ATOMIC_PER_BNT;
 
 /// Work older than this does not count toward a take-back.
 pub const TAKE_BACK_WINDOW: Duration = Duration::from_secs(7 * 86_400);
@@ -63,18 +64,32 @@ pub fn source_work_hour(at: SystemTime) -> i64 {
     secs - secs.rem_euclid(SOURCE_WORK_BUCKET_SECS)
 }
 
-/// Checks a requested minimum payout against the account's pool minimum.
-pub fn validate_min_payout(requested: u64, pool_minimum: u64) -> Result<u64, String> {
+/// Highest minimum payout a miner may choose: the most one payout may send
+/// (the smaller of the per-recipient and per-run limits; 0 means no limit),
+/// so a chosen minimum can always be paid, and never below the pool minimum.
+pub fn max_min_payout(pool_minimum: u64, per_recipient_limit: u64, per_run_limit: u64) -> u64 {
+    [per_recipient_limit, per_run_limit]
+        .into_iter()
+        .filter(|limit| *limit > 0)
+        .min()
+        .unwrap_or(FALLBACK_MAX_MIN_PAYOUT_ATOMIC)
+        .max(pool_minimum)
+}
+
+/// Checks a requested minimum payout against the account's pool minimum and
+/// the highest allowed minimum (see [`max_min_payout`]).
+pub fn validate_min_payout(requested: u64, pool_minimum: u64, maximum: u64) -> Result<u64, String> {
     if requested < pool_minimum {
         return Err(format!(
             "minimum payout must be at least {}",
             format_bnt(pool_minimum)
         ));
     }
-    if requested > MAX_MIN_PAYOUT_ATOMIC.max(pool_minimum) {
+    let maximum = maximum.max(pool_minimum);
+    if requested > maximum {
         return Err(format!(
             "minimum payout must be at most {}",
-            format_bnt(MAX_MIN_PAYOUT_ATOMIC.max(pool_minimum))
+            format_bnt(maximum)
         ));
     }
     Ok(requested)
@@ -250,21 +265,23 @@ mod tests {
     }
 
     #[test]
-    fn min_payout_is_bounded_by_the_pool_minimum_and_the_cap() {
+    fn min_payout_is_bounded_by_the_pool_minimum_and_what_one_payout_sends() {
         let pool = ATOMIC_PER_BNT;
-        assert_eq!(
-            validate_min_payout(5 * ATOMIC_PER_BNT, pool),
-            Ok(5 * ATOMIC_PER_BNT)
-        );
-        assert!(validate_min_payout(ATOMIC_PER_BNT / 2, pool).is_err());
-        assert!(validate_min_payout(MAX_MIN_PAYOUT_ATOMIC + 1, pool).is_err());
-        assert_eq!(
-            validate_min_payout(MAX_MIN_PAYOUT_ATOMIC, pool),
-            Ok(MAX_MIN_PAYOUT_ATOMIC)
-        );
-        // A pool minimum above the cap (exchange accounts) still validates.
-        let memo = 150 * ATOMIC_PER_BNT;
-        assert_eq!(validate_min_payout(memo, memo), Ok(memo));
+        let bnt = ATOMIC_PER_BNT;
+        // bntpool: 10,000 BNT per recipient, 25,000 BNT per run.
+        let max = max_min_payout(pool, 10_000 * bnt, 25_000 * bnt);
+        assert_eq!(max, 10_000 * bnt);
+        assert_eq!(max_min_payout(pool, 0, 25_000 * bnt), 25_000 * bnt);
+        assert_eq!(max_min_payout(pool, 0, 0), FALLBACK_MAX_MIN_PAYOUT_ATOMIC);
+        assert_eq!(max_min_payout(20 * bnt, 10 * bnt, 0), 20 * bnt);
+
+        assert_eq!(validate_min_payout(5_000 * bnt, pool, max), Ok(5_000 * bnt));
+        assert_eq!(validate_min_payout(max, pool, max), Ok(max));
+        assert!(validate_min_payout(max + 1, pool, max).is_err());
+        assert!(validate_min_payout(bnt / 2, pool, max).is_err());
+        // A pool minimum above the limit (exchange accounts) still validates.
+        let memo = 150 * bnt;
+        assert_eq!(validate_min_payout(memo, memo, 100 * bnt), Ok(memo));
         assert_eq!(effective_min_payout(pool, None), pool);
         assert_eq!(effective_min_payout(pool, Some(5 * pool)), 5 * pool);
         assert_eq!(effective_min_payout(10 * pool, Some(5 * pool)), 10 * pool);
@@ -274,7 +291,7 @@ mod tests {
     fn hours_floor_to_the_bucket() {
         let at = UNIX_EPOCH + Duration::from_secs(7_200 + 1_234);
         assert_eq!(source_work_hour(at), 7_200);
-        assert!(validate_min_payout(1, 2)
+        assert!(validate_min_payout(1, 2, 10)
             .unwrap_err()
             .contains("0.00000002 BNT"));
     }

@@ -23,8 +23,8 @@ use axum::{Json, Router};
 use parking_lot::Mutex;
 use pool_runtime::config::Config as RuntimeConfig;
 use pool_runtime::miner_settings::{
-    effective_min_payout, take_back_decision, validate_min_payout, MinerSettings,
-    MinerSettingsRecord, TakeBack, ATOMIC_PER_BNT, MAX_MIN_PAYOUT_ATOMIC, TAKE_BACK_WINDOW,
+    effective_min_payout, max_min_payout, take_back_decision, validate_min_payout, MinerSettings,
+    MinerSettingsRecord, TakeBack, ATOMIC_PER_BNT, TAKE_BACK_WINDOW,
 };
 use pool_runtime::store::PoolStore;
 use serde::Deserialize;
@@ -365,17 +365,14 @@ impl MinerSettingsService {
         (self.runtime.payout_minimum(account) * ATOMIC_PER_BNT as f64).round() as u64
     }
 
-    /// Highest minimum payout the account may choose: the cap, but never
-    /// above what one payout may send (`payout_max_per_recipient`), so a
-    /// minimum can always be paid.
+    /// Highest minimum payout the account may choose: what one payout may send.
     fn max_min_payout(&self, account: &str) -> u64 {
-        let pool_minimum = self.pool_minimum(account);
-        let per_payout = (self.runtime.payout_max_per_recipient * ATOMIC_PER_BNT as f64).round();
-        let mut max = MAX_MIN_PAYOUT_ATOMIC;
-        if per_payout > 0.0 {
-            max = max.min(per_payout as u64);
-        }
-        max.max(pool_minimum)
+        let atomic = |bnt: f64| (bnt.max(0.0) * ATOMIC_PER_BNT as f64).round() as u64;
+        max_min_payout(
+            self.pool_minimum(account),
+            atomic(self.runtime.payout_max_per_recipient),
+            atomic(self.runtime.payout_max_total_per_tick),
+        )
     }
 
     /// The minimum payout that applies to an account, in BNT.
@@ -922,17 +919,10 @@ impl MinerSettingsService {
                         "That minimum payout is too large.",
                     ));
                 }
-                let atomic =
-                    validate_min_payout(atomic as u64, pool_minimum).map_err(|message| {
-                        ApiError::new(StatusCode::BAD_REQUEST, "invalid_settings", &message)
-                    })?;
-                if atomic > self.max_min_payout(&caller.account) {
-                    return Err(ApiError::new(
-                        StatusCode::BAD_REQUEST,
-                        "invalid_settings",
-                        "That minimum payout is above what one payout can send.",
-                    ));
-                }
+                let maximum = self.max_min_payout(&caller.account);
+                let atomic = validate_min_payout(atomic as u64, pool_minimum, maximum).map_err(
+                    |message| ApiError::new(StatusCode::BAD_REQUEST, "invalid_settings", &message),
+                )?;
                 // The pool's own minimum is stored as "no choice", so it
                 // follows the pool if that changes.
                 (atomic != pool_minimum).then_some(atomic)
