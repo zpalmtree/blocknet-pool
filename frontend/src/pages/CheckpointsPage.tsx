@@ -55,7 +55,6 @@ export function CheckpointsPage({ api, liveTick }: CheckpointsPageProps) {
   return (
     <div id="page-checkpoints">
       <div className="page-header">
-        <span className="page-kicker">{t("m379")}</span>
         <h1>{t("m380")}</h1>
         <p className="page-intro">{t("m381")}</p>
       </div>

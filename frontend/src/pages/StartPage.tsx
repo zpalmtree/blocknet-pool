@@ -114,7 +114,6 @@ export function StartPage({ poolInfo }: StartPageProps) {
   return (
     <div id="page-start">
       <div className="page-header">
-        <span className="page-kicker">{t("m466")}</span>
         <h1>{t("m467")}</h1>
         <p className="page-intro">{feeKnown ? t('startIntro', [poolFeeShort]) : t('startIntroPlain')}</p>
       </div>

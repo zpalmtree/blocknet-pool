@@ -22,7 +22,6 @@ export function PayoutsPage({ api, liveTick }: PayoutsPageProps) {
   return (
     <div id="page-payouts">
       <div className="page-header">
-        <span className="page-kicker">{t("m444")}</span>
         <h1>{t("m445")}</h1>
         <p className="page-intro">{t("m446")}</p>
       </div>
