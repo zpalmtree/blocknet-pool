@@ -287,6 +287,8 @@
   "payoutOf": "{0} dari {1}",
   "lastPayout": "Pembayaran terakhir {0}, {1}.",
   "payoutReady": "Siap dibayar",
+  "payoutIn": "Dibayar dalam {0}",
+  "payoutNow": "Sedang dibayar",
   "payoutQueuedTag": "Pembayaran dalam antrean",
   "fullStats": "Statistik lengkap",
   "workersOutdatedOne": "1 worker menjalankan versi seine yang lebih lama.",

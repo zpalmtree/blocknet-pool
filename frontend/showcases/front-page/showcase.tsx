@@ -11,6 +11,9 @@ const STATES = {
   first: 'First visit: no saved lookup',
   below: 'Returning miner, below the 1 BNT minimum',
   ready: 'Returning miner, over the minimum',
+  'ready-due': 'Returning miner, over the minimum, sweep due now',
+  'ready-nosweep': 'Returning miner, over the minimum, no sweep time reported',
+  'stats-ready': 'My Stats: over the minimum',
   queued: 'Returning miner, payout queued',
   paid: 'Returning miner, just paid',
   'no-workers': 'Returning miner, no workers online',
@@ -125,7 +128,7 @@ const miner: MinerResponse = {
   payouts: [{ amount: Math.round(1.84 * BNT), fee: 24_000, tx_hash: 'demo-miner-payout', timestamp: ts(recentPayout ? 240 : 2 * 86_400), confirmed: true }],
 };
 const confirmed = {
-  below: 0.42, stats: 0.42, 'stats-new': 0, ready: 1.84, queued: 1.84, paid: 0.03, 'no-workers': 0.42, exchange: 4.2, 'exchange-ready': 12.4,
+  below: 0.42, stats: 0.42, 'stats-new': 0, ready: 1.84, 'ready-due': 1.84, 'ready-nosweep': 1.84, 'stats-ready': 1.84, queued: 1.84, paid: 0.03, 'no-workers': 0.42, exchange: 4.2, 'exchange-ready': 12.4,
 }[state as string] ?? 0;
 const balance = {
   address: exchangeState ? 'memo:demo-account' : WALLET, min_payout_amount: exchangeState ? 10 : 1,
@@ -136,7 +139,7 @@ const balance = {
 
 const insights = {
   round: { elapsed_seconds: 844, effort_pct: 70.5, expected_block_seconds: 1_082, timer_effort_pct: 78 },
-  payout_eta: { next_sweep_at: ts(-600), pending_total_amount: 0, wallet_spendable: 29_686 * BNT, wallet_pending: 5_448 * BNT },
+  payout_eta: { next_sweep_at: state === 'ready-nosweep' ? null : ts(state === 'ready-due' ? 20 : -23 * 60 - 30), pending_total_amount: 0, wallet_spendable: 29_686 * BNT, wallet_pending: 5_448 * BNT },
   avg_effort_pct: null, luck_history: state === 'empty' ? [] : luck,
   rejections: { accepted: 0, rejected: 0, by_reason: [], totals_by_reason: [] },
 };
@@ -169,7 +172,7 @@ window.fetch = async (input, init) => {
 };
 
 // The app routes on the path; the showcase picks it, then App renders as on the live site.
-const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', 'stats-new': '/stats', blocks: '/blocks', start: '/start', payouts: '/payouts', checkpoints: '/checkpoints', news: '/news' };
+const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', 'stats-ready': '/stats', 'stats-new': '/stats', blocks: '/blocks', start: '/start', payouts: '/payouts', checkpoints: '/checkpoints', news: '/news' };
 history.replaceState(null, '', `${ROUTES[state] ?? '/'}${location.search}`);
 
 function Bar() {

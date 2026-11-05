@@ -287,6 +287,8 @@
   "payoutOf": "{0} من {1}",
   "lastPayout": "آخر دفعة {0}، {1}.",
   "payoutReady": "جاهز للدفع",
+  "payoutIn": "الدفع خلال {0}",
+  "payoutNow": "جارٍ الدفع الآن",
   "payoutQueuedTag": "دفعة في قائمة الانتظار",
   "fullStats": "الإحصائيات الكاملة",
   "workersOutdatedOne": "عامل واحد يستخدم إصدارًا أقدم من seine.",

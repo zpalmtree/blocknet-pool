@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ApiClient } from '../api/client';
-import { t, tx } from '../i18n';
-import { formatCoinAmount, formatCoins } from '../lib/format';
+import { locale, t, tx } from '../i18n';
+import { formatCoinAmount, formatCoins, timestampTitle, toUnixMs } from '../lib/format';
+import type { UnixLike } from '../types';
 import { heroPayout, minimumPayoutAtoms } from '../lib/payout-progress';
 
 interface PayoutProgressProps {
@@ -11,9 +12,27 @@ interface PayoutProgressProps {
   confirmed?: number;
   queued: number;
   liveTick: number;
+  nextSweepAt?: UnixLike | null;
 }
 
-export function PayoutProgress({ api, confirmed, queued, liveTick, memoAccount = false, accountMinimum }: PayoutProgressProps) {
+/** Minutes under an hour, then hours, in the locale's narrow unit (24m, 2h). */
+function shortWait(ms: number): string {
+  const minutes = Math.ceil(ms / 60_000);
+  const [value, unit] = minutes < 60 ? [minutes, 'minute'] : [Math.round(minutes / 60), 'hour'];
+  return new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'narrow' }).format(value);
+}
+
+/**
+ * The over-the-minimum tag: says when the next payout sweep runs, with the exact time on hover.
+ * Without a sweep time from the pool it keeps the plain ready label.
+ */
+export function ReadyTag({ className, nextSweepAt }: { className: string; nextSweepAt?: UnixLike | null }) {
+  const at = nextSweepAt == null ? 0 : toUnixMs(nextSweepAt);
+  const label = !at ? t('payoutReady') : at - Date.now() < 60_000 ? t('payoutNow') : t('payoutIn', [shortWait(at - Date.now())]);
+  return <span className={className} title={at ? timestampTitle(nextSweepAt!) || undefined : undefined}><i aria-hidden="true" />{label}</span>;
+}
+
+export function PayoutProgress({ api, confirmed, queued, liveTick, memoAccount = false, accountMinimum, nextSweepAt }: PayoutProgressProps) {
   // undefined is loading; null is unavailable. Never assume a configured minimum.
   const [minimum, setMinimum] = useState<number | null | undefined>(undefined);
   const refresh = Math.floor(liveTick / 12);
@@ -42,7 +61,7 @@ export function PayoutProgress({ api, confirmed, queued, liveTick, memoAccount =
       <div className="miner-pay-bar"><div style={{ width: `${payout.fillPct}%` }} /></div>
     </>}
     {payout.state === 'ready' && <>
-      <div className="miner-pay-top"><span className="miner-pay-tag"><i aria-hidden="true" />{t('payoutReady')}</span>
+      <div className="miner-pay-top"><ReadyTag className="miner-pay-tag" nextSweepAt={nextSweepAt} />
         <strong dir="ltr">{formatCoins(payout.amount)}</strong></div>
       <div className="miner-pay-bar"><div style={{ width: '100%' }} /></div>
     </>}

@@ -15,6 +15,9 @@ pool, explorer or analytics endpoint. States:
   hashrate, one next-payout bar and Full stats; the side panel keeps Stratum and the pool fee. Below the minimum
   the bar fills toward it; over it the bar is full; a queued payout shows a striped bar; just after a
   payout a line names it.
+- `ready-due`, `ready-nosweep`: over the minimum, the ready tag says when the next payout sweep runs
+  (`ready` shows "Payout in 24m", with the exact time on hover). `ready-due` shows "Paying out now" when the
+  sweep is under a minute away; `ready-nosweep` keeps "Ready for payout" when the pool reports no sweep time.
 - `no-workers`: a saved miner with nothing online links to the zero-hashrate help.
 - `exchange`, `exchange-ready`: an exchange deposit with a memo uses its own 10 BNT minimum from the
   balance API.
@@ -24,6 +27,7 @@ pool, explorer or analytics endpoint. States:
 - `stats`: My Stats: one lookup row (memo and Clear as links), then a summary card in the hero's
   shape (hashrate, next-payout bar, estimated, confirmed and paid), the miner's hashrate chart,
   workers, payouts and, when present, blocks still maturing. Clear it for the empty state.
+- `stats-ready`: My Stats over the minimum, with the same sweep tag in the summary card.
 - `stats-new`: My Stats for a miner that is hashing but has no estimated rewards yet: a ? beside
   Estimated Rewards opens a short note on why it is 0.
 - `blocks`: Blocks, where effort and status badges share one width per column.

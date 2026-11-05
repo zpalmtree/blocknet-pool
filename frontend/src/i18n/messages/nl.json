@@ -287,6 +287,8 @@
   "payoutOf": "{0} van {1}",
   "lastPayout": "Laatste uitbetaling {0}, {1}.",
   "payoutReady": "Klaar voor uitbetaling",
+  "payoutIn": "Uitbetaling over {0}",
+  "payoutNow": "Wordt nu uitbetaald",
   "payoutQueuedTag": "Uitbetaling in wachtrij",
   "fullStats": "Alle statistieken",
   "workersOutdatedOne": "1 worker draait een oudere versie van seine.",

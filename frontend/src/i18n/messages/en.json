@@ -287,6 +287,8 @@
   "payoutOf": "{0} of {1}",
   "lastPayout": "Last payout {0}, {1}.",
   "payoutReady": "Ready for payout",
+  "payoutIn": "Payout in {0}",
+  "payoutNow": "Paying out now",
   "payoutQueuedTag": "Payout queued",
   "fullStats": "Full stats",
   "workersOutdatedOne": "1 worker is running an older version of seine.",

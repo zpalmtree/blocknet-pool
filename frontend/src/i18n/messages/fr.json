@@ -287,6 +287,8 @@
   "payoutOf": "{0} sur {1}",
   "lastPayout": "Dernier paiement {0}, {1}.",
   "payoutReady": "Prêt pour le paiement",
+  "payoutIn": "Paiement dans {0}",
+  "payoutNow": "Paiement en cours",
   "payoutQueuedTag": "Paiement en file d’attente",
   "fullStats": "Statistiques complètes",
   "workersOutdatedOne": "1 travailleur utilise une ancienne version de seine.",
