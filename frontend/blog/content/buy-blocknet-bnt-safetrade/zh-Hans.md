@@ -1,5 +1,5 @@
 ---
-title: "在哪里通过 SafeTrade 购买 Blocknet（BNT）"
+title: "在哪里通过 SafeTrade 购买 Blocknet（$BNT）"
 description: "通过 SafeTrade 的 BNT/USDT 现货市场购买 Blocknet：了解账户充值、买单提交与成交查询，以及如何提币到自己的 Blocknet 钱包。"
 tags: [Blocknet, BNT, SafeTrade]
 faq:
@@ -9,7 +9,7 @@ faq:
     a: "可以。BNT/USDT 表示用 USDT 买入 BNT，价格单位为每枚 BNT 需要的 USDT。充值时选择收发两端都支持的网络，等待资金成为可交易余额后再下单。"
   - q: "如何把买到的 BNT 转入自己的钱包？"
     a: "复制 Blocknet 钱包的收款地址，填入 SafeTrade 的 BNT 提币流程。核对币种、地址、金额及当前要求。跟踪提币记录，再在已同步的钱包中核对到账金额和确认状态。"
-sourceHash: "943aebf19c94"
+sourceHash: "17efc83f9be4"
 translation: draft
 ---
 

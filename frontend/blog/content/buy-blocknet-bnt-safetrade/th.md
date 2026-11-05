@@ -1,5 +1,5 @@
 ---
-title: "ซื้อ Blocknet (BNT) บน SafeTrade ได้ที่ไหน"
+title: "ซื้อ Blocknet ($BNT) บน SafeTrade ได้ที่ไหน"
 description: "ซื้อ Blocknet ผ่านตลาด BNT/USDT ของ SafeTrade ตั้งแต่ฝาก USDT ตรวจคำสั่งซื้อและยอดที่จับคู่แล้ว ไปจนถึงถอน BNT เข้ากระเป๋า Blocknet ของคุณเอง"
 tags: [Blocknet, BNT, SafeTrade]
 faq:
@@ -9,7 +9,7 @@ faq:
     a: "ได้ คุณใช้ USDT ซื้อ BNT โดยราคาเป็น USDT ต่อ BNT เลือกเครือข่ายฝากที่บริการทั้งสองฝั่งรองรับ และรอให้ยอดพร้อมใช้ซื้อขายก่อนส่งคำสั่ง"
   - q: "จะย้าย BNT ที่ซื้อไปยังกระเป๋าตัวเองอย่างไร?"
     a: "คัดลอกที่อยู่รับ Blocknet ไปยังขั้นตอนถอน BNT ของ SafeTrade ตรวจสินทรัพย์ ปลายทาง จำนวน และข้อกำหนดปัจจุบัน ติดตามการถอน แล้วตรวจยอดรับและการยืนยันในกระเป๋าที่ซิงก์แล้ว"
-sourceHash: "943aebf19c94"
+sourceHash: "17efc83f9be4"
 translation: draft
 ---
 

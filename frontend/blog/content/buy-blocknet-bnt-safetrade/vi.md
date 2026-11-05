@@ -1,5 +1,5 @@
 ---
-title: "Mua Blocknet (BNT) ở đâu trên SafeTrade?"
+title: "Mua Blocknet ($BNT) ở đâu trên SafeTrade?"
 description: "Mua Blocknet qua BNT/USDT trên SafeTrade: nạp USDT, kiểm tra lệnh mua và phần đã khớp, rồi rút BNT về ví Blocknet của bạn và xác nhận tiền đã nhận."
 tags: [Blocknet, BNT, SafeTrade]
 faq:
@@ -9,7 +9,7 @@ faq:
     a: "Có. Bạn dùng USDT để mua BNT; giá tính bằng USDT cho mỗi BNT. Chọn mạng nạp được cả hai dịch vụ hỗ trợ và chờ số dư khả dụng trước khi giao dịch."
   - q: "Làm sao chuyển BNT đã mua về ví?"
     a: "Sao chép địa chỉ nhận Blocknet vào phần rút BNT của SafeTrade. Kiểm tra tài sản, địa chỉ, số tiền và yêu cầu hiện tại. Theo dõi lần rút, rồi khoản nhận và xác nhận trong ví đã đồng bộ."
-sourceHash: "943aebf19c94"
+sourceHash: "17efc83f9be4"
 translation: draft
 ---
 

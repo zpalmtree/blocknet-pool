@@ -1,5 +1,5 @@
 ---
-title: "Gdzie kupić Blocknet (BNT) na SafeTrade?"
+title: "Gdzie kupić Blocknet ($BNT) na SafeTrade?"
 description: "Kup Blocknet na SafeTrade przez BNT/USDT. Zasil konto, sprawdź zlecenie i jego realizację, a następnie wypłać BNT do własnego portfela Blocknet."
 tags: [Blocknet, BNT, SafeTrade]
 faq:
@@ -9,7 +9,7 @@ faq:
     a: "Tak. Wydajesz USDT na BNT, a cena oznacza USDT za BNT. Wybierz sieć wpłaty obsługiwaną przez obie usługi i poczekaj na saldo dostępne do handlu."
   - q: "Jak przenieść kupione BNT do portfela?"
     a: "Skopiuj adres odbiorczy Blocknet do wypłaty BNT na SafeTrade. Sprawdź aktywo, adres, kwotę i aktualne wymagania. Śledź wypłatę, a następnie wpływ i potwierdzenia w zsynchronizowanym portfelu."
-sourceHash: "943aebf19c94"
+sourceHash: "17efc83f9be4"
 translation: draft
 ---
 

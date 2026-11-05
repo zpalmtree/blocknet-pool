@@ -1,5 +1,5 @@
 ---
-title: "Dónde comprar Blocknet (BNT) en SafeTrade"
+title: "Dónde comprar Blocknet ($BNT) en SafeTrade"
 description: "Compra Blocknet (BNT) en SafeTrade con el par BNT/USDT. Sigue el depósito, la orden de compra, su ejecución y la retirada a tu propio monedero Blocknet."
 tags: [Blocknet, BNT, SafeTrade]
 faq:
@@ -9,7 +9,7 @@ faq:
     a: "Sí. En BNT/USDT gastas USDT para comprar BNT; el precio indica USDT por BNT. Para depositar USDT, elige una red compatible con ambos servicios de la transferencia. Espera a que el saldo esté disponible en el exchange antes de comprar."
   - q: "¿Cómo llevo los BNT comprados a mi monedero?"
     a: "Copia una dirección receptora de tu monedero Blocknet y úsala en la retirada de BNT de SafeTrade. Revisa activo, destino, importe y requisitos actuales. Sigue el registro de retirada y verifica el ingreso y las confirmaciones en tu monedero sincronizado."
-sourceHash: "943aebf19c94"
+sourceHash: "17efc83f9be4"
 translation: draft
 ---
 

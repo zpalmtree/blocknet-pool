@@ -1,5 +1,5 @@
 ---
-title: "Waar koop je Blocknet (BNT) op SafeTrade?"
+title: "Waar koop je Blocknet ($BNT) op SafeTrade?"
 description: "Koop Blocknet via BNT/USDT op SafeTrade. Stort USDT, controleer je kooporder en uitvoering en neem BNT op naar je eigen gesynchroniseerde Blocknet-wallet."
 tags: [Blocknet, BNT, SafeTrade]
 faq:
@@ -9,7 +9,7 @@ faq:
     a: "Ja. Je besteedt USDT aan BNT; de prijs is USDT per BNT. Gebruik voor de storting een netwerk dat beide diensten ondersteunen en wacht totdat het tegoed beschikbaar is om te handelen."
   - q: "Hoe stuur ik gekochte BNT naar mijn wallet?"
     a: "Kopieer je Blocknet-ontvangstadres naar de BNT-opname bij SafeTrade. Controleer munt, bestemming, bedrag en actuele voorwaarden. Volg de opname en controleer ontvangst en bevestigingen in je gesynchroniseerde wallet."
-sourceHash: "943aebf19c94"
+sourceHash: "17efc83f9be4"
 translation: draft
 ---
 

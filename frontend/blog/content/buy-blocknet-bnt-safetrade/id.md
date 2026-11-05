@@ -1,5 +1,5 @@
 ---
-title: "Tempat membeli Blocknet (BNT) di SafeTrade"
+title: "Tempat membeli Blocknet ($BNT) di SafeTrade"
 description: "Beli Blocknet melalui BNT/USDT di SafeTrade. Ikuti pendanaan akun, order beli, pemeriksaan eksekusi, dan penarikan ke dompet Blocknet milik Anda sendiri."
 tags: [Blocknet, BNT, SafeTrade]
 faq:
@@ -9,7 +9,7 @@ faq:
     a: "Ya. Anda membelanjakan USDT untuk BNT, dengan harga USDT per BNT. Pilih jaringan setoran yang didukung kedua layanan dan tunggu saldo tersedia untuk perdagangan."
   - q: "Bagaimana memindahkan BNT ke dompet saya?"
     a: "Salin alamat penerimaan Blocknet ke penarikan BNT SafeTrade. Periksa aset, tujuan, jumlah, dan persyaratan terkini. Pantau penarikan, lalu penerimaan dan konfirmasi di dompet yang tersinkron."
-sourceHash: "943aebf19c94"
+sourceHash: "17efc83f9be4"
 translation: draft
 ---
 

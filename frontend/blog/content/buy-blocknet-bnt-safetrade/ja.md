@@ -1,5 +1,5 @@
 ---
-title: "Blocknet（BNT）をSafeTradeで購入する方法"
+title: "Blocknet（$BNT）をSafeTradeで購入する方法"
 description: "SafeTradeのBNT/USDT現物市場でBlocknetを購入。USDTの入金、買い注文と約定の確認、自分のBlocknetウォレットへの出金までを説明します。"
 tags: [Blocknet, BNT, SafeTrade]
 faq:
@@ -9,7 +9,7 @@ faq:
     a: "はい。BNT/USDTではUSDTを支払ってBNTを購入し、価格は1 BNTあたりのUSDTです。入金には送受信双方が対応するネットワークを選び、取引可能な残高に反映されてから注文してください。"
   - q: "購入したBNTを自分のウォレットへ移すには？"
     a: "Blocknetウォレットの受取アドレスをSafeTradeのBNT出金画面に入力します。資産、宛先、金額、現在の要件を確認し、出金状況を追跡してください。その後、同期済みウォレットで受取額と承認状態を確認します。"
-sourceHash: "943aebf19c94"
+sourceHash: "17efc83f9be4"
 translation: draft
 ---
 
