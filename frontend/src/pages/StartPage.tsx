@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
 import { ExchangeSetup } from '../components/ExchangeSetup';
-import { MiningType } from '../components/MiningType';
 import { SeineScreen, type TerminalCapture } from '../components/SeineScreen';
 import seineScreensData from '../data/seine-screens.json';
 import { seineSupportsSolo } from '../lib/solo';
@@ -83,7 +82,6 @@ export function StartPage({ poolInfo }: StartPageProps) {
     : `${poolFeePct.toLocaleString(locale, { maximumFractionDigits: 20 })}%`;
   const poolFeeShort = feeKnown ? `${poolFeePct.toLocaleString(locale, { maximumFractionDigits: 20 })}%` : '-';
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
-  const pplnsWindowLabel = poolInfo?.pplns_window_duration;
   // Solo needs a Seine release that accepts solo: logins.
   const soloAvailable = seineSupportsSolo(poolInfo?.latest_miner_version);
   const mineSolo = solo && soloAvailable;
@@ -220,13 +218,6 @@ export function StartPage({ poolInfo }: StartPageProps) {
       </div>
 
       <div className="card section" id="pool-information">
-        <h2 className="start-card-title">{t("m469")}</h2>
-        <dl className="start-facts">
-          <div><dt>{t('poolFee')}</dt><dd>{poolFeeShort}</dd></div>
-          <div><dt>{t('m472')}</dt><dd>{poolInfo?.min_payout_amount != null ? t('m473', [poolInfo.min_payout_amount.toLocaleString(locale, { maximumFractionDigits: 20 })]) : '-'}</dd></div>
-          <div><dt>{t('m471')}</dt><dd>PPLNS{pplnsWindowLabel ? ` ${pplnsWindowLabel}` : ''}</dd></div>
-          <div><dt>{t('m474')}</dt><dd>{poolInfo?.blocks_before_payout != null ? t('m475', [poolInfo.blocks_before_payout.toLocaleString(locale)]) : '-'}</dd></div>
-        </dl>
         <div className="start-stratum">
           <span>{t('m402')}</span>
           <div className="quickstart-copy">
@@ -236,11 +227,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
             </button>
           </div>
         </div>
-        <div className="start-rewards">
-          <p>{pplnsWindowLabel && <>{tx("m478", [<strong>PPLNS</strong>, tx("m477", [<strong>{pplnsWindowLabel}</strong>])])}{' '}</>}{t("m479")}</p>
-          <p>{tx("m480", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
-          <p>{tx("soloRewardsNote", [<MiningType solo />])}</p>
-        </div>
+        <p className="start-note start-info-link">{tx('startInfoLink', [<a href={localizePath('/info')}>{t('infoNav')}</a>])}</p>
       </div>
     </div>
   );

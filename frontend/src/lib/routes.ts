@@ -5,6 +5,7 @@ const ROUTES = {
   wallet: ['/wallet', 'hostedWallet'],
   dashboard: ['/', 'm399'],
   start: ['/start', 'm611'],
+  info: ['/info', 'infoTitle'],
   checkpoints: ['/checkpoints', 'm612'],
   luck: ['/luck', 'm613'],
   blocks: ['/blocks', 'm614'],

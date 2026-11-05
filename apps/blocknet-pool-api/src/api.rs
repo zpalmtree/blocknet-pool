@@ -1127,6 +1127,9 @@ struct PoolInfoResponse {
     shared_exchange_addresses: Vec<pool_common::destination::SharedExchangeAddress>,
     blocks_before_payout: i32,
     pplns_window_duration: String,
+    pplns_window_seconds: u64,
+    /// How often the payout run sends confirmed balances.
+    payout_interval_seconds: u64,
     /// Latest Seine release, as reported to miners.
     latest_miner_version: String,
 }
@@ -1194,6 +1197,8 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
         },
         blocks_before_payout: state.config.runtime.blocks_before_payout,
         pplns_window_duration: state.config.runtime.pplns_window_duration.clone(),
+        pplns_window_seconds: state.config.runtime.pplns_window_duration().as_secs(),
+        payout_interval_seconds: state.config.runtime.payout_interval_duration().as_secs(),
         latest_miner_version: state.miner_release.version(),
     })
 }

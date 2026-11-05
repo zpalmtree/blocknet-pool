@@ -22,7 +22,7 @@ const ROOT = new URL('../blog/', import.meta.url);
 const BLOG = new URL('content/', ROOT);
 const LOCALES = TRANSLATED.map(({ code, path }) => ({ code, path }));
 // Pool app routes a post may link to (the app is English-only, so these stay unprefixed).
-const APP_ROUTES = ['/', '/start', '/stats', '/blocks', '/payouts', '/luck', '/checkpoints'];
+const APP_ROUTES = ['/', '/start', '/stats', '/blocks', '/payouts', '/info', '/luck', '/checkpoints'];
 const BLOCKS = ['Answer', 'Note', 'Warning'];
 const ctaCount = (b) => (stripCode(b).match(/<CTA\b/g) ?? []).length;
 
