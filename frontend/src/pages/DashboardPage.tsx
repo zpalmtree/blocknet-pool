@@ -361,9 +361,9 @@ function MinerHero({ miner, balance, loading, destination, poolInfo, nextSweepAt
         <span>{t('yourMiner')} · <bdi dir="ltr">{who}</bdi></span>
         <button type="button" className="home-link-button" onClick={onForget}>{t('notYou')}</button>
       </p>
-      <h1 className="home-me-hr" dir="ltr">{miner && !hidden ? humanRate(miner.hashrate) : '-'}</h1>
+      {!hidden && <h1 className="home-me-hr" dir="ltr">{miner ? humanRate(miner.hashrate) : '-'}</h1>}
       {hidden && (
-        <p className="home-me-sub">
+        <p className="home-me-sub home-me-private">
           {t('homePrivateStats')} <a href={`${localizePath('/stats')}#settings`}>{t('settingsUnlock')}</a>
         </p>
       )}
