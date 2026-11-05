@@ -2,7 +2,7 @@
 title: "Kalkulator wydobycia Blocknet"
 description: "Oszacuj BNT dziennie i tygodniowo na podstawie swojego hashrate, bieżących danych sieci i harmonogramu nagród. Opłaty są pokazane osobno."
 tags: [Nagrody za kopanie, Poradnik kopania, Hashrate, bntpool]
-sourceHash: 'ce91c64a8567'
+sourceHash: '9dace0600c53'
 translation: draft
 faq:
   - q: 'Jak obliczyć nagrody za kopanie Blocknetu?'
@@ -109,7 +109,7 @@ Różnicą jest czas otrzymywania nagród. Kopiąc samodzielnie, ten serwer Zen 
 Dwa szczegóły puli wpływają na pierwszy dzień:
 
 - **Okno zapełnia się przez sześć godzin.** Część każdego bloku przypadająca nowemu górnikowi rośnie w miarę zapełniania udziałami sześciogodzinnego okna PPLNS, a potem pozostaje na pełnym poziomie, dopóki górnik kontynuuje kopanie.
-- **Nagrody dojrzewają przed wypłatą.** Nagroda za każdy blok przechodzi do Confirmed Rewards po 60 potwierdzeniach, około pięciu godzinach, a pula automatycznie wysyła saldo po osiągnięciu 0,1 BNT.
+- **Nagrody dojrzewają przed wypłatą.** Nagroda za każdy blok przechodzi do Confirmed Rewards po 60 potwierdzeniach, około pięciu godzinach, a pula automatycznie wysyła saldo po osiągnięciu 1 BNT.
 
 ## Jak porównać oszacowanie z rzeczywistymi wynikami?
 

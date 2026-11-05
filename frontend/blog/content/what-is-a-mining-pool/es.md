@@ -11,7 +11,7 @@ faq:
     a: 'No. El pool ejecuta el nodo, crea plantillas, comprueba shares y envía bloques. En bntpool.com solo necesitas seine y una dirección Blocknet o nombre Blocknet ID. Ejecuta seine, pega la dirección y acepta el pool predeterminado: tu parte de cada bloque se paga allí.'
   - q: '¿Cómo empiezo en bntpool.com?'
     a: 'Descarga seine para Windows, macOS o Linux desde seineminer.com, ejecútalo y pega tu dirección o @name. Acepta bntpool.com, el pool predeterminado, y empieza a minar. Busca tu dirección en las estadísticas para ver tasa de hash, shares y saldo.'
-sourceHash: '15d1453f41d9'
+sourceHash: '698c26d17e91'
 translation: draft
 ---
 
@@ -63,20 +63,20 @@ El sistema de pago convierte shares en ingresos. Estos son los más comunes.
 |---|---|---|
 | PPLNS (pay per last N shares) | Bloques encontrados por el pool | Reparte cada recompensa entre los shares de una ventana reciente, según dificultad |
 | PPS (pay per share) | Cada share aceptado | Paga un importe fijo según el valor esperado del share, encuentre o no un bloque |
-| Solo | Bloques que encuentras tú | Minas contra tu nodo y conservas toda la recompensa |
+| Solo | Bloques que encuentras tú | Conservas toda la recompensa de cada bloque que encuentras, minando en un pool con modo solo o contra tu propio nodo |
 
 **PPLNS** mira hacia atrás desde cada hallazgo. En bntpool.com, los "últimos N shares" son seis horas: suma la dificultad de todos los aceptados en ese período y paga a cada minero su fracción del trabajo. Un share cuenta para cada bloque mientras esté en la ventana. Quien mina constantemente mantiene una ventana completa y un reinicio no la borra. [Cómo funciona PPLNS](/blog/es/how-pplns-payouts-work/) explica el reparto paso a paso.
 
 **PPS** paga cada share al llegar por su valor esperado: dificultad del share dividida entre dificultad de red, por recompensa de bloque. El operador asume las oscilaciones de los hallazgos y paga desde su propio saldo entre ellos.
 
-**La minería solo** prescinde del pool. Tu nodo crea plantillas y cada bloque paga la recompensa completa a tu billetera. Encaja con operaciones grandes que encuentran bloques a menudo. seine soporta ambos: bntpool.com por defecto y `./seine --mode daemon` para tu nodo sincronizado.
+**La minería solo** paga la recompensa completa de cada bloque al minero que lo encontró. Encaja con operaciones grandes que encuentran bloques a menudo. En bntpool.com minas en solitario poniendo `solo:` delante de tu dirección: el pool sigue ejecutando el nodo y paga tus bloques mediante sus pagos normales, y [la minería en solitario en bntpool.com](/blog/es/solo-mine-blocknet-on-bntpool/) explica la configuración. seine también tiene un modo daemon, `./seine --mode daemon`, que mina contra tu propio nodo Blocknet sincronizado.
 
 ## ¿Qué debes buscar en un pool?
 
 Estos detalles determinan cómo cobras y cómo puedes comprobarlo:
 
 - **Un sistema claro.** Debe publicar el método y ajustes como la ventana PPLNS. bntpool.com los muestra en [Get Started](/start) y `https://bntpool.com/api/info`.
-- **Confirmaciones y mínimo.** Las recompensas esperan suficiente profundidad y se pagan al superar un mínimo. bntpool.com confirma tras 60 bloques, igual que la madurez coinbase, y paga automáticamente desde 0,1 BNT.
+- **Confirmaciones y mínimo.** Las recompensas esperan suficiente profundidad y se pagan al superar un mínimo. bntpool.com confirma tras 60 bloques, igual que la madurez coinbase, y paga automáticamente desde 1 BNT.
 - **Cifras públicas verificables.** Debes poder ver todos los bloques y pagos. bntpool.com ofrece [Blocks](/blocks), [Payouts](/payouts) y esfuerzo por ronda en [Luck](/luck).
 - **Tus estadísticas.** Busca tu dirección para tasa, shares y saldo en [My Stats](/stats). La [guía de seguimiento](/blog/es/track-your-miner-on-bntpool/) explica sus tarjetas.
 - **Configuración sencilla.** Menos ajustes permiten empezar antes. bntpool.com es el valor predeterminado de seine, que ajusta hilos, kernels y memoria. Puedes acceder con un [nombre Blocknet ID](https://seineminer.com/es/blog/blocknet-id-pay-by-name/) como `@name` en lugar de la dirección completa.
@@ -88,11 +88,11 @@ Estos detalles determinan cómo cobras y cómo puedes comprobarlo:
 | Sistema de pagos | PPLNS |
 | Ventana de shares | 6 horas |
 | Confirmaciones antes del pago | 60 bloques |
-| Pago mínimo | 0,1 BNT |
+| Pago mínimo | 1 BNT |
 | Dirección Stratum | `stratum+tcp://bntpool.com:3333` |
 
 El [panel](/) muestra mineros conectados, tasas de pool y red, bloques y esfuerzo actual. El 25 de octubre de 2026 a las 02:25 EDT, el pool tenía unos 5200 H/s de una red de unos 44.400 H/s y 246 mineros. Es alrededor del 12%, suficiente para esperar unos 34 bloques diarios, uno cada 42 minutos. Cambia constantemente: consulta los valores actuales y usa la [guía de recompensas](/blog/es/estimate-blocknet-mining-rewards/) para convertirlos a BNT con tu tasa.
 
 Para unirte, [descarga seine](https://seineminer.com/es/#download), ejecútalo, pega tu dirección o `@name` y acepta el pool. La [guía de seine](https://seineminer.com/es/blog/how-to-mine-blocknet/) explica cada paso, y [minar en bntpool.com](/blog/es/mine-blocknet-on-bntpool/) cubre nombres de rigs y primeros shares.
 
-<CTA target="pool" title="Únete a bntpool.com" text="Conecta seine al pool y recibe parte de cada bloque, enviada automáticamente a tu dirección al alcanzar 0,1 BNT." />
+<CTA target="pool" title="Únete a bntpool.com" text="Conecta seine al pool y recibe parte de cada bloque, enviada automáticamente a tu dirección al alcanzar 1 BNT." />

@@ -9,7 +9,7 @@ faq:
     a: 'Een actieve miningverbinding is geen betalingsvoorwaarde. Bevestigde saldi worden volgens de poolregels behandeld, inclusief het huidige minimumbedrag. Verbreken van de verbinding wist het saldo niet en vraagt op zichzelf geen onmiddellijke betaling aan.'
   - q: 'Verjongt opnieuw verbinden mijn oude shares?'
     a: 'Nee. Bestaande shares behouden hun tijdstempel. Nieuw werk komt na terugkeer in de betreffende vensters; opnieuw verbinden vernieuwt oude shares niet en voegt geen werk toe voor offline uren. Controleer nieuwe geaccepteerde shares na herstart.'
-sourceHash: '0a11c393062e'
+sourceHash: 'a5bf859e0abb'
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Ja. Geschikt werk uit een korte sessie kan deelnemen aan blokken waarvan het PPL
 
 ## Onderscheid de verschillende tijdstappen
 
-bntpool publiceert momenteel een PPLNS-venster van zes uur, 60 blokken voor uitbetaling en een minimum van 0,1 BNT op de [startpagina](/start). Dat zijn meegeteld werk, rijping van een blok en een saldodrempel. Het venster van zes uur is geen timer die een betaling na zes uur belooft.
+bntpool publiceert momenteel een PPLNS-venster van zes uur, 60 blokken voor uitbetaling en een minimum van 1 BNT op de [startpagina](/start). Dat zijn meegeteld werk, rijping van een blok en een saldodrempel. Het venster van zes uur is geen timer die een betaling na zes uur belooft.
 
 De [PPLNS-gids](/blog/nl/how-pplns-payouts-work/) beschrijft de verdeling. Geschikte shares worden naar moeilijkheid gewogen tegenover al het geschikte werk in hetzelfde venster. Online minuten leggen geen percentage van de volgende beloning vast. Apparaten, pooldeelname en share-uitkomsten kunnen gewichten veranderen bij even lange sessies.
 
@@ -45,7 +45,7 @@ Sluit seine normaal af met `q` in het dashboard of `Ctrl+C` in de terminal. Bewa
 
 Als een share buiten het venster voor een later blok valt, wist dat geen beloning die al aan een eerder blok is toegewezen. Geschatte beloningen volgen blokstatus en rijping; bevestigd onbetaald saldo blijft tot verwerking op het account. De [bevestigingsgids](/blog/nl/block-confirmations-mining-rewards/) onderscheidt voorlopig bloktegoed en gerijpt saldo.
 
-Een bevestigd saldo onder 0,1 BNT blijft onder de huidige automatische drempel totdat extra tegoed het minimum bereikt. Opnieuw verbinden verhoogt het saldo niet en dwingt geen betaling af. Andersom vereist een geschikt saldo geen online miner tijdens verwerking. De [betalingshistorie](/payouts) onderscheidt onbetaald saldo en verzonden transactie.
+Een bevestigd saldo onder 1 BNT blijft onder de huidige automatische drempel totdat extra tegoed het minimum bereikt. Opnieuw verbinden verhoogt het saldo niet en dwingt geen betaling af. Andersom vereist een geschikt saldo geen online miner tijdens verwerking. De [betalingshistorie](/payouts) onderscheidt onbetaald saldo en verzonden transactie.
 
 ## Keer terug naar hetzelfde account en controleer nieuw werk
 

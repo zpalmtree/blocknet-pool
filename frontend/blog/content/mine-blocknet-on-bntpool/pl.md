@@ -2,7 +2,7 @@
 title: Kop Blocknet na bntpool.com
 description: Dołącz do bntpool.com, domyślnej puli Blocknetu w seine. Połącz się z stratum+tcp://bntpool.com:3333 adresem lub @name, nazwij maszyny i sprawdź statystyki.
 tags: [Poradnik kopania, bntpool, Blocknet ID, seine]
-sourceHash: 'df269126bb76'
+sourceHash: '9713e976f981'
 translation: draft
 faq:
   - q: 'Jaki jest adres Stratum bntpool.com?'
@@ -23,7 +23,7 @@ Ten poradnik opisuje dołączanie do puli bntpool.com z seine: adres puli, logow
 Adres Stratum bntpool.com to `stratum+tcp://bntpool.com:3333`. seine proponuje go jako domyślną pulę przy pierwszym uruchomieniu, więc naciśnięcie Enter przy pytaniu o pulę nawiązuje połączenie. Logujesz się adresem Blocknet lub nazwą Blocknet ID `@name`. Nie tworzysz konta, a nagrody trafiają na ten adres.
 </Answer>
 
-Oto ustawienia puli według jej publicznego endpointu `/api/info` z 25 października 2026 r.:
+Oto ustawienia puli według jej publicznego endpointu `/api/info` z 4 listopada 2026 r.:
 
 | Ustawienie | Wartość |
 |---|---|
@@ -31,9 +31,11 @@ Oto ustawienia puli według jej publicznego endpointu `/api/info` z 25 paździer
 | Login | Adres Blocknet, `@name` lub `$name` |
 | System wypłat | PPLNS z oknem 6 godzin |
 | Potwierdzenia przed wypłatą | 60 bloków |
-| Minimalna wypłata | 0,1 BNT |
+| Minimalna wypłata | 1 BNT |
 
 Te same wartości możesz w każdej chwili zobaczyć na stronie [Get Started](/start) puli.
+
+Aby zatrzymać całą nagrodę za każdy blok znaleziony przez twoje koparki, dodaj `solo:` przed adresem. [Kopanie solo na bntpool.com](/blog/pl/solo-mine-blocknet-on-bntpool/) pokazuje, jak to zrobić.
 
 ## Dlaczego bntpool.com jest domyślną pulą seine?
 
@@ -105,7 +107,7 @@ Zwróć uwagę na trzy rzeczy:
 
 Pula ustawia trudność udziałów osobno dla każdego połączenia i dostosowuje ją podczas kopania, więc nawet mały CPU regularnie wysyła udziały, a pierwsze zaakceptowane udziały pojawiają się w ciągu kilku minut od połączenia. Oczekiwany hashrate sprzętu znajdziesz w [poradniku sprzętu do kopania Blocknetu](https://seineminer.com/pl/blog/blocknet-mining-hardware-hashrate/).
 
-Potem przychodzą nagrody. Estimated Rewards pojawiają się, gdy pula znajdzie blok, a Twoje udziały są w sześciogodzinnym oknie. Po 60 potwierdzeniach bloku Twoja część przechodzi do Confirmed Rewards, a pula wysyła ją automatycznie, gdy masz co najmniej 0,1 BNT. [Jak działają wypłaty PPLNS](/blog/pl/how-pplns-payouts-work/) wyjaśnia podział nagrody za każdy blok. Historię całej puli znajdziesz na stronach [Blocks](/blocks) i [Payouts](/payouts).
+Potem przychodzą nagrody. Estimated Rewards pojawiają się, gdy pula znajdzie blok, a Twoje udziały są w sześciogodzinnym oknie. Po 60 potwierdzeniach bloku Twoja część przechodzi do Confirmed Rewards, a pula wysyła ją automatycznie, gdy masz co najmniej 1 BNT. [Jak działają wypłaty PPLNS](/blog/pl/how-pplns-payouts-work/) wyjaśnia podział nagrody za każdy blok. Historię całej puli znajdziesz na stronach [Blocks](/blocks) i [Payouts](/payouts).
 
 ## Co zawiera strona Get Started?
 

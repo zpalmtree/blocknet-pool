@@ -1,18 +1,18 @@
 ---
 title: 'Hoe PPLNS-uitbetalingen werken op bntpool.com'
-description: 'bntpool.com betaalt Blocknet-miners via PPLNS over zes uur. Lees hoe beloningen worden verdeeld, waarom 60 bevestigingen nodig zijn en wanneer 0,1 BNT wordt betaald.'
+description: 'bntpool.com betaalt Blocknet-miners via PPLNS over zes uur. Lees hoe beloningen worden verdeeld, waarom 60 bevestigingen nodig zijn en wanneer 1 BNT wordt betaald.'
 tags: ['Uitbetalingen', 'PPLNS', 'bntpool', 'Mininggids']
-sourceHash: 'f216680e1944'
+sourceHash: '2f69ab18ce0b'
 translation: draft
 faq:
   - q: 'Hoe lang is het PPLNS-venster op bntpool.com?'
     a: 'Zes uur. Wanneer de pool een blok vindt, kijkt hij terug naar de zes uur ervoor en verdeelt de beloning onder iedereen die in die periode shares instuurde, naar verhouding van hun moeilijkheid. De huidige waarde staat op de pagina Get Started van de pool.'
   - q: 'Wat is de minimumuitbetaling op bntpool.com?'
-    a: 'De minimumuitbetaling is 0,1 BNT. Zodra je bevestigde saldo dat bedrag bereikt, stuurt de pool het automatisch naar je Blocknet-adres. Je hoeft niets aan te vragen of te claimen. Een kleiner saldo blijft staan en groeit met elk bevestigd blok waarin je shares meetellen, totdat de grens is bereikt.'
+    a: 'De minimumuitbetaling is 1 BNT. Zodra je bevestigde saldo dat bedrag bereikt, stuurt de pool het automatisch naar je Blocknet-adres. Je hoeft niets aan te vragen of te claimen. Een kleiner saldo blijft staan en groeit met elk bevestigd blok waarin je shares meetellen, totdat de grens is bereikt.'
   - q: 'Waarom verschillen Estimated Rewards en Confirmed Rewards?'
     a: 'Estimated Rewards zijn je aandeel in gevonden blokken die hun 60 bevestigingen nog verzamelen; dat bedrag kan nog veranderen. Confirmed Rewards komen uit blokken die 60 blokken diep liggen en wachten op uitbetaling. Zodra een blok rijp is, verhuist het bedrag van de eerste naar de tweede kaart.'
   - q: 'Stoppen mijn beloningen zodra ik stop met minen?'
-    a: 'Nee. Elke share blijft na insturen zes uur in het PPLNS-venster. Blokken die de pool in die tijd vindt, leveren je dus nog beloningen op. Bevestigde beloningen blijven op je saldo staan en worden uitbetaald zodra het saldo het minimum van 0,1 BNT bereikt.'
+    a: 'Nee. Elke share blijft na insturen zes uur in het PPLNS-venster. Blokken die de pool in die tijd vindt, leveren je dus nog beloningen op. Bevestigde beloningen blijven op je saldo staan en worden uitbetaald zodra het saldo het minimum van 1 BNT bereikt.'
   - q: 'Wat betekent effort boven 100% op de luck-pagina?'
     a: 'Effort vergelijkt het werk tijdens een ronde met de blokmoeilijkheid, de verwachte hoeveelheid werk. Boven 100% betekent dat de ronde langer duurde dan gemiddeld, onder 100% dat hij sneller was. Beide zijn normaal. Over veel rondes komt de gemiddelde effort rond 100% uit.'
 ---
@@ -34,7 +34,7 @@ Op bntpool.com is «last N» een tijdsduur: zes uur. [Get Started](/start) toont
 | Uitbetalingssysteem | PPLNS |
 | Sharevenster | 6 uur |
 | Bevestigingen voor uitbetaling | 60 blokken |
-| Minimumuitbetaling | 0,1 BNT |
+| Minimumuitbetaling | 1 BNT |
 
 Shares tellen naar moeilijkheid. De pool geeft elke verbinding een eigen sharemoeilijkheid en past die aan voor een regelmatige stroom shares. Een snellere machine krijgt moeilijkere shares, zodat elke share zwaarder weegt. Je aandeel wordt bepaald door je totale werk, een eerlijke maat voor zowel laptop als server.
 
@@ -46,7 +46,7 @@ Bij ieder gevonden blok doorloopt de beloning dezelfde stappen:
 2. **Het venster wordt gemeten.** De pool neemt de zes uur die eindigen bij het blok en telt per adres de moeilijkheid van alle geaccepteerde shares op.
 3. **De beloning wordt verdeeld.** Elk adres ontvangt hetzelfde aandeel in de beloning als zijn aandeel in het totale werk van het venster.
 4. **Het blok rijpt.** Je aandeel blijft een schatting totdat het blok 60 blokken diep ligt en verhuist dan naar je bevestigde saldo.
-5. **Het saldo wordt betaald.** Bij een bevestigd saldo van 0,1 BNT stuurt de pool het naar je adres.
+5. **Het saldo wordt betaald.** Bij een bevestigd saldo van 1 BNT stuurt de pool het naar je adres.
 
 ## Een rekenvoorbeeld
 
@@ -64,7 +64,7 @@ Neem nu een tweede miner met precies jouw hashrate, die 30 minuten vóór het bl
 | Dezelfde hashrate, 30 minuten vóór het blok begonnen | 1.667 | circa 0,17% | circa 0,67 BNT |
 | Kleine miner, de volle zes uur aan het minen | 100 | 0,01% | 0,04 BNT |
 
-De kleine miner in de laatste regel verdient 0,04 BNT per blok. Na drie zulke bevestigde blokken passeert het saldo het minimum van 0,1 BNT en volgt uitbetaling.
+De kleine miner in de laatste regel verdient 0,04 BNT per blok. Na 25 zulke bevestigde blokken passeert het saldo het minimum van 1 BNT en volgt uitbetaling.
 
 ## Waarom beloont PPLNS doorlopend minen?
 
@@ -83,7 +83,7 @@ Tijdens het rijpen controleert de pool of het blok nog bij de hoofdketen hoort. 
 ## Wanneer komen uitbetalingen van bntpool.com aan?
 
 <Answer>
-Na 60 bevestigingen, ongeveer vijf uur bij de bloktijd van Blocknet, verhuist je aandeel naar Confirmed Rewards op de statistiekenpagina. Zodra je bevestigde saldo 0,1 BNT bereikt, stuurt bntpool.com het automatisch naar je Blocknet-adres. Je hoeft niets aan te vragen of te claimen.
+Na 60 bevestigingen, ongeveer vijf uur bij de bloktijd van Blocknet, verhuist je aandeel naar Confirmed Rewards op de statistiekenpagina. Zodra je bevestigde saldo 1 BNT bereikt, stuurt bntpool.com het automatisch naar je Blocknet-adres. Je hoeft niets aan te vragen of te claimen.
 </Answer>
 
 Voor een nieuwe miner verschijnt de eerste schatting zodra de pool een blok vindt terwijl zijn shares in het venster zitten. De eerste betaling volgt nadat dat blok rijp is en het saldo het minimum bereikt. Verstuurde betalingen staan op de [uitbetalingspagina](/payouts) en in je eigen geschiedenis op My Stats.
@@ -106,4 +106,4 @@ De [luck-pagina](/luck) toont elke ronde met blokhoogte, effort, rondetijd, stat
 
 Luck beïnvloedt hoe vaak blokken aankomen. Je aandeel in elk blok hangt uitsluitend af van je aandeel in het werkvenster. Doorlopend minen houdt dat aandeel vol, of de ronde nu kort of lang duurt.
 
-<CTA target="pool" title="Sluit je aan bij de pool" text="Mine doorlopend op bntpool.com. Je aandeel in elk blok wordt automatisch betaald zodra je 0,1 BNT bereikt." />
+<CTA target="pool" title="Sluit je aan bij de pool" text="Mine doorlopend op bntpool.com. Je aandeel in elk blok wordt automatisch betaald zodra je 1 BNT bereikt." />

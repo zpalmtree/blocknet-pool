@@ -9,7 +9,7 @@ faq:
     a: 'Nein. Sechzig Intervalle mit fünf Minuten Zielzeit ergeben geschätzte 300 Minuten oder fünf Stunden. Tatsächlich zählen neue Blöcke, deren Ankunftszeiten schwanken. Reife, Auszahlungsschwelle und spätere Zahlungstransaktion sind getrennte Schritte.'
   - q: 'Muss ich weiter minen, damit eine bestehende Belohnung reift?'
     a: 'Ein gefundener Block gewinnt Tiefe durch neue Netzwerkblöcke, unabhängig von deiner Verbindung. Dein Anspruch folgt den Abrechnungsregeln des Pools. Ein Stopp beschleunigt oder startet die Reifung nicht neu; verfolge den erfassten Betrag unter My Stats.'
-sourceHash: '2f9675c64c30'
+sourceHash: '963042ab2a8e'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Ein ausgeschiedener Block kann als verwaist markiert werden; seine vorläufige B
 
 ## Wie unterscheidet sich die Auszahlung von der Blockbelohnung?
 
-Die geminte Belohnung liegt zunächst im Coinbase-Output des Blocks. Eine Poolzahlung ist eine spätere Transaktion an deine Empfangsadresse. Zum Prüfdatum veröffentlicht bntpool mindestens 0,1 BNT für Auszahlungen. Blockreife und Guthabenschwelle sind unterschiedliche Bedingungen; Details zur Aufteilung und Auszahlung stehen im [PPLNS-Leitfaden](/blog/de/how-pplns-payouts-work/).
+Die geminte Belohnung liegt zunächst im Coinbase-Output des Blocks. Eine Poolzahlung ist eine spätere Transaktion an deine Empfangsadresse. Am 4. November 2026 veröffentlicht bntpool eine Mindestauszahlung von 1 BNT. Blockreife und Guthabenschwelle sind unterschiedliche Bedingungen; Details zur Aufteilung und Auszahlung stehen im [PPLNS-Leitfaden](/blog/de/how-pplns-payouts-work/).
 
 Nach dem Senden verfolgst du die eigene Transaktion sowie Eingang und Ausgebbarkeit in deiner Wallet. Ihre Bestätigungen gehören zur Zahlung, nicht zum ursprünglichen Poolblock. Während ein Block reift, musst du weder eine neue Adresse erstellen noch den Miner neu verbinden. Vergleiche die [Auszahlungshistorie](/payouts) und Wallet unter derselben vorgesehenen Adresse.
 

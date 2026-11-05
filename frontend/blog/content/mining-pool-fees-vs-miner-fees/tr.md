@@ -4,16 +4,16 @@ description: 'Blocknet havuz ve madenci ücretlerinin nerede uygulandığını, 
 tags: ['Madencilik rehberi', 'Havuz ücretleri', 'Ödüller']
 faq:
   - q: 'Bunlar aynı ücret mi?'
-    a: 'Hayır. Havuz ücreti ödül dağıtımına, geliştirici ücreti yazılıma aittir. seine v0.2.36 başlangıç muafiyetinden sonra ücret hesabına giren sürenin %2''sini geliştirmeye ayırır. Bntpool''un ayrı havuz ücreti 26 Ekim 2026 kontrolünde %0''dı.'
+    a: 'Hayır. Havuz ücreti ödül dağıtımına, geliştirici ücreti yazılıma aittir. seine v0.3.1 başlangıç muafiyetinden sonra ücret hesabına giren sürenin %2''sini geliştirmeye ayırır. Bntpool''un ayrı havuz ücreti 26 Ekim 2026 kontrolünde %0''dı.'
   - q: 'Nasıl birleştirilir?'
     a: 'Brüt tahmini önce bir eksi madenci oranıyla, sonra bir eksi havuz oranıyla çarpın. Gerçek sürüm ve güncel ayarı kullanın. Bu kalan ödül tahminidir; ödeme garantisi veya nakit kâr hesabı değildir.'
   - q: 'Madenci ücretini havuz hashrate''inden düşmeli miyim?'
     a: 'Önce sayının anlamını belirleyin. Geliştirici süresi sonrası adresinize yazılan işi zaten tahmin ediyorsa tekrar düşmek çift sayımdır. Hesaplayıcı önceden yansıtılmış düzeltme için sıfır kabul eder. Onaylanmış bakiye veya kaydedilmiş ödemeden tekrar ücret düşmeyin.'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-Blocknet tahminindeki iki ücret katmanını izleyin. Rehber, seine v0.2.36 ve 26 Ekim 2026'da kontrol edilen bntpool ayarlarıyla [hesaplayıcı](/blog/tr/estimate-blocknet-mining-rewards/#mining-calculator) girdilerini ve [My Stats](/stats) bakiyelerini açıklar.
+Blocknet tahminindeki iki ücret katmanını izleyin. Rehber, seine v0.3.1 ve 26 Ekim 2026'da kontrol edilen bntpool ayarlarıyla [hesaplayıcı](/blog/tr/estimate-blocknet-mining-rewards/#mining-calculator) girdilerini ve [My Stats](/stats) bakiyelerini açıklar.
 
 ## Havuz ve madenci ücreti nasıl ayrılır?
 
@@ -31,7 +31,7 @@ Havuz uygun işi toplar ve dağıtılabilir ödülü kurallarıyla paylaştırı
 
 ## seine geliştirici ücreti nasıl çalışır?
 
-v0.2.36 her havuzda ve solo modda sabit %2 belgeler. Bu geliştirici adresi için madencilik zamanıdır, cüzdandan sonradan çekim değildir. İlk 10 dakika ücretsizdir; izleyici sonraki süreyi sayar. [Sürüm yapılandırma rehberi](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) politikayı açıklar.
+v0.3.1 her havuzda ve solo modda sabit %2 belgeler. Bu geliştirici adresi için madencilik zamanıdır, cüzdandan sonradan çekim değildir. İlk 10 dakika ücretsizdir; izleyici sonraki süreyi sayar. [Sürüm yapılandırma rehberi](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) politikayı açıklar.
 
 Zamanlama turlarla çalışır; kısa aralık tam %2 olmayabilir. Bu başlangıç sonrası uzun vadeli hedeftir, her dakika veya blok için söz değildir. Sürümü kaydedin: eski rehber veya başka yazılım farklı olabilir. Havuz ücreti bu bilgiyi karşılamaz.
 

@@ -4,16 +4,16 @@ description: 'Zrozum opłaty puli i minera Blocknet: gdzie obowiązują, jak je 
 tags: ['Poradnik kopania', 'Opłaty puli', 'Nagrody']
 faq:
   - q: 'Czy to ta sama opłata?'
-    a: 'Nie. Opłata puli dotyczy podziału nagród, opłata dewelopera należy do oprogramowania. seine v0.2.36 przeznacza 2% naliczanego czasu kopania na rozwój po okresie początkowym. Osobna opłata bntpool wynosiła 0% przy kontroli 26 października 2026.'
+    a: 'Nie. Opłata puli dotyczy podziału nagród, opłata dewelopera należy do oprogramowania. seine v0.3.1 przeznacza 2% naliczanego czasu kopania na rozwój po okresie początkowym. Osobna opłata bntpool wynosiła 0% przy kontroli 26 października 2026.'
   - q: 'Jak je połączyć?'
     a: 'Pomnóż szacunek brutto przez jeden minus ułamek minera, następnie jeden minus ułamek puli. Użyj rzeczywistej wersji i aktualnych ustawień. To szacunek zachowanych nagród, nie gwarancja wypłaty ani obliczenie zysku pieniężnego.'
   - q: 'Czy odjąć opłatę minera od hashrate puli?'
     a: 'Najpierw określ znaczenie liczby. Jeśli już szacuje pracę dla twojego adresu po czasie dewelopera, kolejne odjęcie podwaja korektę. Kalkulator pozwala wpisać zero dla korekty już uwzględnionej. Nie odejmuj opłat ponownie od potwierdzonego salda lub płatności.'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-Prześledź dwa poziomy opłat w szacunku Blocknet. Poradnik używa seine v0.2.36 i ustawień bntpool sprawdzonych 26 października 2026, aby pomóc w [kalkulatorze](/blog/pl/estimate-blocknet-mining-rewards/#mining-calculator) i [My Stats](/stats).
+Prześledź dwa poziomy opłat w szacunku Blocknet. Poradnik używa seine v0.3.1 i ustawień bntpool sprawdzonych 26 października 2026, aby pomóc w [kalkulatorze](/blog/pl/estimate-blocknet-mining-rewards/#mining-calculator) i [My Stats](/stats).
 
 ## Czym różnią się opłaty puli i minera?
 
@@ -31,7 +31,7 @@ Pula zbiera kwalifikującą się pracę i dzieli nagrodę według zasad księgow
 
 ## Jak działa opłata dewelopera seine?
 
-v0.2.36 dokumentuje 2% na każdej puli i solo. Jest to czas kopania dla adresu dewelopera, nie późniejsza wypłata z portfela. Pierwsze 10 minut jest bez opłaty; śledzony jest czas późniejszy. Zobacz [konfigurację wydania](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md).
+v0.3.1 dokumentuje 2% na każdej puli i solo. Jest to czas kopania dla adresu dewelopera, nie późniejsza wypłata z portfela. Pierwsze 10 minut jest bez opłaty; śledzony jest czas późniejszy. Zobacz [konfigurację wydania](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md).
 
 Harmonogram działa rundami, więc krótki okres nie musi dawać dokładnie 2%. To cel długoterminowy po okresie początkowym, nie obietnica na minutę czy blok. Zapisz wersję: starsza dokumentacja lub inny program mogą się różnić. Opłata puli nie zastępuje tej informacji.
 

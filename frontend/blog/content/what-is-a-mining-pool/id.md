@@ -11,7 +11,7 @@ faq:
     a: 'Tidak. Pool menjalankan node, menyusun template, memeriksa share dan mengirim blok temuan. Di bntpool.com Anda hanya perlu penambang seine dan alamat Blocknet atau nama Blocknet ID. Jalankan seine, tempel alamat, terima pool default, dan bagian setiap blok dibayar ke alamat itu.'
   - q: 'Bagaimana mulai menambang di bntpool.com?'
     a: 'Unduh seine untuk Windows, macOS atau Linux dari seineminer.com, jalankan dan tempel alamat Blocknet atau @name saat diminta. bntpool.com adalah pool default, jadi terima dan mulai menambang. Cari alamat di halaman statistik untuk melihat hashrate, share dan saldo.'
-sourceHash: '15d1453f41d9'
+sourceHash: 698c26d17e91
 translation: draft
 ---
 
@@ -63,20 +63,20 @@ Skema pembayaran adalah aturan mengubah share menjadi penghasilan. Berikut yang 
 |---|---|---|
 | PPLNS (pay per last N shares) | Blok temuan pool | Imbalan dibagi berdasarkan kesulitan share dalam jendela terbaru |
 | PPS (pay per share) | Setiap share diterima | Pool membayar nilai tetap per share berdasarkan nilai harapan, baik menemukan blok maupun tidak |
-| Solo | Blok yang ditemukan sendiri | Menambang pada node sendiri dan menyimpan seluruh imbalan tiap blok temuan |
+| Solo | Blok yang ditemukan sendiri | Anda menyimpan seluruh imbalan tiap blok temuan, menambang melalui pool yang menyediakan mode solo atau pada node sendiri |
 
 **PPLNS** melihat ke belakang dari setiap blok pool. Di bntpool.com, "N share terakhir" berupa jendela enam jam: pool menjumlahkan kesulitan setiap share diterima dalam enam jam sebelumnya dan memberi bagian imbalan sesuai proporsi kerja masing-masing. Setiap share berlaku untuk semua blok selama berada dalam jendela, sehingga penambang konsisten selalu memiliki jendela penuh dan restart tidak mereset apa pun. [Cara kerja PPLNS di bntpool.com](/blog/id/how-pplns-payouts-work/) membahas pembagian bertahap.
 
 **PPS** membayar setiap share saat tiba berdasarkan nilai harapannya: kesulitan share dibagi kesulitan jaringan, dikalikan imbalan blok. Operator pool menanggung naik turunnya penemuan blok dan membayar dari saldo sendiri di antaranya.
 
-**Penambangan solo** melewati pool. Node sendiri menyusun template dan tiap blok temuan membayar imbalan penuh ke wallet Anda. Cocok untuk operasi cukup besar yang sering menemukan blok sendiri. seine mendukung keduanya: bntpool.com secara default, dan `./seine --mode daemon` pada node Blocknet Anda yang tersinkron.
+**Penambangan solo** membayar imbalan penuh tiap blok kepada penambang yang menemukannya. Cocok untuk operasi cukup besar yang sering menemukan blok sendiri. Di bntpool.com Anda menambang solo dengan menambahkan `solo:` di depan alamat: pool tetap menjalankan node dan membayar blok Anda melalui pembayaran normalnya, dan [penambangan solo di bntpool.com](/blog/id/solo-mine-blocknet-on-bntpool/) menunjukkan pengaturannya. seine juga memiliki mode daemon, `./seine --mode daemon`, yang menambang pada node Blocknet Anda yang tersinkron.
 
 ## Apa yang perlu diperhatikan saat memilih pool?
 
 Saat membandingkan pool, detail berikut menentukan pembayaran dan kemudahan memeriksanya:
 
 - **Skema jelas.** Pool harus menyebutkan skema dan pengaturan seperti jendela PPLNS. bntpool.com mencantumkannya di [Get Started](/start) dan `https://bntpool.com/api/info`.
-- **Konfirmasi dan minimum pembayaran.** Imbalan biasanya menunggu blok cukup dalam, lalu dibayar setelah saldo melewati minimum. Di bntpool.com imbalan terkonfirmasi setelah 60 blok, sesuai coinbase maturity Blocknet, dan saldo setidaknya 0,1 BNT dibayar otomatis.
+- **Konfirmasi dan minimum pembayaran.** Imbalan biasanya menunggu blok cukup dalam, lalu dibayar setelah saldo melewati minimum. Di bntpool.com imbalan terkonfirmasi setelah 60 blok, sesuai coinbase maturity Blocknet, dan saldo setidaknya 1 BNT dibayar otomatis.
 - **Angka publik yang bisa diperiksa.** Anda harus dapat melihat semua blok temuan dan pembayaran. bntpool.com menyediakannya pada [blok](/blocks) dan [pembayaran](/payouts), serta effort per ronde di [luck](/luck).
 - **Statistik sendiri.** Cari alamat untuk hashrate, share dan saldo. Di bntpool.com gunakan [statistik](/stats); [panduan pemantauan](/blog/id/track-your-miner-on-bntpool/) menjelaskan tiap kartu.
 - **Pengaturan mudah.** Makin sedikit pengaturan, makin cepat mulai. bntpool.com default seine yang menyetel thread, kernel dan memori sendiri; Anda dapat login dengan [nama Blocknet ID](https://seineminer.com/id/blog/blocknet-id-pay-by-name/) seperti `@name` sebagai pengganti alamat lengkap.
@@ -88,11 +88,11 @@ Saat membandingkan pool, detail berikut menentukan pembayaran dan kemudahan meme
 | Skema pembayaran | PPLNS |
 | Jendela share | 6 jam |
 | Konfirmasi sebelum pembayaran | 60 blok |
-| Pembayaran minimum | 0,1 BNT |
+| Pembayaran minimum | 1 BNT |
 | Alamat Stratum | `stratum+tcp://bntpool.com:3333` |
 
 [Dasbor pool](/) menunjukkan kondisi langsung: penambang terhubung, hashrate pool dan jaringan, blok temuan serta effort ronde terkini. Pada cuplikan 25 Oktober 2026 pukul 02.25 EDT, pool memiliki sekitar 5.200 H/s dari jaringan sekitar 44.400 H/s, dengan 246 penambang terhubung. Itu sekitar 12% jaringan, cukup untuk perkiraan 34 blok sehari atau satu setiap sekitar 42 menit. Angka terus berubah, jadi periksa dasbor dan gunakan [panduan perkiraan imbalan](/blog/id/estimate-blocknet-mining-rewards/) untuk mengubahnya menjadi BNT sesuai hashrate Anda.
 
 Untuk bergabung, [unduh seine](https://seineminer.com/id/#download), jalankan, tempel alamat Blocknet atau `@name` dan terima pool default. [Panduan penambangan seine](https://seineminer.com/id/blog/how-to-mine-blocknet/) membahas tiap langkah, dan [menambang Blocknet di bntpool.com](/blog/id/mine-blocknet-on-bntpool/) membahas nama rig serta pemeriksaan share pertama.
 
-<CTA target="pool" title="Bergabung ke bntpool.com" text="Arahkan seine ke pool dan dapatkan bagian tiap blok temuan, dikirim otomatis ke alamat Anda setelah mencapai 0,1 BNT." />
+<CTA target="pool" title="Bergabung ke bntpool.com" text="Arahkan seine ke pool dan dapatkan bagian tiap blok temuan, dikirim otomatis ke alamat Anda setelah mencapai 1 BNT." />

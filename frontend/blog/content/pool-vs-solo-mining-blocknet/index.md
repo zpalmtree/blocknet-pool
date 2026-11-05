@@ -1,7 +1,8 @@
 ---
 title: Pool vs solo mining for Blocknet
-description: Choose pool or solo mining for Blocknet. Work out your expected blocks per day, see how bntpool.com turns them into steady payouts, and set up solo mining.
+description: Choose pool or solo mining for Blocknet. Work out your expected blocks per day, compare shared and solo rewards on bntpool.com, and set up solo mining.
 date: 2026-10-25
+updated: 2026-11-04
 tags: [Mining guide, Solo mining, bntpool, PPLNS]
 faq:
   - q: How often would I find a Blocknet block mining solo?
@@ -9,21 +10,21 @@ faq:
   - q: Do I need to run a Blocknet node to mine on bntpool.com?
     a: No. The pool runs its own Blocknet node, builds the block templates and submits the blocks it finds. You only need seine and a Blocknet address or Blocknet ID name. Run seine, paste your address, accept the default pool, and the pool pays your portion of each block to that address.
   - q: Can seine mine Blocknet solo?
-    a: Yes. Start seine with ./seine --mode daemon and it mines directly against your own synced Blocknet node, using the node's API cookie to connect. Each block you find pays its full reward to the node's wallet. The solo mining guide in the seine repository covers custom node layouts and wallet passwords.
+    a: 'Yes, in two ways. Put solo: in front of your address, as in ./seine --address solo:YOUR_ADDRESS, and bntpool.com pays you the whole reward of every block you find with no node to run. Or start seine with --mode daemon to mine against your own synced Blocknet node.'
   - q: Can I switch between pool and solo mining later?
-    a: Yes. Seine uses the same download for both. Run it normally to mine on bntpool.com, or add --mode daemon to mine against your own node, and restart it whenever you want to change. Shares you already sent to the pool stay in its six-hour PPLNS window and keep earning while it lasts.
-related: [estimate-blocknet-mining-rewards, how-pplns-payouts-work, mine-blocknet-on-bntpool]
+    a: 'Yes. Seine uses the same download for every option. Add or remove the solo: prefix on your address, or add --mode daemon for your own node, and restart seine whenever you want to change. Shares you already sent for shared rewards stay in the six-hour PPLNS window and keep earning while it lasts.'
+related: [solo-mine-blocknet-on-bntpool, estimate-blocknet-mining-rewards, how-pplns-payouts-work, mine-blocknet-on-bntpool]
 ---
 
-This guide helps you decide whether to mine Blocknet on bntpool.com or solo against your own node. You'll work out how many blocks your hashrate finds on its own, see how the pool turns that into a steady stream of payouts, and learn how to set up either one with seine.
+This guide helps you decide between shared pool rewards and solo mining for Blocknet, either solo through bntpool.com or against your own node. You'll work out how many blocks your hashrate finds on its own, see how the pool turns that into a steady stream of payouts, and learn how to set up each option with seine.
 
 ## Should you mine Blocknet on a pool or solo?
 
 <Answer>
-Both follow the same arithmetic: your share of the network's hashrate sets your share of its blocks. On bntpool.com you earn a portion of every block the pool finds, so payouts arrive steadily as the pool finds blocks. Solo, you keep the whole reward of each block you find, which suits large operations running their own node.
+Both follow the same arithmetic: your share of the network's hashrate sets your share of its blocks. On bntpool.com you earn a portion of every block the pool finds, so payouts arrive steadily as the pool finds blocks. Solo, you keep the whole reward of each block you find, which suits large operations. bntpool.com offers both.
 </Answer>
 
-For most miners, bntpool.com is the easy place to start. It is seine's default pool, so there is nothing to set up beyond your address, and you don't need to run or sync a node. Solo mining is fully supported too: seine has a daemon mode that mines straight against your own Blocknet node. The rest of this guide shows how to tell which one fits your hardware.
+For most miners, bntpool.com is the easy place to start. It is seine's default pool, so there is nothing to set up beyond your address, and you don't need to run or sync a node. Solo mining is fully supported too. Put `solo:` in front of your address and bntpool.com pays you the whole reward of every block your rigs find, with no node to run. Seine also has a daemon mode that mines straight against your own Blocknet node. The rest of this guide shows how to tell which one fits your hardware.
 
 ## How many blocks would you find solo?
 
@@ -67,7 +68,7 @@ bntpool.com combines the hashrate of everyone mining on it, so it finds blocks f
 That has a few practical results for you:
 
 - **Earnings from every block.** As long as your shares are in the six-hour window, you earn a portion of each block the pool finds. You can watch them arrive on the [blocks page](/blocks).
-- **Automatic payouts.** After a block is 60 blocks deep, your portion moves into your confirmed balance, and the pool sends it to your address once it reaches 0.1 BNT. Sent payments are listed on the [payouts page](/payouts).
+- **Automatic payouts.** After a block is 60 blocks deep, your portion moves into your confirmed balance, and the pool sends it to your address once it reaches the minimum payout, 1 BNT as of November 4, 2026. Sent payments are listed on the [payouts page](/payouts).
 - **Continuity through restarts.** Shares you already submitted stay in the window for six hours, so a reboot or driver update doesn't reset your position.
 - **Nothing to run but the miner.** The pool runs the node, builds block templates and submits blocks. You can mine from several rigs to one address or to a Blocknet ID `@name`.
 
@@ -75,13 +76,26 @@ The [PPLNS payouts guide](/blog/how-pplns-payouts-work/) walks through the split
 
 ## Why mine Blocknet solo?
 
-Solo mining puts every part of the process under your control. Your own node builds each block template and checks every block itself, and each block you find pays its full reward straight to your node's wallet.
+Solo mining pays you the whole reward of each block you find. It fits best when your hashrate finds blocks often. In the example above, an operation with 10% of the network finds a block about every 50 minutes, so solo payouts come as regularly as a pool's would.
 
-It fits best when your hashrate finds blocks often. In the example above, an operation with 10% of the network finds a block about every 50 minutes, so solo payouts come as regularly as a pool's would. If you already run a Blocknet node for your wallet or for other services, solo mining adds the miner on top of it.
+There are two ways to mine solo with seine:
 
-Seine is built for this mode as well. It mines against the node's block templates, and if the node has forgotten a template, for example after a restart, seine resubmits the full solved block so a found block still reaches the chain.
+- **Solo on bntpool.com.** Put `solo:` in front of your address. The pool runs the node, submits your blocks and pays each one's whole reward, less the pool fee, to your address through its normal payouts. You can mix solo and shared rigs on one address.
+- **Solo against your own node.** Seine's daemon mode mines on your own node's block templates, and each block pays straight to your node's wallet. If you already run a Blocknet node for your wallet or for other services, solo mining adds the miner on top of it.
+
+Seine is built for daemon mode as well. It mines against the node's block templates, and if the node has forgotten a template, for example after a restart, seine resubmits the full solved block so a found block still reaches the chain.
 
 ## How do you set up solo mining with seine?
+
+To solo mine on bntpool.com, install seine v0.3.1 or newer and start it with the prefix on your address:
+
+```sh
+./seine --address solo:YOUR_BLOCKNET_ADDRESS
+```
+
+The dashboard then labels your account **Solo**. [Solo mine Blocknet on bntpool.com](/blog/solo-mine-blocknet-on-bntpool/) covers Blocknet ID names, rig names, payouts and where your solo blocks appear on the stats page.
+
+To solo mine against your own node:
 
 1. **Install and sync a Blocknet node.** With the `blocknet` wrapper, run:
 
@@ -111,12 +125,13 @@ The [solo mining guide](https://github.com/zpalmtree/seine/blob/master/docs/guid
 Run the formula with your own hashrate and the current network hashrate from the [dashboard](/), then look at the average time between blocks.
 
 - **Start on bntpool.com** if you mine on a desktop, a laptop or a handful of servers, or if you'd like steady payouts without running a node. Run seine, paste your address or `@name`, and accept the default pool.
-- **Mine solo** if your operation holds a large share of the network, so blocks arrive often on their own, and you already run or want to run your own synced node.
+- **Mine solo on bntpool.com** if your operation holds a large share of the network, so blocks arrive often on their own. Add `solo:` to your address and keep the pool's node, stats and payouts.
+- **Mine solo against your own node** if you have that hashrate and already run, or want to run, your own synced node.
 
-Seine makes the choice easy to revisit. Pool mining and daemon mode use the same download, so you can switch with one flag and a restart as your hardware grows. If you run a local node while mining on the pool, seine also shows your node's wallet balance next to your pool balance.
+Seine makes the choice easy to revisit. Every option uses the same download, so you can switch with one prefix or flag and a restart as your hardware grows. If you run a local node while mining on the pool, seine also shows your node's wallet balance next to your pool balance.
 
 <Note>
-Blocknet plans a network upgrade called Faraday around 2027-02-16, according to [blocknetcrypto.com](https://blocknetcrypto.com/#faraday). It is planned to change the proof of work. Keep seine up to date: it checks for new releases when it starts and every 12 hours.
+Blocknet plans a network upgrade called Faraday around 2027-02-16, according to [blocknetcrypto.com](https://blocknetcrypto.com/#faraday). It is planned to change the proof of work. Seine v0.3.1 is ready for it: pool mining moves to the new proof of work by itself, and with automatic updates on, seine installs newer releases for you.
 </Note>
 
-<CTA target="pool" title="Start mining on bntpool.com" text="Run seine, paste your address and earn a portion of every block the pool finds, paid automatically from 0.1 BNT." />
+<CTA target="pool" title="Start mining on bntpool.com" text="Run seine, paste your address and earn a portion of every block the pool finds, or add solo: and keep every block you find." />

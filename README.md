@@ -434,7 +434,7 @@ unchanged: same port, gateway, vardiff, verification, memos and payouts.
   recent blocks show the same marker; a miner with solo work also gets it in pending
   estimates and the Workers table.
 - Get Started has a "Mine solo" section with the `solo:` command, shown only when the
-  latest seine release (`latest_miner_version` in `GET /api/info`) is newer than v0.3.1,
+  latest seine release (`latest_miner_version` in `GET /api/info`) is v0.3.1 or newer,
   because older seine versions reject the prefix. The rewards card explains the Solo
   type.
 

@@ -2,7 +2,7 @@
 title: Pool đào là gì?
 description: Pool đào kết hợp hashrate nhiều thợ đào và chia phần thưởng mỗi khối. Tìm hiểu cách pool hoạt động, PPLNS, PPS, solo và tiêu chí lựa chọn.
 tags: [Kiến thức đào coin, Pool đào, PPLNS, bntpool]
-sourceHash: '15d1453f41d9'
+sourceHash: 698c26d17e91
 translation: draft
 faq:
   - q: 'Tham gia pool có tăng lượng coin tôi đào được không?'
@@ -63,20 +63,20 @@ Phương thức trả thưởng là quy tắc pool dùng để chuyển share th
 |---|---|---|
 | PPLNS (pay per last N shares) | Khối pool tìm được | Phần thưởng mỗi khối chia cho share gửi trong cửa sổ gần đây, theo độ khó share |
 | PPS (pay per share) | Mỗi share được chấp nhận | Pool trả số tiền cố định mỗi share theo giá trị kỳ vọng, dù có tìm khối hay không |
-| Solo | Khối bạn tự tìm | Đào với node riêng và giữ toàn bộ phần thưởng mỗi khối tự tìm |
+| Solo | Khối bạn tự tìm | Bạn giữ toàn bộ phần thưởng mỗi khối tự tìm, đào qua pool có chế độ solo hoặc với node riêng |
 
 **PPLNS** nhìn lại từ mỗi khối pool tìm thấy. Trên bntpool.com, “N share cuối” là cửa sổ sáu giờ: pool cộng độ khó mọi share được chấp nhận trong sáu giờ trước khối và cho mỗi người tỷ lệ phần thưởng bằng tỷ lệ công việc. Mỗi share được tính vào mọi khối tìm được khi nó còn trong cửa sổ, nên người đào đều luôn có cửa sổ đầy phía sau; khởi động lại không đặt lại gì. [Thanh toán PPLNS trên bntpool.com hoạt động thế nào](/blog/vi/how-pplns-payouts-work/) trình bày cách chia từng bước.
 
 **PPS** trả cho từng share khi đến, dùng giá trị kỳ vọng: độ khó share chia độ khó mạng rồi nhân phần thưởng khối. Người vận hành pool chịu các dao động tìm khối và trả thợ đào từ số dư riêng trong thời gian chờ.
 
-**Đào solo** bỏ qua pool. Node riêng tạo mẫu; mỗi khối tìm thấy trả toàn bộ thưởng về ví. Cách này hợp hệ thống đủ lớn để tự tìm khối thường xuyên. Trình đào seine hỗ trợ cả hai: mặc định đào trên bntpool.com, còn `./seine --mode daemon` đào với node Blocknet đã đồng bộ của bạn.
+**Đào solo** trả toàn bộ phần thưởng mỗi khối cho thợ đào đã tìm ra nó. Cách này hợp hệ thống đủ lớn để tự tìm khối thường xuyên. Trên bntpool.com, bạn đào solo bằng cách thêm `solo:` vào trước địa chỉ: pool vẫn chạy node và trả các khối của bạn qua thanh toán thông thường, và [đào solo trên bntpool.com](/blog/vi/solo-mine-blocknet-on-bntpool/) hướng dẫn thiết lập. Trình đào seine cũng có chế độ daemon, `./seine --mode daemon`, đào với node Blocknet đã đồng bộ của bạn.
 
 ## Nên tìm gì ở một pool đào?
 
 Khi so pool, những chi tiết sau quyết định cách được trả và mức dễ kiểm tra:
 
 - **Phương thức trả thưởng rõ ràng.** Pool nên nêu phương thức và cài đặt như cửa sổ PPLNS. bntpool.com liệt kê trên [trang Get Started](/start) và công bố tại `https://bntpool.com/api/info`.
-- **Xác nhận và mức thanh toán tối thiểu.** Phần thưởng thường chờ khối đủ sâu trong chuỗi; thanh toán gửi khi số dư vượt tối thiểu. Trên bntpool.com, phần thưởng khối xác nhận sau 60 khối, phù hợp độ trưởng thành coinbase của Blocknet; số dư từ 0,1 BNT tự động được trả.
+- **Xác nhận và mức thanh toán tối thiểu.** Phần thưởng thường chờ khối đủ sâu trong chuỗi; thanh toán gửi khi số dư vượt tối thiểu. Trên bntpool.com, phần thưởng khối xác nhận sau 60 khối, phù hợp độ trưởng thành coinbase của Blocknet; số dư từ 1 BNT tự động được trả.
 - **Số liệu công khai, kiểm tra được.** Bạn nên thấy mọi khối pool tìm và mọi khoản nó gửi. bntpool.com hiển thị trên các trang [khối](/blocks), [thanh toán](/payouts) và effort từng vòng trên [trang may mắn](/luck).
 - **Thống kê riêng.** Tra địa chỉ để xem hashrate, share và số dư. Trên bntpool.com đó là [trang thống kê](/stats); hướng dẫn [theo dõi trình đào](/blog/vi/track-your-miner-on-bntpool/) giải thích từng thẻ.
 - **Thiết lập dễ dàng.** Cần ít cài đặt thì bắt đầu càng nhanh. bntpool.com là pool mặc định trong seine, vốn tự tinh chỉnh luồng, kernel và bộ nhớ; bạn có thể đăng nhập bằng [tên Blocknet ID](https://seineminer.com/vi/blog/blocknet-id-pay-by-name/) như `@name` thay địa chỉ đầy đủ.
@@ -88,11 +88,11 @@ Khi so pool, những chi tiết sau quyết định cách được trả và m�
 | Phương thức trả thưởng | PPLNS |
 | Cửa sổ share | 6 giờ |
 | Xác nhận trước thanh toán | 60 khối |
-| Thanh toán tối thiểu | 0,1 BNT |
+| Thanh toán tối thiểu | 1 BNT |
 | Địa chỉ Stratum | `stratum+tcp://bntpool.com:3333` |
 
 [Bảng điều khiển pool](/) cho thấy tình hình trực tiếp: thợ đào kết nối, hashrate pool và mạng, khối đã tìm và effort vòng hiện tại. Ở ảnh chụp dữ liệu ngày 25 tháng 10 năm 2026 lúc 02:25 EDT, pool chạy khoảng 5.200 H/s trong mạng khoảng 44.400 H/s, với 246 thợ đào kết nối. Đó là khoảng 12% mạng, đủ kỳ vọng khoảng 34 khối mỗi ngày, một khối khoảng mỗi 42 phút. Số liệu đổi liên tục; xem bảng điều khiển cho giá trị hiện tại và dùng [hướng dẫn ước tính phần thưởng](/blog/vi/estimate-blocknet-mining-rewards/) để đổi thành BNT cho hashrate riêng.
 
 Để tham gia, [tải seine](https://seineminer.com/vi/#download), chạy, dán địa chỉ Blocknet hoặc `@name` và chấp nhận pool mặc định. [Hướng dẫn đào bằng seine](https://seineminer.com/vi/blog/how-to-mine-blocknet/) trình bày từng bước; [đào Blocknet trên bntpool.com](/blog/vi/mine-blocknet-on-bntpool/) trình bày tên dàn máy và kiểm tra share đầu tiên.
 
-<CTA target="pool" title="Tham gia bntpool.com" text="Trỏ seine đến pool và kiếm một phần từ mỗi khối pool tìm thấy, tự động gửi về địa chỉ khi đạt 0,1 BNT." />
+<CTA target="pool" title="Tham gia bntpool.com" text="Trỏ seine đến pool và kiếm một phần từ mỗi khối pool tìm thấy, tự động gửi về địa chỉ khi đạt 1 BNT." />

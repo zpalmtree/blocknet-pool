@@ -9,7 +9,7 @@ faq:
     a: 'Kết nối đào đang hoạt động không phải điều kiện thanh toán. Số dư đã xác nhận được xét theo quy tắc pool, gồm ngưỡng tối thiểu hiện tại. Ngắt kết nối không tự xóa số dư hay yêu cầu trả ngay.'
   - q: 'Kết nối lại có đặt lại tuổi share cũ không?'
     a: 'Không. Share cũ giữ nguyên dấu thời gian. Công việc mới được chấp nhận tham gia cửa sổ tương ứng sau khi quay lại; kết nối lại không gia hạn share cũ hay thêm công việc cho giờ ngoại tuyến. Kiểm tra share mới được chấp nhận sau khi khởi động lại.'
-sourceHash: '0a11c393062e'
+sourceHash: a5bf859e0abb
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Có. Công việc hợp lệ của phiên ngắn có thể tham gia block có c�
 
 ## Phân biệt các mốc thời gian
 
-bntpool hiện công bố trên [trang Bắt đầu](/start) cửa sổ PPLNS sáu giờ, 60 block trước khi đủ điều kiện thanh toán và mức trả tối thiểu 0,1 BNT. Đó là ba bước khác nhau: công việc tính cho block, độ chín của block và ngưỡng số dư. Cửa sổ share sáu giờ không phải bộ đếm hứa thanh toán sau sáu giờ.
+bntpool hiện công bố trên [trang Bắt đầu](/start) cửa sổ PPLNS sáu giờ, 60 block trước khi đủ điều kiện thanh toán và mức trả tối thiểu 1 BNT. Đó là ba bước khác nhau: công việc tính cho block, độ chín của block và ngưỡng số dư. Cửa sổ share sáu giờ không phải bộ đếm hứa thanh toán sau sáu giờ.
 
 Xem công thức phân bổ trong [hướng dẫn PPLNS](/blog/vi/how-pplns-payouts-work/). Share hợp lệ được tính trọng số độ khó so với toàn bộ công việc hợp lệ cùng cửa sổ. Chỉ số phút trực tuyến không ấn định phần trăm thưởng tiếp theo. Thiết bị, sự tham gia của pool và kết quả share có thể đổi trọng số dù hai phiên dài bằng nhau.
 
@@ -45,7 +45,7 @@ Thoát seine bình thường bằng `q` trong bảng điều khiển hoặc `Ctr
 
 Share ra khỏi cửa sổ của block sau không xóa thưởng đã phân bổ cho block trước. Thưởng ước tính vẫn theo trạng thái và độ chín block; thưởng đã xác nhận nhưng chưa trả nằm trong tài khoản tới khi được xử lý thanh toán. [Hướng dẫn xác nhận](/blog/vi/block-confirmations-mining-rewards/) phân biệt ghi có block tạm thời với số dư đã chín.
 
-Số dư xác nhận dưới 0,1 BNT vẫn dưới ngưỡng trả tự động hiện tại cho đến khi ghi có thêm đạt mức tối thiểu. Kết nối lại không tự tăng số dư hay buộc thanh toán. Ngược lại, số dư đủ điều kiện không cần miner trực tuyến khi pool xử lý. Dùng [lịch sử thanh toán](/payouts) để phân biệt số dư chưa trả với giao dịch đã gửi.
+Số dư xác nhận dưới 1 BNT vẫn dưới ngưỡng trả tự động hiện tại cho đến khi ghi có thêm đạt mức tối thiểu. Kết nối lại không tự tăng số dư hay buộc thanh toán. Ngược lại, số dư đủ điều kiện không cần miner trực tuyến khi pool xử lý. Dùng [lịch sử thanh toán](/payouts) để phân biệt số dư chưa trả với giao dịch đã gửi.
 
 ## Quay lại đúng tài khoản và kiểm tra việc mới
 

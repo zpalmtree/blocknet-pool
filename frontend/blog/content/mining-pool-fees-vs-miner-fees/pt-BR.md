@@ -4,16 +4,16 @@ description: 'Entenda as taxas do pool e do minerador no Blocknet. Veja onde cad
 tags: ['Guia de mineração', 'Taxas do pool', 'Recompensas']
 faq:
   - q: 'São a mesma cobrança?'
-    a: 'Não. A taxa do pool faz parte da distribuição; a do desenvolvedor pertence ao software. seine v0.2.36 dedica 2% do tempo sujeito à taxa ao desenvolvimento após a carência inicial. A taxa separada publicada pelo bntpool.com era 0% em 26 de outubro de 2026.'
+    a: 'Não. A taxa do pool faz parte da distribuição; a do desenvolvedor pertence ao software. seine v0.3.1 dedica 2% do tempo sujeito à taxa ao desenvolvimento após a carência inicial. A taxa separada publicada pelo bntpool.com era 0% em 26 de outubro de 2026.'
   - q: 'Como combinar as taxas?'
     a: 'Multiplique a estimativa bruta por um menos a fração do minerador e depois por um menos a do pool. Use sua versão real e o ajuste atual. Isso estima recompensas retidas, sem garantir pagamento nem calcular lucro em dinheiro.'
   - q: 'Devo descontar a taxa do hashrate informado pelo pool?'
     a: 'Identifique o significado da taxa de hash. Se já estima trabalho creditado ao seu endereço após o tempo do desenvolvedor, outro desconto seria duplicado. O calculador aceita zero para esse ajuste já refletido. Não desconte novamente de saldo confirmado ou pagamento registrado.'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-Identifique as duas camadas de taxas de uma estimativa Blocknet e onde atuam. O guia usa seine v0.2.36 e ajustes públicos do bntpool conferidos em 26 de outubro de 2026. Ajuda a preencher o [calculador](/blog/pt-br/estimate-blocknet-mining-rewards/#mining-calculator) e entender [My Stats](/stats).
+Identifique as duas camadas de taxas de uma estimativa Blocknet e onde atuam. O guia usa seine v0.3.1 e ajustes públicos do bntpool conferidos em 26 de outubro de 2026. Ajuda a preencher o [calculador](/blog/pt-br/estimate-blocknet-mining-rewards/#mining-calculator) e entender [My Stats](/stats).
 
 ## Qual a diferença entre taxa do pool e do minerador?
 
@@ -31,7 +31,7 @@ Em 26 de outubro de 2026, `https://bntpool.com/api/info` publica `pool_fee_pct` 
 
 ## Como funciona a taxa de seine?
 
-A v0.2.36 documenta 2% fixos em qualquer pool e em solo. É tempo de mineração para o endereço do desenvolvedor, não retirada posterior da carteira. Os primeiros 10 minutos são livres; o rastreador conta o tempo após a carência. O [guia de configuração](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) descreve a política.
+A v0.3.1 documenta 2% fixos em qualquer pool e em solo. É tempo de mineração para o endereço do desenvolvedor, não retirada posterior da carteira. Os primeiros 10 minutos são livres; o rastreador conta o tempo após a carência. O [guia de configuração](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) descreve a política.
 
 A programação funciona por rodadas, então uma janela curta pode não dar exatamente 2%. É o objetivo de longo prazo após a carência, não promessa por minuto ou bloco. Guarde a versão: guias antigos ou outros programas podem diferir. A taxa do pool não substitui esse dado do software.
 

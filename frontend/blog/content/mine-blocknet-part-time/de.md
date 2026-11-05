@@ -9,7 +9,7 @@ faq:
     a: 'Eine aktive Mining-Verbindung ist keine Auszahlungsvoraussetzung. Bestätigte Guthaben werden nach den Pool-Regeln einschließlich der aktuellen Mindestgrenze berücksichtigt. Eine Trennung löscht das Guthaben nicht und fordert auch nicht automatisch eine sofortige Zahlung an.'
   - q: 'Erneuert eine Verbindung das Alter bisheriger Shares?'
     a: 'Nein. Bestehende Shares behalten ihre Zeitstempel. Neue Arbeit fließt nach deiner Rückkehr in die passenden Fenster ein; erneutes Verbinden verlängert alte Shares nicht und erzeugt keine Arbeit für Offline-Stunden. Prüfe nach dem Start neue akzeptierte Shares.'
-sourceHash: '0a11c393062e'
+sourceHash: 'a5bf859e0abb'
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Ja. Geeignete Arbeit einer kurzen Sitzung kann an Blöcken teilnehmen, deren PPL
 
 ## Die verschiedenen Zeitabläufe unterscheiden
 
-bntpool veröffentlicht derzeit sechs Stunden PPLNS-Fenster, 60 Blöcke bis zur Auszahlungsreife und 0,1 BNT Mindestauszahlung auf der [Startseite für Miner](/start). Das sind berücksichtigte Arbeit, Blockreife und Guthabenschwelle. Das sechsstündige Fenster ist kein Timer, der eine Zahlung nach sechs Stunden verspricht.
+bntpool veröffentlicht derzeit sechs Stunden PPLNS-Fenster, 60 Blöcke bis zur Auszahlungsreife und 1 BNT Mindestauszahlung auf der [Startseite für Miner](/start). Das sind berücksichtigte Arbeit, Blockreife und Guthabenschwelle. Das sechsstündige Fenster ist kein Timer, der eine Zahlung nach sechs Stunden verspricht.
 
 Die [PPLNS-Anleitung](/blog/de/how-pplns-payouts-work/) beschreibt die Aufteilung. Geeignete Shares werden nach Schwierigkeit gegen alle geeignete Arbeit im Fenster gewichtet. Online-Minuten allein bestimmen keinen festen Prozentsatz der nächsten Belohnung. Geräte, Pool-Beteiligung und Share-Ergebnisse können bei gleicher Sitzungsdauer unterschiedliche Gewichte erzeugen.
 
@@ -45,7 +45,7 @@ Beende seine regulär mit `q` im Dashboard oder `Ctrl+C` im Terminal. Bewahre St
 
 Verlässt ein Share das Fenster eines späteren Blocks, löscht das keine bereits einem früheren Block zugeteilte Belohnung. Geschätzte Belohnungen folgen weiter Blockstatus und Reife; bestätigte unbezahlte Beträge bleiben bis zur Verarbeitung im Konto. Die [Bestätigungsanleitung](/blog/de/block-confirmations-mining-rewards/) trennt vorläufige Gutschrift und reifes Guthaben.
 
-Ein bestätigtes Guthaben unter 0,1 BNT bleibt unter der aktuellen automatischen Schwelle, bis weitere Gutschriften das Minimum erreichen. Verbinden allein erhöht es nicht und erzwingt keine Zahlung. Umgekehrt braucht ein berechtigtes Guthaben keinen online bleibenden Miner während der Verarbeitung. Die [Auszahlungshistorie](/payouts) trennt offene Beträge von gesendeten Transaktionen.
+Ein bestätigtes Guthaben unter 1 BNT bleibt unter der aktuellen automatischen Schwelle, bis weitere Gutschriften das Minimum erreichen. Verbinden allein erhöht es nicht und erzwingt keine Zahlung. Umgekehrt braucht ein berechtigtes Guthaben keinen online bleibenden Miner während der Verarbeitung. Die [Auszahlungshistorie](/payouts) trennt offene Beträge von gesendeten Transaktionen.
 
 ## Zum selben Konto zurückkehren und neue Arbeit prüfen
 

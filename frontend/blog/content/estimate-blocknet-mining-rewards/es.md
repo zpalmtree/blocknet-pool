@@ -13,7 +13,7 @@ faq:
     a: 'La estimación es una media. En un día el pool puede encontrar más o menos bloques de lo esperado y la tasa de la red cambia al entrar mineros. Tras una semana o más de minería constante, las oscilaciones se promedian. Puedes seguir los créditos en My Stats.'
   - q: '¿Minar en un pool cambia cuánto BNT puedo esperar?'
     a: 'Tu parte esperada de las recompensas de la red permanece igual: depende solo de tu parte de su tasa de hash. El pool cambia el momento de cobro. En vez de esperar días por un bloque entero, recibes parte de cada bloque de bntpool.com, en cantidades pequeñas y regulares.'
-sourceHash: 'ce91c64a8567'
+sourceHash: '9dace0600c53'
 translation: draft
 ---
 
@@ -109,7 +109,7 @@ La diferencia es el tiempo. Solo, ese servidor esperaría un bloque entero cada 
 Dos detalles afectan al primer día:
 
 - **La ventana se llena en seis horas.** La parte del minero nuevo aumenta al llenar la ventana PPLNS y luego se mantiene plena mientras siga minando.
-- **Las recompensas maduran antes de pagarse.** Pasan a Confirmed Rewards tras 60 confirmaciones, unas cinco horas, y se envían automáticamente cuando el saldo llega a 0,1 BNT.
+- **Las recompensas maduran antes de pagarse.** Pasan a Confirmed Rewards tras 60 confirmaciones, unas cinco horas, y se envían automáticamente cuando el saldo llega a 1 BNT.
 
 ## ¿Cómo comparas la estimación con resultados reales?
 

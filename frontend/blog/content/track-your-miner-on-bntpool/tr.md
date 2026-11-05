@@ -2,7 +2,7 @@
 title: bntpool.com'da madencinizi takip edin
 description: bntpool.com'da adres veya @name ile hashrate, share, bakiye ve ödemeleri görün; blokları ve şansı izleyin veya açık API'yi kullanın.
 tags: [bntpool, Madencilik istatistikleri, Havuz API’si, Blocknet]
-sourceHash: 'f74ae9281fd2'
+sourceHash: '75495e49f3e9'
 translation: draft
 faq:
   - q: 'bntpool.com''daki hashrate''im neden seine''den farklı?'
@@ -54,7 +54,7 @@ Birden fazla makine çalıştırıyorsanız her birine ayrı ad verin; havuz has
 ./seine --pool-worker rig-01
 ```
 
-**Workers** tablosu her makinenin madenci sürümünü de gösterir. Eski veya bilinmeyen bir sürüm varsa istatistiklerin üstündeki bildirim [seine sürümleri sayfasına](https://github.com/zpalmtree/seine/releases) yönlendirir.
+Adresin önünde `solo:` ile solo kazan cihazlar, tablonun Type sütununda **Solo** gösterir. **Workers** tablosu her makinenin madenci sürümünü de gösterir. Eski veya bilinmeyen bir sürüm varsa istatistiklerin üstündeki bildirim [seine sürümleri sayfasına](https://github.com/zpalmtree/seine/releases) yönlendirir.
 
 ## Havuz hashrate'i neden seine'den farklı?
 
@@ -69,7 +69,7 @@ Recent Shares tablosu, hashrate değeri oturmadan önce bile share'lerin geldiğ
 
 ## İlk ödemenizi ne zaman beklemelisiniz?
 
-İlk paydan ilk ödemeye kadar sabit bir geri sayım yoktur. Paylarınız ödeme penceresindeyken havuzun bir blok bulması gerekir. Ardından bu blok 60 onay almalıdır: **blok bulunduktan sonra** ortalama yaklaşık beş saat, ancak gerçek süre değişir. Onaylanmış bakiyeniz güncel minimum olan 0,1 BNT’ye ulaştığında otomatik ödeme turuna alınabilir. Güncel ayarlar için [Get Started](/start) sayfasına bakın.
+İlk paydan ilk ödemeye kadar sabit bir geri sayım yoktur. Paylarınız ödeme penceresindeyken havuzun bir blok bulması gerekir. Ardından bu blok 60 onay almalıdır: **blok bulunduktan sonra** ortalama yaklaşık beş saat, ancak gerçek süre değişir. Onaylanmış bakiyeniz güncel minimum olan 1 BNT’ye ulaştığında otomatik ödeme turuna alınabilir. Güncel ayarlar için [Get Started](/start) sayfasına bakın.
 
 Ödeme durumunu ve işlem bağlantısını **Recent Payouts** altında izleyin. Kuyruktaki bir ödeme henüz ağa yayınlanmamıştır. Gönderilmiş ödeme cüzdanınızda görünmüyorsa [ödeme sorunlarını giderme rehberini](/blog/tr/pool-payout-missing-from-wallet/) kullanın.
 
@@ -116,7 +116,7 @@ Bu sayfalar arama gerektirmez ve havuzun yaptığı her şeyi açıkça gösteri
 
 ### Bloklar
 
-[Blocks](/blocks), bntpool.com'un bulduğu her bloğu en yeniden başlayarak listeler: yükseklik (gezgin bağlantılı), ödül, efor, tur süresi, durum ve bulunma zamanı. Her bloğun durumunu görmek için Confirmed, Pending veya Orphaned ile filtreleyin.
+[Blocks](/blocks), bntpool.com'un bulduğu her bloğu en yeniden başlayarak listeler: yükseklik (gezgin bağlantılı), ödül, efor, tur süresi, durum ve bulunma zamanı. Durumdan önceki Type sütunu, bloğun paylaşılan havuz madenciliğinden mi yoksa ödülün tamamı kendisine ödenen bir solo madenciden mi geldiğini gösterir. Her bloğun durumunu görmek için Confirmed, Pending veya Orphaned ile filtreleyin.
 
 ### Ödemeler
 

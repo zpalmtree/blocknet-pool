@@ -11,8 +11,8 @@ faq:
     a: '不需要。矿池统计、区块、支付、幸运值、状态以及单个矿工的接口都是通过 HTTPS 提供的公开 JSON，curl 命令或家庭仪表盘无需注册即可读取。金额以最小单位表示，除以 100,000,000 即为 BNT，建议每 30 到 60 秒轮询一次。'
   - q: '为什么 My Stats 显示的 Estimated Rewards 是零？'
     a: '矿池在你的份额处于支付窗口内时找到区块，Estimated Rewards（预估收益）才会出现。对新矿工来说，这可能需要挖几轮。你被接受的份额和算力会最先显示，随后是预估收益，它们成熟后转入 Confirmed Rewards（已确认收益），并自动支付。'
-sourceHash: 'f74ae9281fd2'
-translation: reviewed
+sourceHash: '75495e49f3e9'
+translation: draft
 ---
 
 收到第一份已接受份额后，打开 My Stats，确认矿池正在接收你的工作。找到自己的机器，观察一段时间内的算力，再跟踪预估奖励如何变为已确认奖励并完成付款。脚本和公共 API 放在指南最后介绍。
@@ -54,7 +54,7 @@ translation: reviewed
 ./seine --pool-worker rig-01
 ```
 
-**Workers** 表还显示各台机器的矿工版本。如果某个版本过旧或未知，统计上方会出现通知，链接到 [seine 发布页面](https://github.com/zpalmtree/seine/releases)。
+在地址前加上 `solo:` 单独挖矿的矿机，会在表中的 Type 列显示 **Solo**。**Workers** 表还显示各台机器的矿工版本。如果某个版本过旧或未知，统计上方会出现通知，链接到 [seine 发布页面](https://github.com/zpalmtree/seine/releases)。
 
 ## 为什么矿池的算力和 seine 的不一样？
 
@@ -69,7 +69,7 @@ seine 统计的是你的机器算出的每一个哈希。矿池只能看到你�
 
 ## 第一笔付款什么时候到账？
 
-从第一份份额到第一笔付款，没有固定倒计时。矿池必须在你的份额仍处于支付窗口内时找到区块。该区块随后需要 60 次确认：**从找到区块之后**算起，平均约五小时，但实际时间会变化。已确认余额达到当前最低支付额 0.1 BNT 后，就有资格进入自动付款批次。最新设置请查看 [Get Started](/start)。
+从第一份份额到第一笔付款，没有固定倒计时。矿池必须在你的份额仍处于支付窗口内时找到区块。该区块随后需要 60 次确认：**从找到区块之后**算起，平均约五小时，但实际时间会变化。已确认余额达到当前最低支付额 1 BNT 后，就有资格进入自动付款批次。最新设置请查看 [Get Started](/start)。
 
 在 **Recent Payouts** 中查看付款状态和交易链接。排队中的付款尚未广播。如果已发送的付款没有显示在钱包中，请参阅[付款排查指南](/blog/zh-hans/pool-payout-missing-from-wallet/)。
 
@@ -116,7 +116,7 @@ seine 统计的是你的机器算出的每一个哈希。矿池只能看到你�
 
 ### Blocks（区块）
 
-[Blocks](/blocks) 按从新到旧列出 bntpool.com 找到的每一个区块：高度（链接到区块浏览器）、奖励、Effort（努力值）、本轮用时、状态和找到的时间。可以按 Confirmed、Pending 或 Orphaned 筛选，查看每个区块的状态。
+[Blocks](/blocks) 按从新到旧列出 bntpool.com 找到的每一个区块：高度（链接到区块浏览器）、奖励、Effort（努力值）、本轮用时、状态和找到的时间。状态前的 Type 列显示区块来自分享收益的矿池挖矿，还是来自独得全部奖励的单独挖矿矿工。可以按 Confirmed、Pending 或 Orphaned 筛选，查看每个区块的状态。
 
 ### Payouts（支付）
 

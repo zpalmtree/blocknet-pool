@@ -3,7 +3,7 @@ title: 'bntpool.comでBlocknetをマイニングする'
 seoTitle: 'bntpool.comでBlocknetを採掘'
 description: 'seineの標準プール、bntpool.comへの接続方法。アドレスや@nameでログインし、リグに名前を付け、ハッシュレートやシェアの到着を確認します。'
 tags: ['マイニングガイド', 'bntpool', 'Blocknet ID', 'seine']
-sourceHash: 'df269126bb76'
+sourceHash: '9713e976f981'
 translation: draft
 faq:
   - q: 'bntpool.comのStratumアドレスは？'
@@ -24,7 +24,7 @@ faq:
 Stratumアドレスは`stratum+tcp://bntpool.com:3333`です。seineの初回起動時に標準プールとして表示されるので、プールの質問でEnterを押せば接続できます。BlocknetアドレスかBlocknet IDの`@name`でログインします。アカウント作成は不要で、報酬はそのアドレスに届きます。
 </Answer>
 
-公開エンドポイント`/api/info`が2026年10月25日に示した設定は次のとおりです。
+公開エンドポイント`/api/info`が2026年11月4日に示した設定は次のとおりです。
 
 | 設定 | 値 |
 |---|---|
@@ -32,9 +32,11 @@ Stratumアドレスは`stratum+tcp://bntpool.com:3333`です。seineの初回起
 | ログイン | Blocknetアドレス、`@name`、`$name` |
 | 支払い方式 | 6時間のウィンドウによるPPLNS |
 | 支払いまでの承認数 | 60ブロック |
-| 最低支払額 | 0.1 BNT |
+| 最低支払額 | 1 BNT |
 
 同じ値はプールの[Get Started](/start)でいつでも確認できます。
+
+リグが見つけた各ブロックの全報酬を受け取るには、アドレスの前に`solo:`を付けます。方法は[bntpool.comでBlocknetをソロ採掘する](/blog/ja/solo-mine-blocknet-on-bntpool/)で説明しています。
 
 ## なぜbntpool.comがseineの標準プールなのですか？
 
@@ -106,7 +108,7 @@ seineのダッシュボードにはそのマシンのハッシュレートと受
 
 プールは接続ごとにシェア難易度を調整するので、小さなCPUでも継続的に送信でき、接続から数分で最初の受理済みシェアが現れます。ハードウェアの目安は[Blocknetマイニングのハードウェアガイド](https://seineminer.com/ja/blog/blocknet-mining-hardware-hashrate/)をご覧ください。
 
-次に報酬が発生します。シェアが6時間のウィンドウ内にある間にプールがブロックを見つけるとEstimated Rewardsが表示されます。60承認後にConfirmed Rewardsへ移り、0.1 BNT以上になると自動送金されます。[PPLNSの支払い方式](/blog/ja/how-pplns-payouts-work/)で分配を説明しています。プール全体の履歴は[Blocks](/blocks)と[Payouts](/payouts)にあります。
+次に報酬が発生します。シェアが6時間のウィンドウ内にある間にプールがブロックを見つけるとEstimated Rewardsが表示されます。60承認後にConfirmed Rewardsへ移り、1 BNT以上になると自動送金されます。[PPLNSの支払い方式](/blog/ja/how-pplns-payouts-work/)で分配を説明しています。プール全体の履歴は[Blocks](/blocks)と[Payouts](/payouts)にあります。
 
 ## Get Startedには何がありますか？
 

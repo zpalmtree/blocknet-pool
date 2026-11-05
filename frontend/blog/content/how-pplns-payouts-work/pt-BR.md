@@ -1,18 +1,18 @@
 ---
 title: Como funcionam os pagamentos PPLNS no bntpool.com
-description: O bntpool.com paga mineradores de Blocknet com PPLNS em uma janela de seis horas. Entenda a divisão das recompensas, as 60 confirmações e o mínimo de 0,1 BNT.
+description: O bntpool.com paga mineradores de Blocknet com PPLNS em uma janela de seis horas. Entenda a divisão das recompensas, as 60 confirmações e o mínimo de 1 BNT.
 tags: [Pagamentos, PPLNS, bntpool, Guia de mineração]
-sourceHash: 'f216680e1944'
+sourceHash: '2f69ab18ce0b'
 translation: draft
 faq:
   - q: 'Qual é a duração da janela PPLNS no bntpool.com?'
     a: 'São seis horas. Ao encontrar um bloco, o pool considera as seis horas anteriores e divide a recompensa entre quem enviou shares nesse período, proporcionalmente à dificuldade deles. O valor atual está na página Get Started do pool.'
   - q: 'Qual é o pagamento mínimo no bntpool.com?'
-    a: 'O mínimo é 0,1 BNT. Quando seu saldo confirmado chega a esse valor, o pool o envia automaticamente ao seu endereço Blocknet, sem solicitação ou resgate. Um saldo menor permanece na conta e cresce a cada bloco confirmado do qual você participou até atingir o limite.'
+    a: 'O mínimo é 1 BNT. Quando seu saldo confirmado chega a esse valor, o pool o envia automaticamente ao seu endereço Blocknet, sem solicitação ou resgate. Um saldo menor permanece na conta e cresce a cada bloco confirmado do qual você participou até atingir o limite.'
   - q: 'Por que Estimated Rewards difere de Confirmed Rewards?'
     a: 'Estimated Rewards é sua parte dos blocos encontrados pelo pool que ainda estão acumulando 60 confirmações, portanto o valor pode mudar. Confirmed Rewards vem de blocos com profundidade de 60 blocos e aguarda pagamento. Conforme cada bloco amadurece, o valor passa do primeiro cartão para o segundo.'
   - q: 'Minhas recompensas param assim que interrompo a mineração?'
-    a: 'Não. Cada share permanece na janela PPLNS por seis horas após o envio, então você ainda recebe créditos pelos blocos encontrados nesse intervalo. Recompensas já confirmadas continuam no saldo e são pagas quando ele atinge o mínimo de 0,1 BNT.'
+    a: 'Não. Cada share permanece na janela PPLNS por seis horas após o envio, então você ainda recebe créditos pelos blocos encontrados nesse intervalo. Recompensas já confirmadas continuam no saldo e são pagas quando ele atinge o mínimo de 1 BNT.'
   - q: 'O que significa um esforço acima de 100% na página Luck?'
     a: 'O esforço compara o trabalho feito pelo pool na rodada com a dificuldade do bloco, que representa o trabalho esperado. Acima de 100%, a rodada demorou mais que a média; abaixo disso, foi mais rápida. Ambos são normais. Em muitas rodadas, o esforço médio fica perto de 100%.'
 ---
@@ -34,7 +34,7 @@ No bntpool.com, os "últimos N" são um intervalo de tempo: seis horas. A págin
 | Sistema de pagamento | PPLNS |
 | Janela de shares | 6 horas |
 | Confirmações antes do pagamento | 60 blocos |
-| Pagamento mínimo | 0,1 BNT |
+| Pagamento mínimo | 1 BNT |
 
 Os shares são ponderados pela dificuldade. Cada conexão recebe sua própria dificuldade, ajustada para que todo minerador envie um fluxo regular de shares. Máquinas mais rápidas recebem shares mais difíceis, com maior peso individual. O que define sua parte é o trabalho total realizado, uma medida justa tanto para um notebook quanto para um servidor.
 
@@ -46,7 +46,7 @@ Sempre que encontra um bloco, o pool segue estas etapas:
 2. **Mede a janela.** O pool soma a dificuldade de todos os shares aceitos de cada endereço nas seis horas que terminam no bloco.
 3. **Divide a recompensa.** Cada endereço recebe a mesma fração da recompensa que sua fração do trabalho total da janela.
 4. **Aguarda a maturidade.** Sua parte aparece como estimativa até o bloco atingir 60 blocos de profundidade, quando passa ao saldo confirmado.
-5. **Paga o saldo.** Ao atingir 0,1 BNT confirmado, o pool envia o saldo ao seu endereço.
+5. **Paga o saldo.** Ao atingir 1 BNT confirmado, o pool envia o saldo ao seu endereço.
 
 ## Um exemplo calculado
 
@@ -64,7 +64,7 @@ Agora imagine outro minerador com exatamente sua hashrate que conectou 30 minuto
 | Mesma hashrate, conectado 30 minutos antes do bloco | 1.667 | cerca de 0,17% | cerca de 0,67 BNT |
 | Minerador pequeno, minerando as seis horas inteiras | 100 | 0,01% | 0,04 BNT |
 
-O minerador pequeno da última linha ganha 0,04 BNT por bloco. Após três blocos assim, seu saldo confirmado ultrapassa o mínimo de 0,1 BNT e é pago.
+O minerador pequeno da última linha ganha 0,04 BNT por bloco. Após 25 blocos assim, seu saldo confirmado ultrapassa o mínimo de 1 BNT e é pago.
 
 ## Por que o PPLNS recompensa a mineração contínua?
 
@@ -83,7 +83,7 @@ Durante a maturação, o pool confere se o bloco ainda pertence à cadeia princi
 ## Quando chegam os pagamentos do bntpool.com?
 
 <Answer>
-Após 60 confirmações, cerca de cinco horas com blocos de cinco minutos, sua parte passa para Confirmed Rewards na página de estatísticas. Quando o saldo confirmado chega a 0,1 BNT, o bntpool.com o envia automaticamente ao seu endereço Blocknet. Não é preciso solicitar nem resgatar.
+Após 60 confirmações, cerca de cinco horas com blocos de cinco minutos, sua parte passa para Confirmed Rewards na página de estatísticas. Quando o saldo confirmado chega a 1 BNT, o bntpool.com o envia automaticamente ao seu endereço Blocknet. Não é preciso solicitar nem resgatar.
 </Answer>
 
 Para um minerador novo, a primeira estimativa aparece quando o pool encontra um bloco enquanto seus shares estão na janela. O primeiro pagamento vem após a maturação desse bloco e o saldo atingir o mínimo. Pagamentos enviados aparecem na [página de pagamentos](/payouts) e no seu histórico pessoal na página de estatísticas.
@@ -106,4 +106,4 @@ A [página Luck](/luck) lista cada rodada com altura, esforço, duração, statu
 
 A sorte afeta a frequência dos blocos. Sua fração de cada bloco depende apenas da sua parte do trabalho na janela. Minerar continuamente mantém essa fração completa, seja a rodada curta ou longa.
 
-<CTA target="pool" title="Entre no pool" text="Mine continuamente no bntpool.com. Sua parte de cada bloco é paga automaticamente quando você atinge 0,1 BNT." />
+<CTA target="pool" title="Entre no pool" text="Mine continuamente no bntpool.com. Sua parte de cada bloco é paga automaticamente quando você atinge 1 BNT." />

@@ -9,7 +9,7 @@ faq:
     a: 'Koneksi mining aktif bukan syarat pembayaran. Saldo terkonfirmasi diproses menurut aturan pool, termasuk ambang minimum saat ini. Memutus koneksi tidak menghapus saldo dan tidak dengan sendirinya meminta pembayaran segera.'
   - q: 'Apakah menyambung kembali mengulang usia share lama?'
     a: 'Tidak. Share lama mempertahankan waktu pencatatannya. Pekerjaan baru masuk jendela terkait setelah Anda kembali; koneksi ulang tidak memperbarui share lama atau menambahkan pekerjaan selama offline. Periksa share diterima yang baru setelah restart.'
-sourceHash: '0a11c393062e'
+sourceHash: a5bf859e0abb
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Ya. Pekerjaan yang memenuhi syarat dari sesi pendek dapat ikut dalam blok yang j
 
 ## Bedakan waktu yang sedang Anda lihat
 
-bntpool saat ini menerbitkan jendela PPLNS enam jam, 60 blok sebelum kelayakan pembayaran, dan minimum 0,1 BNT di [halaman mulai](/start). Ketiganya adalah pekerjaan yang dihitung, pematangan blok, dan ambang saldo. Jendela enam jam bukan penghitung waktu yang menjanjikan pembayaran setelah enam jam.
+bntpool saat ini menerbitkan jendela PPLNS enam jam, 60 blok sebelum kelayakan pembayaran, dan minimum 1 BNT di [halaman mulai](/start). Ketiganya adalah pekerjaan yang dihitung, pematangan blok, dan ambang saldo. Jendela enam jam bukan penghitung waktu yang menjanjikan pembayaran setelah enam jam.
 
 [Panduan PPLNS](/blog/id/how-pplns-payouts-work/) menjelaskan rumus alokasi. Share yang memenuhi syarat dibobot menurut kesulitan terhadap seluruh pekerjaan yang memenuhi syarat dalam jendela sama. Menit online tidak menetapkan persentase imbalan berikutnya. Perangkat, partisipasi pool, dan hasil share dapat mengubah bobot walaupun durasi sesi sama.
 
@@ -45,7 +45,7 @@ Keluar normal dari seine dengan `q` di dashboard atau `Ctrl+C` di terminal. Simp
 
 Share yang keluar dari jendela blok berikutnya tidak menghapus imbalan yang sudah dialokasikan untuk blok sebelumnya. Estimasi tetap mengikuti status dan pematangan blok; saldo terkonfirmasi yang belum dibayar tetap di akun hingga diproses. [Panduan konfirmasi](/blog/id/block-confirmations-mining-rewards/) membedakan kredit sementara dan saldo matang.
 
-Saldo terkonfirmasi di bawah 0,1 BNT tetap di bawah ambang otomatis saat ini sampai kredit tambahan mencapai minimum. Koneksi ulang tidak menaikkan saldo atau memaksa pembayaran. Sebaliknya, saldo layak tidak membutuhkan miner online saat diproses. [Riwayat pembayaran](/payouts) membedakan saldo belum dibayar dari transaksi yang sudah dikirim.
+Saldo terkonfirmasi di bawah 1 BNT tetap di bawah ambang otomatis saat ini sampai kredit tambahan mencapai minimum. Koneksi ulang tidak menaikkan saldo atau memaksa pembayaran. Sebaliknya, saldo layak tidak membutuhkan miner online saat diproses. [Riwayat pembayaran](/payouts) membedakan saldo belum dibayar dari transaksi yang sudah dikirim.
 
 ## Kembali ke akun sama dan periksa pekerjaan baru
 

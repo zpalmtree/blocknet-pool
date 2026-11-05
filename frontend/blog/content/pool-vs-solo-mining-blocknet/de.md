@@ -1,8 +1,8 @@
 ---
 title: Pool- oder Solo-Mining für Blocknet
-description: Entscheide dich zwischen Pool- und Solo-Mining für Blocknet. Berechne erwartete Blöcke pro Tag, erfahre, wie bntpool.com sie in regelmäßige Auszahlungen umsetzt, und richte Solo-Mining ein.
+description: Entscheide dich zwischen Pool- und Solo-Mining für Blocknet. Berechne erwartete Blöcke pro Tag, vergleiche geteilte und Solo-Belohnungen auf bntpool.com und richte Solo-Mining ein.
 tags: [Mining-Anleitung, Solo-Mining, bntpool, PPLNS]
-sourceHash: 171d240d6c4b
+sourceHash: 'aecc3e8f992f'
 translation: draft
 faq:
   - q: 'Wie oft würde ich beim Solo-Mining einen Blocknet-Block finden?'
@@ -10,20 +10,20 @@ faq:
   - q: 'Brauche ich einen eigenen Blocknet-Node für das Mining auf bntpool.com?'
     a: 'Nein. Der Pool betreibt einen eigenen Blocknet-Node, erstellt Blockvorlagen und reicht gefundene Blöcke ein. Du brauchst nur seine und eine Blocknet-Adresse oder einen Blocknet-ID-Namen. Starte seine, füge deine Adresse ein und akzeptiere den Standardpool. Der Pool zahlt deinen Anteil an jedem Block an diese Adresse.'
   - q: 'Kann seine Blocknet solo minen?'
-    a: 'Ja. Starte seine mit ./seine --mode daemon. Der Miner arbeitet dann direkt mit deinem synchronisierten Blocknet-Node und verbindet sich über dessen API-Cookie. Jeder gefundene Block zahlt seine vollständige Belohnung an die Node-Wallet. Die Solo-Mining-Anleitung im seine-Repository erklärt eigene Node-Konfigurationen und Wallet-Passwörter.'
+    a: 'Ja, auf zwei Arten. Setze solo: vor deine Adresse, etwa ./seine --address solo:YOUR_ADDRESS, dann zahlt dir bntpool.com die volle Belohnung jedes Blocks, den du findest, ganz ohne eigenen Node. Oder starte seine mit --mode daemon, um mit deinem eigenen synchronisierten Blocknet-Node zu minen.'
   - q: 'Kann ich später zwischen Pool- und Solo-Mining wechseln?'
-    a: 'Ja. Für beide Modi nutzt seine denselben Download. Starte ihn normal für bntpool.com oder mit --mode daemon für deinen eigenen Node und starte ihn bei einem Wechsel neu. Bereits gesendete Pool-Shares bleiben im sechsstündigen PPLNS-Fenster und verdienen bis zu dessen Ablauf weiter.'
+    a: 'Ja. seine nutzt für jede Variante denselben Download. Füge das Präfix solo: zu deiner Adresse hinzu oder entferne es, oder nutze --mode daemon für deinen eigenen Node, und starte seine bei einem Wechsel neu. Bereits für geteilte Belohnungen gesendete Shares bleiben im sechsstündigen PPLNS-Fenster und verdienen bis zu dessen Ablauf weiter.'
 ---
 
-Diese Anleitung hilft dir bei der Entscheidung zwischen Blocknet-Mining auf bntpool.com und Solo-Mining mit deinem eigenen Node. Du berechnest, wie viele Blöcke deine Hashrate allein findet, erfährst, wie der Pool daraus regelmäßige Auszahlungen macht, und richtest beide Varianten mit seine ein.
+Diese Anleitung hilft dir bei der Entscheidung zwischen geteilten Pool-Belohnungen und Solo-Mining für Blocknet, solo entweder über bntpool.com oder mit deinem eigenen Node. Du berechnest, wie viele Blöcke deine Hashrate allein findet, erfährst, wie der Pool daraus regelmäßige Auszahlungen macht, und richtest jede Variante mit seine ein.
 
 ## Solltest du Blocknet im Pool oder solo minen?
 
 <Answer>
-Für beide gilt dieselbe Rechnung: Dein Anteil an der Netzwerk-Hashrate bestimmt deinen Anteil an dessen Blöcken. Auf bntpool.com verdienst du einen Anteil an jedem gefundenen Pool-Block; entsprechend regelmäßig kommen Auszahlungen. Solo behältst du die volle Belohnung jedes selbst gefundenen Blocks. Das passt zu großen Betrieben mit eigenem Node.
+Für beide gilt dieselbe Rechnung: Dein Anteil an der Netzwerk-Hashrate bestimmt deinen Anteil an dessen Blöcken. Auf bntpool.com verdienst du einen Anteil an jedem gefundenen Pool-Block; entsprechend regelmäßig kommen Auszahlungen. Solo behältst du die volle Belohnung jedes selbst gefundenen Blocks. Das passt zu großen Betrieben. bntpool.com bietet beides.
 </Answer>
 
-Für die meisten Miner ist bntpool.com der einfache Einstieg. Es ist der Standardpool von seine; außer deiner Adresse brauchst du nichts einzurichten und keinen Node zu betreiben oder zu synchronisieren. Solo-Mining wird ebenfalls vollständig unterstützt: Der Daemon-Modus von seine arbeitet direkt mit deinem Blocknet-Node. Im Folgenden erfährst du, welche Variante zu deiner Hardware passt.
+Für die meisten Miner ist bntpool.com der einfache Einstieg. Es ist der Standardpool von seine; außer deiner Adresse brauchst du nichts einzurichten und keinen Node zu betreiben oder zu synchronisieren. Solo-Mining wird ebenfalls vollständig unterstützt. Setze `solo:` vor deine Adresse, und bntpool.com zahlt dir die volle Belohnung jedes Blocks, den deine Rigs finden, ganz ohne eigenen Node. Außerdem hat seine einen Daemon-Modus, der direkt mit deinem eigenen Blocknet-Node arbeitet. Im Folgenden erfährst du, welche Variante zu deiner Hardware passt.
 
 ## Wie viele Blöcke würdest du solo finden?
 
@@ -67,7 +67,7 @@ bntpool.com bündelt die Hashrate aller Teilnehmer und findet dadurch viel häuf
 Das hat praktische Vorteile:
 
 - **Einnahmen aus jedem Block.** Solange deine Shares im sechsstündigen Fenster liegen, verdienst du an jedem gefundenen Pool-Block mit. Auf der [Blockseite](/blocks) kannst du die Funde verfolgen.
-- **Automatische Auszahlungen.** Liegt ein Block 60 Blöcke tief, wandert dein Anteil ins bestätigte Guthaben. Ab 0,1 BNT sendet der Pool es an deine Adresse. Gesendete Zahlungen stehen auf der [Auszahlungsseite](/payouts).
+- **Automatische Auszahlungen.** Liegt ein Block 60 Blöcke tief, wandert dein Anteil ins bestätigte Guthaben. Sobald es die Mindestauszahlung erreicht, am 4. November 2026 1 BNT, sendet der Pool es an deine Adresse. Gesendete Zahlungen stehen auf der [Auszahlungsseite](/payouts).
 - **Kontinuität bei Neustarts.** Bereits eingereichte Shares bleiben sechs Stunden im Fenster. Ein Neustart oder Treiberupdate setzt deine Position nicht zurück.
 - **Nur der Miner muss laufen.** Der Pool betreibt den Node, erstellt Blockvorlagen und reicht Blöcke ein. Mehrere Rigs können auf dieselbe Adresse oder einen Blocknet-ID-`@name` minen.
 
@@ -75,13 +75,26 @@ Die [PPLNS-Anleitung](/blog/de/how-pplns-payouts-work/) erklärt die Aufteilung 
 
 ## Warum Blocknet solo minen?
 
-Beim Solo-Mining kontrollierst du den gesamten Ablauf. Dein eigener Node erstellt jede Blockvorlage und prüft jeden Block selbst. Jeder gefundene Block zahlt die vollständige Belohnung direkt an die Wallet deines Nodes.
+Beim Solo-Mining erhältst du die volle Belohnung jedes Blocks, den du findest. Das passt am besten, wenn deine Hashrate häufig Blöcke findet. Im Beispiel oben findet ein Betrieb mit 10 % des Netzwerks ungefähr alle 50 Minuten einen Block. Solo-Auszahlungen kommen damit so regelmäßig wie bei einem Pool.
 
-Das passt am besten, wenn deine Hashrate häufig Blöcke findet. Im Beispiel oben findet ein Betrieb mit 10 % des Netzwerks ungefähr alle 50 Minuten einen Block. Solo-Auszahlungen kommen damit so regelmäßig wie bei einem Pool. Wenn du bereits für deine Wallet oder andere Dienste einen Blocknet-Node betreibst, ergänzt Solo-Mining diesen um den Miner.
+Mit seine kannst du auf zwei Arten solo minen:
 
-Auch für diesen Modus ist seine gebaut. Der Miner arbeitet mit den Blockvorlagen des Nodes. Hat der Node eine Vorlage etwa nach einem Neustart vergessen, reicht seine den vollständigen gelösten Block erneut ein, damit ein gefundener Block die Blockchain trotzdem erreicht.
+- **Solo auf bntpool.com.** Setze `solo:` vor deine Adresse. Der Pool betreibt den Node, reicht deine Blöcke ein und zahlt die volle Belohnung jedes Blocks abzüglich der Poolgebühr über seine normalen Auszahlungen an deine Adresse. Du kannst Solo-Rigs und Rigs mit geteilten Belohnungen auf einer Adresse mischen.
+- **Solo mit deinem eigenen Node.** Der Daemon-Modus von seine arbeitet mit den Blockvorlagen deines eigenen Nodes, und jeder Block zahlt direkt an die Wallet deines Nodes. Wenn du bereits für deine Wallet oder andere Dienste einen Blocknet-Node betreibst, ergänzt Solo-Mining diesen um den Miner.
+
+Auch für den Daemon-Modus ist seine gebaut. Der Miner arbeitet mit den Blockvorlagen des Nodes. Hat der Node eine Vorlage etwa nach einem Neustart vergessen, reicht seine den vollständigen gelösten Block erneut ein, damit ein gefundener Block die Blockchain trotzdem erreicht.
 
 ## Wie richtest du Solo-Mining mit seine ein?
+
+Um solo auf bntpool.com zu minen, installiere seine v0.3.1 oder neuer und starte es mit dem Präfix vor deiner Adresse:
+
+```sh
+./seine --address solo:YOUR_BLOCKNET_ADDRESS
+```
+
+Das Dashboard kennzeichnet dein Konto dann als **Solo**. [Blocknet solo auf bntpool.com minen](/blog/de/solo-mine-blocknet-on-bntpool/) erklärt Blocknet-ID-Namen, Rig-Namen, Auszahlungen und wo deine Solo-Blöcke auf der Statistikseite erscheinen.
+
+So minest du solo mit deinem eigenen Node:
 
 1. **Installiere und synchronisiere einen Blocknet-Node.** Mit dem Wrapper `blocknet` führst du Folgendes aus:
 
@@ -111,12 +124,13 @@ Die [Solo-Mining-Anleitung](https://github.com/zpalmtree/seine/blob/master/docs/
 Setze deine Hashrate und die aktuelle Netzwerk-Hashrate aus dem [Dashboard](/) in die Formel ein und betrachte den mittleren Blockabstand.
 
 - **Starte auf bntpool.com**, wenn du auf einem Desktop, Laptop oder wenigen Servern minest oder regelmäßige Auszahlungen ohne eigenen Node möchtest. Starte seine, füge Adresse oder `@name` ein und akzeptiere den Standardpool.
-- **Mine solo**, wenn dein Betrieb einen großen Netzwerkanteil hält und dadurch selbst häufig Blöcke findet, und du bereits einen synchronisierten Node betreibst oder betreiben möchtest.
+- **Mine solo auf bntpool.com**, wenn dein Betrieb einen großen Netzwerkanteil hält und dadurch selbst häufig Blöcke findet. Setze `solo:` vor deine Adresse und behalte Node, Statistiken und Auszahlungen des Pools.
+- **Mine solo mit deinem eigenen Node**, wenn du diese Hashrate hast und bereits einen eigenen synchronisierten Node betreibst oder betreiben möchtest.
 
-Mit seine lässt sich die Entscheidung leicht ändern. Pool- und Daemon-Modus verwenden denselben Download. Wächst deine Hardware, wechselst du mit einer Option und einem Neustart. Wenn neben dem Pool-Mining ein lokaler Node läuft, zeigt seine dessen Wallet-Guthaben neben deinem Pool-Guthaben an.
+Mit seine lässt sich die Entscheidung leicht ändern. Alle Varianten verwenden denselben Download. Wächst deine Hardware, wechselst du mit einem Präfix oder einer Option und einem Neustart. Wenn neben dem Pool-Mining ein lokaler Node läuft, zeigt seine dessen Wallet-Guthaben neben deinem Pool-Guthaben an.
 
 <Note>
-Laut [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) plant Blocknet um den 16. Februar 2027 ein Netzwerk-Upgrade namens Faraday, das den Proof of Work ändern soll. Aktualisiere den Miner seine regelmäßig: Er prüft beim Start und alle 12 Stunden auf neue Versionen.
+Laut [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) plant Blocknet um den 16. Februar 2027 ein Netzwerk-Upgrade namens Faraday, das den Proof of Work ändern soll. seine v0.3.1 ist dafür bereit: Pool-Mining wechselt von selbst auf den neuen Proof of Work, und mit aktivierten automatischen Updates installiert seine neue Versionen für dich.
 </Note>
 
-<CTA target="pool" title="Starte das Mining auf bntpool.com" text="Starte seine, füge deine Adresse ein und verdiene an jedem Pool-Block mit. Die Auszahlung erfolgt automatisch ab 0,1 BNT." />
+<CTA target="pool" title="Starte das Mining auf bntpool.com" text="Starte seine, füge deine Adresse ein und verdiene an jedem Pool-Block mit, oder setze solo: davor und behalte jeden Block, den du findest." />

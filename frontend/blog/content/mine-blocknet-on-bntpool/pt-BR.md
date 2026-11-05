@@ -2,7 +2,7 @@
 title: Mine Blocknet no bntpool.com
 description: Entre no bntpool.com, o pool padrão do seine para Blocknet. Conecte-se a stratum+tcp://bntpool.com:3333 com seu endereço ou @name, nomeie os rigs e acompanhe as estatísticas.
 tags: [Guia de mineração, bntpool, Blocknet ID, seine]
-sourceHash: 'df269126bb76'
+sourceHash: '9713e976f981'
 translation: draft
 faq:
   - q: 'Qual é o endereço Stratum do bntpool.com?'
@@ -23,7 +23,7 @@ Este guia explica como entrar no pool bntpool.com com o seine: endereço do pool
 O endereço Stratum do bntpool.com é `stratum+tcp://bntpool.com:3333`. O seine o oferece como padrão na primeira execução, então basta pressionar Enter na pergunta sobre o pool. Use seu endereço Blocknet ou Blocknet ID `@name` como login. Não é preciso criar uma conta, e as recompensas vão para esse endereço.
 </Answer>
 
-Estas são as configurações informadas pelo endpoint público `/api/info` em 25 de outubro de 2026:
+Estas são as configurações informadas pelo endpoint público `/api/info` em 4 de novembro de 2026:
 
 | Configuração | Valor |
 |---|---|
@@ -31,9 +31,11 @@ Estas são as configurações informadas pelo endpoint público `/api/info` em 2
 | Login | Endereço Blocknet, `@name` ou `$name` |
 | Sistema de pagamento | PPLNS com janela de 6 horas |
 | Confirmações antes do pagamento | 60 blocos |
-| Pagamento mínimo | 0,1 BNT |
+| Pagamento mínimo | 1 BNT |
 
 Os mesmos valores estão sempre disponíveis na página [Get Started](/start) do pool.
+
+Para ficar com a recompensa inteira de cada bloco que seus rigs encontrarem, coloque `solo:` antes do seu endereço. [Mineração solo no bntpool.com](/blog/pt-br/solo-mine-blocknet-on-bntpool/) mostra como.
 
 ## Por que o bntpool.com é o pool padrão do seine?
 
@@ -105,7 +107,7 @@ Observe três itens:
 
 O pool define a dificuldade separadamente por conexão e a ajusta durante a mineração. Até uma CPU pequena envia shares regularmente, e os primeiros aceitos aparecem poucos minutos após conectar. Consulte o [guia de hardware de mineração de Blocknet](https://seineminer.com/pt-br/blog/blocknet-mining-hardware-hashrate/) para saber a hashrate esperada do seu equipamento.
 
-As recompensas vêm depois. Estimated Rewards aparece quando o pool encontra um bloco enquanto seus shares estão na janela de seis horas. Após 60 confirmações, sua parte passa para Confirmed Rewards, e o pool a envia automaticamente quando você tem pelo menos 0,1 BNT. [Como funcionam os pagamentos PPLNS](/blog/pt-br/how-pplns-payouts-work/) explica a divisão de cada recompensa. O histórico geral está em [Blocks](/blocks) e [Payouts](/payouts).
+As recompensas vêm depois. Estimated Rewards aparece quando o pool encontra um bloco enquanto seus shares estão na janela de seis horas. Após 60 confirmações, sua parte passa para Confirmed Rewards, e o pool a envia automaticamente quando você tem pelo menos 1 BNT. [Como funcionam os pagamentos PPLNS](/blog/pt-br/how-pplns-payouts-work/) explica a divisão de cada recompensa. O histórico geral está em [Blocks](/blocks) e [Payouts](/payouts).
 
 ## O que há na página Get Started?
 

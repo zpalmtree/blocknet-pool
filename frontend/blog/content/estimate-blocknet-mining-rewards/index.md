@@ -110,7 +110,7 @@ The difference is timing. Mining alone, that Zen 5 server would expect one whole
 Two pool details shape your first day:
 
 - **The window fills over six hours.** A new miner's portion of each block grows as their shares fill the six-hour PPLNS window, then holds at the full rate for as long as they keep mining.
-- **Rewards mature before payout.** Each block's reward moves to Confirmed Rewards after 60 confirmations, about five hours, and the pool sends your balance automatically once it reaches 0.1 BNT.
+- **Rewards mature before payout.** Each block's reward moves to Confirmed Rewards after 60 confirmations, about five hours, and the pool sends your balance automatically once it reaches 1 BNT.
 
 ## How do you check the estimate against real results?
 

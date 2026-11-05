@@ -13,7 +13,7 @@ faq:
     a: 'Perkiraan adalah rata-rata. Pada hari tertentu pool dapat menemukan lebih banyak atau lebih sedikit blok dari perkiraan, dan hashrate jaringan berubah saat penambang bergabung. Dalam seminggu atau lebih penambangan konsisten, variasi harian merata, dan Anda dapat memantau imbalan yang dikreditkan di My Stats.'
   - q: 'Apakah menambang di pool mengubah perkiraan jumlah BNT?'
     a: 'Perkiraan bagian imbalan jaringan tetap sama, karena hanya bergantung pada proporsi hashrate jaringan Anda. Pool mengubah waktunya. Alih-alih menunggu berhari-hari untuk satu blok utuh, Anda mendapat bagian setiap blok bntpool.com, sehingga imbalan masuk dalam jumlah kecil teratur.'
-sourceHash: 'ce91c64a8567'
+sourceHash: 9dace0600c53
 translation: draft
 ---
 
@@ -109,7 +109,7 @@ Perbedaannya adalah waktu. Menambang sendiri, server Zen 5 itu mengharapkan satu
 Dua detail pool memengaruhi hari pertama:
 
 - **Jendela terisi selama enam jam.** Bagian penambang baru bertambah saat share memenuhi jendela PPLNS enam jam, lalu bertahan pada laju penuh selama terus menambang.
-- **Imbalan matang sebelum dibayar.** Imbalan setiap blok berpindah ke Confirmed Rewards setelah 60 konfirmasi, sekitar lima jam, dan pool mengirim saldo otomatis setelah mencapai 0,1 BNT.
+- **Imbalan matang sebelum dibayar.** Imbalan setiap blok berpindah ke Confirmed Rewards setelah 60 konfirmasi, sekitar lima jam, dan pool mengirim saldo otomatis setelah mencapai 1 BNT.
 
 ## Bagaimana membandingkan perkiraan dengan hasil nyata?
 

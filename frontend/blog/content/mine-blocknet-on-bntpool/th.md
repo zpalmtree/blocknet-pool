@@ -2,7 +2,7 @@
 title: 'ขุด Blocknet กับ bntpool.com'
 description: 'เข้าร่วม bntpool.com พูลเริ่มต้นของ seine เชื่อมต่อ stratum+tcp://bntpool.com:3333 ด้วยที่อยู่หรือ @name ตั้งชื่อเครื่องและตรวจสถิติของคุณ'
 tags: ['คู่มือขุด', 'bntpool', 'Blocknet ID', 'seine']
-sourceHash: 'df269126bb76'
+sourceHash: 9713e976f981
 translation: draft
 faq:
   - q: 'ที่อยู่ Stratum ของ bntpool.com คืออะไร?'
@@ -23,7 +23,7 @@ faq:
 ที่อยู่ Stratum ของ bntpool.com คือ `stratum+tcp://bntpool.com:3333` seine เสนอเป็นพูลเริ่มต้นในการเปิดครั้งแรก กด Enter ที่คำถามเลือกพูลก็เชื่อมต่อได้ เข้าสู่ระบบด้วยที่อยู่ Blocknet หรือ Blocknet ID `@name` ไม่ต้องสร้างบัญชี และรางวัลส่งไปที่อยู่นั้น
 </Answer>
 
-นี่คือค่าของพูลตาม endpoint สาธารณะ `/api/info` เมื่อ 25 ตุลาคม 2026:
+นี่คือค่าของพูลตาม endpoint สาธารณะ `/api/info` เมื่อ 4 พฤศจิกายน 2026:
 
 | การตั้งค่า | ค่า |
 |---|---|
@@ -31,9 +31,11 @@ faq:
 | ข้อมูลเข้าสู่ระบบ | ที่อยู่ Blocknet, `@name` หรือ `$name` |
 | ระบบจ่ายรางวัล | PPLNS ช่วงเวลา 6 ชั่วโมง |
 | การยืนยันก่อนจ่าย | 60 บล็อก |
-| ยอดจ่ายขั้นต่ำ | 0.1 BNT |
+| ยอดจ่ายขั้นต่ำ | 1 BNT |
 
 ดูค่าเดียวกันได้ทุกเมื่อในหน้า [Get Started](/start) ของพูล
+
+หากต้องการรับรางวัลเต็มจำนวนของทุกบล็อกที่เครื่องขุดของคุณพบ ให้ใส่ `solo:` หน้าที่อยู่ [การขุด solo บน bntpool.com](/blog/th/solo-mine-blocknet-on-bntpool/) อธิบายวิธีทำ
 
 ## ทำไม bntpool.com เป็นพูลเริ่มต้นของ seine?
 
@@ -105,7 +107,7 @@ Enter pool URL [default: stratum+tcp://bntpool.com:3333]:
 
 พูลกำหนดความยากแยกแต่ละการเชื่อมต่อและปรับขณะขุด แม้ CPU ขนาดเล็กจึงส่ง share ได้ต่อเนื่อง และเห็น share แรกที่ยอมรับภายในไม่กี่นาทีหลังเชื่อมต่อ สำหรับ hashrate ที่คาดหวังจากฮาร์ดแวร์ อ่าน[คู่มือฮาร์ดแวร์ขุด Blocknet](https://seineminer.com/th/blog/blocknet-mining-hardware-hashrate/)
 
-จากนั้นเป็นรางวัล Estimated Rewards ปรากฏเมื่อพูลพบบล็อกขณะ share ของคุณอยู่ในช่วงหกชั่วโมง หลังครบ 60 การยืนยัน ส่วนแบ่งย้ายไป Confirmed Rewards และส่งอัตโนมัติเมื่อมีอย่างน้อย 0.1 BNT [วิธีจ่าย PPLNS](/blog/th/how-pplns-payouts-work/) อธิบายการแบ่งแต่ละบล็อก ดูประวัติรวมของพูลในหน้า [Blocks](/blocks) และ [Payouts](/payouts)
+จากนั้นเป็นรางวัล Estimated Rewards ปรากฏเมื่อพูลพบบล็อกขณะ share ของคุณอยู่ในช่วงหกชั่วโมง หลังครบ 60 การยืนยัน ส่วนแบ่งย้ายไป Confirmed Rewards และส่งอัตโนมัติเมื่อมีอย่างน้อย 1 BNT [วิธีจ่าย PPLNS](/blog/th/how-pplns-payouts-work/) อธิบายการแบ่งแต่ละบล็อก ดูประวัติรวมของพูลในหน้า [Blocks](/blocks) และ [Payouts](/payouts)
 
 ## หน้า Get Started มีอะไรบ้าง?
 

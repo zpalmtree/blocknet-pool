@@ -12,7 +12,7 @@ faq:
     a: '아니요. 가입, 비밀번호, 이메일이 없습니다. Blocknet 주소 또는 그 주소를 가리키는 Blocknet ID 이름이 로그인 정보이자 지급 대상입니다. 이를 지정해 seine을 실행한 뒤 My Stats에서 조회하면 해시레이트, 셰어, 장비, 잔액, 지급을 확인할 수 있습니다.'
   - q: '여러 컴퓨터에서 하나의 주소로 채굴할 수 있나요?'
     a: '네. 각 컴퓨터에서 같은 주소나 이름으로 seine을 실행하고 장비마다 다른 이름을 지정하세요. 풀은 주소별로 셰어, 잔액, 지급을 집계하므로 모든 장비가 하나의 잔액과 지급에 합산되고, My Stats에는 장비별 행이 표시됩니다.'
-sourceHash: 'df269126bb76'
+sourceHash: '9713e976f981'
 translation: draft
 ---
 
@@ -24,7 +24,7 @@ translation: draft
 bntpool.com의 Stratum 주소는 `stratum+tcp://bntpool.com:3333`입니다. Seine은 처음 실행할 때 기본 풀로 제안하므로 풀 입력에서 Enter를 누르면 연결됩니다. Blocknet 주소 또는 Blocknet ID `@name`으로 로그인합니다. 계정을 만들 필요가 없으며 보상은 그 주소로 지급됩니다.
 </Answer>
 
-2026년 10월 25일 공개 `/api/info` 엔드포인트에 표시된 풀 설정은 다음과 같습니다.
+2026년 11월 4일 공개 `/api/info` 엔드포인트에 표시된 풀 설정은 다음과 같습니다.
 
 | 설정 | 값 |
 |---|---|
@@ -32,9 +32,11 @@ bntpool.com의 Stratum 주소는 `stratum+tcp://bntpool.com:3333`입니다. Sein
 | 로그인 | Blocknet 주소, `@name` 또는 `$name` |
 | 보상 방식 | 6시간 구간의 PPLNS |
 | 지급 전 승인 수 | 60블록 |
-| 최소 지급액 | 0.1 BNT |
+| 최소 지급액 | 1 BNT |
 
 풀의 [Get Started](/start) 페이지에서 언제든 같은 값을 확인할 수 있습니다.
+
+장비가 찾은 모든 블록의 전체 보상을 받으려면 주소 앞에 `solo:`를 붙이세요. 방법은 [bntpool.com에서 Blocknet 솔로 채굴하기](/blog/ko/solo-mine-blocknet-on-bntpool/)에서 설명합니다.
 
 ## bntpool.com이 seine의 기본 풀인 이유는 무엇인가요?
 
@@ -106,7 +108,7 @@ Seine의 대시보드는 머신에서 직접 해시레이트와 승인된 셰어
 
 풀은 연결별로 셰어 난이도를 정하고 채굴 중 조정하므로 작은 CPU도 꾸준히 셰어를 보내며, 연결 후 몇 분 안에 첫 승인 셰어가 표시됩니다. 하드웨어별 기대 해시레이트는 [Blocknet 채굴 하드웨어 가이드](https://seineminer.com/ko/blog/blocknet-mining-hardware-hashrate/)를 참고하세요.
 
-그다음 보상이 들어옵니다. 자신의 셰어가 6시간 구간 안에 있을 때 풀이 블록을 찾으면 Estimated Rewards가 표시됩니다. 블록이 60회 승인되면 자신의 몫이 Confirmed Rewards로 옮겨지고, 최소 0.1 BNT가 되면 자동 지급됩니다. [PPLNS 보상 방식](/blog/ko/how-pplns-payouts-work/)에서 블록 보상 분배를 설명합니다. 풀 전체 기록은 [Blocks](/blocks)와 [Payouts](/payouts) 페이지에 있습니다.
+그다음 보상이 들어옵니다. 자신의 셰어가 6시간 구간 안에 있을 때 풀이 블록을 찾으면 Estimated Rewards가 표시됩니다. 블록이 60회 승인되면 자신의 몫이 Confirmed Rewards로 옮겨지고, 최소 1 BNT가 되면 자동 지급됩니다. [PPLNS 보상 방식](/blog/ko/how-pplns-payouts-work/)에서 블록 보상 분배를 설명합니다. 풀 전체 기록은 [Blocks](/blocks)와 [Payouts](/payouts) 페이지에 있습니다.
 
 ## Get Started 페이지에는 무엇이 있나요?
 

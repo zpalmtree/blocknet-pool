@@ -2,7 +2,7 @@
 title: "Công cụ tính phần thưởng đào Blocknet"
 description: "Ước tính BNT mỗi ngày và mỗi tuần từ hashrate của bạn, dữ liệu mạng trực tiếp và lịch phần thưởng, với phí hiển thị riêng."
 tags: [Phần thưởng đào coin, Hướng dẫn đào coin, Hashrate, bntpool]
-sourceHash: 'ce91c64a8567'
+sourceHash: 9dace0600c53
 translation: draft
 faq:
   - q: 'Tính phần thưởng đào Blocknet thế nào?'
@@ -109,7 +109,7 @@ Khác biệt là thời điểm. Đào một mình, máy chủ Zen 5 đó kỳ v
 Hai chi tiết pool định hình ngày đầu:
 
 - **Cửa sổ đầy dần trong sáu giờ.** Phần của người mới ở mỗi khối tăng khi share lấp đầy cửa sổ PPLNS sáu giờ, rồi giữ ở toàn bộ tỷ lệ miễn là tiếp tục đào.
-- **Phần thưởng trưởng thành trước thanh toán.** Mỗi phần thưởng khối chuyển sang Confirmed Rewards sau 60 xác nhận, khoảng năm giờ; pool tự động gửi số dư khi đạt 0,1 BNT.
+- **Phần thưởng trưởng thành trước thanh toán.** Mỗi phần thưởng khối chuyển sang Confirmed Rewards sau 60 xác nhận, khoảng năm giờ; pool tự động gửi số dư khi đạt 1 BNT.
 
 ## Kiểm tra ước tính với kết quả thật thế nào?
 

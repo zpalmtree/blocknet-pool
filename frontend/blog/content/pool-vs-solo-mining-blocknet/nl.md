@@ -1,8 +1,8 @@
 ---
 title: 'Blocknet minen: pool of solo?'
-description: 'Kies pool- of solomining voor Blocknet. Bereken je verwachte blokken per dag, zie hoe bntpool.com regelmatig uitbetaalt en stel solo in met seine.'
+description: 'Kies pool- of solomining voor Blocknet. Bereken je verwachte blokken per dag, vergelijk gedeelde en solobeloningen op bntpool.com en stel solo in.'
 tags: ['Mininggids', 'Solomining', 'bntpool', 'PPLNS']
-sourceHash: 171d240d6c4b
+sourceHash: 'aecc3e8f992f'
 translation: draft
 faq:
   - q: 'Hoe vaak zou ik solo een Blocknet-blok vinden?'
@@ -10,20 +10,20 @@ faq:
   - q: 'Moet ik een Blocknet-node draaien om op bntpool.com te minen?'
     a: 'Nee. De pool draait zijn eigen node, bouwt de bloktemplates en dient gevonden blokken in. Je hebt alleen seine en een Blocknet-adres of Blocknet ID-naam nodig. Start seine, plak je adres en accepteer de standaardpool. De pool betaalt je aandeel in elk blok aan dat adres.'
   - q: 'Kan seine Blocknet solo minen?'
-    a: 'Ja. Start seine met ./seine --mode daemon om rechtstreeks op je eigen gesynchroniseerde Blocknet-node te minen. Seine verbindt met de API-cookie van de node. Elk gevonden blok betaalt de volledige beloning aan de nodewallet. De sologids in de seine-repository behandelt aangepaste node-indelingen en walletwachtwoorden.'
+    a: 'Ja, op twee manieren. Zet solo: voor je adres, zoals in ./seine --address solo:YOUR_ADDRESS, en bntpool.com betaalt je de volledige beloning van elk blok dat je vindt, zonder node om te draaien. Of start seine met --mode daemon om op je eigen gesynchroniseerde Blocknet-node te minen.'
   - q: 'Kan ik later wisselen tussen pool en solo?'
-    a: 'Ja. Beide gebruiken dezelfde seine-download. Start normaal voor bntpool.com of voeg --mode daemon toe voor je eigen node. Herstart wanneer je wilt wisselen. Eerder naar de pool gestuurde shares blijven in het PPLNS-venster van zes uur en blijven beloningen opleveren zolang ze daarin zitten.'
+    a: 'Ja. Elke optie gebruikt dezelfde seine-download. Voeg het voorvoegsel solo: toe aan je adres of haal het weg, of voeg --mode daemon toe voor je eigen node, en herstart seine wanneer je wilt wisselen. Shares die je al voor gedeelde beloningen stuurde, blijven in het PPLNS-venster van zes uur en blijven opleveren zolang ze daarin zitten.'
 ---
 
-Deze gids helpt je kiezen tussen Blocknet minen op bntpool.com en solo op je eigen node. Je berekent hoeveel blokken je hashrate zelf vindt, ziet hoe de pool dat omzet in regelmatige uitbetalingen en leert beide opties met seine instellen.
+Deze gids helpt je kiezen tussen gedeelde poolbeloningen en solomining voor Blocknet, solo via bntpool.com of op je eigen node. Je berekent hoeveel blokken je hashrate zelf vindt, ziet hoe de pool dat omzet in regelmatige uitbetalingen en leert elke optie met seine instellen.
 
 ## Moet je Blocknet in een pool of solo minen?
 
 <Answer>
-Beide volgen dezelfde berekening: je aandeel in de netwerkhashrate bepaalt je aandeel in de blokken. Op bntpool.com verdien je een deel van elk gevonden poolblok, waardoor uitbetalingen regelmatig komen terwijl de pool blokken vindt. Solo behoud je de volledige beloning van elk eigen blok, passend bij grote opstellingen met een eigen node.
+Beide volgen dezelfde berekening: je aandeel in de netwerkhashrate bepaalt je aandeel in de blokken. Op bntpool.com verdien je een deel van elk gevonden poolblok, waardoor uitbetalingen regelmatig komen terwijl de pool blokken vindt. Solo behoud je de volledige beloning van elk eigen blok, passend bij grote opstellingen. bntpool.com biedt allebei.
 </Answer>
 
-Voor de meeste miners is bntpool.com een eenvoudige start. Het is de standaardpool van seine: behalve je adres hoef je niets in te stellen en je hoeft geen node te draaien of synchroniseren. Solo wordt ook volledig ondersteund via de daemonmodus, die rechtstreeks op je Blocknet-node mint. Hieronder zie je welke optie bij je hardware past.
+Voor de meeste miners is bntpool.com een eenvoudige start. Het is de standaardpool van seine: behalve je adres hoef je niets in te stellen en je hoeft geen node te draaien of synchroniseren. Solo wordt ook volledig ondersteund. Zet `solo:` voor je adres en bntpool.com betaalt je de volledige beloning van elk blok dat je rigs vinden, zonder node om te draaien. Seine heeft daarnaast een daemonmodus die rechtstreeks op je eigen Blocknet-node mint. Hieronder zie je welke optie bij je hardware past.
 
 ## Hoeveel blokken zou je solo vinden?
 
@@ -67,7 +67,7 @@ bntpool.com combineert de hashrate van iedereen die erop mint en vindt dus veel 
 Voor jou betekent dit:
 
 - **Opbrengst uit elk blok.** Zolang je shares in het venster zitten, verdien je aan elk poolblok. Volg ze op de [blokkenpagina](/blocks).
-- **Automatische uitbetaling.** Zodra een blok 60 blokken diep ligt, gaat je aandeel naar het bevestigde saldo. Bij 0,1 BNT wordt het verstuurd. Betalingen staan op de [uitbetalingspagina](/payouts).
+- **Automatische uitbetaling.** Zodra een blok 60 blokken diep ligt, gaat je aandeel naar het bevestigde saldo. Zodra het de minimale uitbetaling bereikt, 1 BNT per 4 november 2026, wordt het verstuurd. Betalingen staan op de [uitbetalingspagina](/payouts).
 - **Continuïteit na herstarts.** Ingestuurde shares blijven zes uur meetellen. Een herstart of driverupdate reset je positie niet.
 - **Alleen de miner draaien.** De pool draait de node, bouwt templates en dient blokken in. Je kunt met meerdere rigs naar één adres of Blocknet ID `@name` minen.
 
@@ -75,13 +75,26 @@ De [PPLNS-gids](/blog/nl/how-pplns-payouts-work/) doorloopt de verdeling met een
 
 ## Waarom Blocknet solo minen?
 
-Solo geeft je controle over het hele proces. Je eigen node bouwt de templates en controleert ieder blok. Elk blok dat je vindt, betaalt zijn volledige beloning rechtstreeks aan je nodewallet.
+Solomining betaalt je de volledige beloning van elk blok dat je vindt. Dat past het beste als je hashrate vaak blokken vindt. In het voorbeeld vindt een opstelling met 10% van het netwerk ongeveer elke 50 minuten een blok, dus even regelmatig als een pool.
 
-Dat past het beste als je hashrate vaak blokken vindt. In het voorbeeld vindt een opstelling met 10% van het netwerk ongeveer elke 50 minuten een blok, dus even regelmatig als een pool. Draai je al een Blocknet-node voor je wallet of andere diensten, dan voeg je voor solo de miner daaraan toe.
+Met seine kun je op twee manieren solo minen:
 
-Seine is ook voor deze modus gebouwd. Het gebruikt de bloktemplates van de node. Is de node een template vergeten, bijvoorbeeld na een herstart, dan dient seine het volledige opgeloste blok opnieuw in, zodat het gevonden blok de keten nog bereikt.
+- **Solo op bntpool.com.** Zet `solo:` voor je adres. De pool draait de node, verstuurt je blokken en betaalt de volledige beloning van elk blok, min de poolfee, via de normale uitbetalingen naar je adres. Je kunt solo- en gedeelde rigs op één adres combineren.
+- **Solo op je eigen node.** De daemonmodus van seine mint op de bloktemplates van je eigen node, en elk blok betaalt rechtstreeks aan je nodewallet. Draai je al een Blocknet-node voor je wallet of andere diensten, dan voeg je voor solo de miner daaraan toe.
+
+Seine is ook voor de daemonmodus gebouwd. Het gebruikt de bloktemplates van de node. Is de node een template vergeten, bijvoorbeeld na een herstart, dan dient seine het volledige opgeloste blok opnieuw in, zodat het gevonden blok de keten nog bereikt.
 
 ## Hoe stel je solomining met seine in?
+
+Om solo te minen op bntpool.com installeer je seine v0.3.1 of nieuwer en start je het met het voorvoegsel voor je adres:
+
+```sh
+./seine --address solo:YOUR_BLOCKNET_ADDRESS
+```
+
+Het dashboard labelt je account dan als **Solo**. [Solo Blocknet minen op bntpool.com](/blog/nl/solo-mine-blocknet-on-bntpool/) behandelt Blocknet ID-namen, rignamen, uitbetalingen en waar je soloblokken op de statistiekenpagina verschijnen.
+
+Om solo te minen op je eigen node:
 
 1. **Installeer en synchroniseer een Blocknet-node.** Met de `blocknet`-wrapper:
 
@@ -111,12 +124,13 @@ De [sologids](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mi
 Gebruik je eigen hashrate en de huidige netwerkhashrate van het [dashboard](/) in de formule en bekijk de gemiddelde tijd tussen blokken.
 
 - **Begin op bntpool.com** als je een desktop, laptop of enkele servers gebruikt, of regelmatig betaald wilt worden zonder eigen node. Start seine, plak je adres of `@name` en accepteer de standaardpool.
-- **Mine solo** als je opstelling een groot netwerkaandeel heeft en zelfstandig vaak blokken vindt, en je al een gesynchroniseerde node draait of dat wilt doen.
+- **Mine solo op bntpool.com** als je opstelling een groot netwerkaandeel heeft en zelfstandig vaak blokken vindt. Zet `solo:` voor je adres en houd de node, statistieken en uitbetalingen van de pool.
+- **Mine solo op je eigen node** als je die hashrate hebt en al een gesynchroniseerde node draait of dat wilt doen.
 
-Seine maakt heroverwegen eenvoudig. Poolmining en daemonmodus gebruiken dezelfde download. Je wisselt met één optie en een herstart wanneer je hardware groeit. Draai je lokaal een node terwijl je op de pool mint, dan toont seine het nodewalletsaldo naast het poolsaldo.
+Seine maakt heroverwegen eenvoudig. Elke optie gebruikt dezelfde download. Je wisselt met één voorvoegsel of optie en een herstart wanneer je hardware groeit. Draai je lokaal een node terwijl je op de pool mint, dan toont seine het nodewalletsaldo naast het poolsaldo.
 
 <Note>
-Volgens [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) plant Blocknet rond 16 februari 2027 de netwerkupgrade Faraday, die de proof of work moet veranderen. Houd seine actueel: het controleert bij het starten en elke 12 uur op nieuwe releases.
+Volgens [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) plant Blocknet rond 16 februari 2027 de netwerkupgrade Faraday, die de proof of work moet veranderen. Seine v0.3.1 is er klaar voor: poolminen schakelt vanzelf over op de nieuwe proof of work, en met automatische updates aan installeert seine nieuwere releases voor je.
 </Note>
 
-<CTA target="pool" title="Begin met minen op bntpool.com" text="Start seine, plak je adres en verdien een deel van elk poolblok, automatisch uitbetaald vanaf 0,1 BNT." />
+<CTA target="pool" title="Begin met minen op bntpool.com" text="Start seine, plak je adres en verdien een deel van elk poolblok, of voeg solo: toe en houd elk blok dat je vindt." />

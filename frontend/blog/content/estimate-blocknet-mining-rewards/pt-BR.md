@@ -2,7 +2,7 @@
 title: "Calculadora de mineração Blocknet"
 description: "Estime BNT por dia e semana com seu hashrate, dados da rede ao vivo e o cronograma de recompensas, com as taxas mostradas separadamente."
 tags: [Recompensas de mineração, Guia de mineração, Hashrate, bntpool]
-sourceHash: 'ce91c64a8567'
+sourceHash: '9dace0600c53'
 translation: draft
 faq:
   - q: 'Como calcular as recompensas de mineração de Blocknet?'
@@ -109,7 +109,7 @@ A diferença é o momento. Solo, esse servidor Zen 5 esperaria um bloco inteiro 
 Dois detalhes afetam seu primeiro dia:
 
 - **A janela enche em seis horas.** A parte de um novo minerador cresce enquanto seus shares preenchem a janela PPLNS. Depois mantém a taxa completa enquanto ele continuar minerando.
-- **Recompensas amadurecem antes do pagamento.** Após 60 confirmações, cerca de cinco horas, a recompensa vai para Confirmed Rewards. O pool envia automaticamente o saldo quando chega a 0,1 BNT.
+- **Recompensas amadurecem antes do pagamento.** Após 60 confirmações, cerca de cinco horas, a recompensa vai para Confirmed Rewards. O pool envia automaticamente o saldo quando chega a 1 BNT.
 
 ## Como comparar a estimativa com resultados reais?
 

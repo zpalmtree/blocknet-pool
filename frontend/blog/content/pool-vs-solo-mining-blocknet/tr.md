@@ -1,8 +1,8 @@
 ---
 title: Blocknet için havuz ve solo madencilik
-description: Blocknet için havuz veya solo madencilik seçin. Günlük beklenen blokları hesaplayın, bntpool.com'un düzenli ödemelerini görün ve solo madenciliği kurun.
+description: Blocknet için havuz veya solo madencilik seçin. Günlük beklenen blokları hesaplayın, bntpool.com'da paylaşılan ve solo ödülleri karşılaştırın ve solo madenciliği kurun.
 tags: [Madencilik rehberi, Solo madencilik, bntpool, PPLNS]
-sourceHash: 171d240d6c4b
+sourceHash: 'aecc3e8f992f'
 translation: draft
 faq:
   - q: 'Solo madencilikte ne sıklıkta Blocknet bloğu bulurum?'
@@ -10,20 +10,20 @@ faq:
   - q: 'bntpool.com''da madencilik için Blocknet düğümü çalıştırmalı mıyım?'
     a: 'Hayır. Havuz kendi Blocknet düğümünü çalıştırır, blok şablonlarını oluşturur ve bulduğu blokları gönderir. Yalnızca seine ve bir Blocknet adresi veya Blocknet ID adı gerekir. seine''i çalıştırın, adresinizi yapıştırın, varsayılan havuzu kabul edin; havuz her bloktaki payınızı o adrese öder.'
   - q: 'seine Blocknet solo madenciliği yapabilir mi?'
-    a: 'Evet. seine''i ./seine --mode daemon ile başlatın; düğümün API çerezini kullanarak kendi eşitlenmiş Blocknet düğümünüzle doğrudan madencilik yapar. Bulduğunuz her blok tüm ödülünü düğümün cüzdanına öder. seine deposundaki solo madencilik rehberi özel düğüm düzenlerini ve cüzdan parolalarını anlatır.'
+    a: 'Evet, iki yolla. Adresinizin önüne solo: koyun, örneğin ./seine --address solo:YOUR_ADDRESS; bntpool.com bulduğunuz her bloğun tüm ödülünü, düğüm çalıştırmanıza gerek kalmadan size öder. Ya da kendi eşitlenmiş Blocknet düğümünüzle madencilik yapmak için seine''i --mode daemon ile başlatın.'
   - q: 'Daha sonra havuz ve solo madencilik arasında geçebilir miyim?'
-    a: 'Evet. seine ikisi için de aynı indirmeyi kullanır. bntpool.com''da madencilik için normal çalıştırın veya kendi düğümünüz için --mode daemon ekleyin; değiştirmek istediğinizde yeniden başlatın. Havuza gönderdiğiniz share''ler altı saatlik PPLNS penceresinde kalır ve süreleri dolana kadar kazanmaya devam eder.'
+    a: 'Evet. seine her seçenek için aynı indirmeyi kullanır. Adresinize solo: önekini ekleyin veya kaldırın ya da kendi düğümünüz için --mode daemon ekleyin; değiştirmek istediğinizde seine''i yeniden başlatın. Paylaşılan ödüller için gönderdiğiniz share''ler altı saatlik PPLNS penceresinde kalır ve süreleri dolana kadar kazanmaya devam eder.'
 ---
 
-Bu rehber, Blocknet madenciliğini bntpool.com'da mı yoksa kendi düğümünüzle solo mu yapacağınıza karar vermenize yardımcı olur. Hashrate'inizin tek başına kaç blok bulduğunu hesaplayacak, havuzun bunu nasıl düzenli ödeme akışına dönüştürdüğünü görecek ve seine ile iki seçeneği de kurmayı öğreneceksiniz.
+Bu rehber, Blocknet için paylaşılan havuz ödülleri ile solo madencilik arasında seçim yapmanıza yardımcı olur; solo madenciliği bntpool.com üzerinden ya da kendi düğümünüzle yapabilirsiniz. Hashrate'inizin tek başına kaç blok bulduğunu hesaplayacak, havuzun bunu nasıl düzenli ödeme akışına dönüştürdüğünü görecek ve seine ile her seçeneği kurmayı öğreneceksiniz.
 
 ## Blocknet madenciliğini havuzda mı solo mu yapmalısınız?
 
 <Answer>
-İkisi de aynı hesaba dayanır: ağın hashrate'indeki payınız, bloklarındaki payınızı belirler. bntpool.com'da havuzun bulduğu her bloktan pay kazanırsınız; havuz blok buldukça ödemeler düzenli gelir. Solo çalışırken bulduğunuz her bloğun tüm ödülünü tutarsınız; bu, kendi düğümünü çalıştıran büyük işletmelere uygundur.
+İkisi de aynı hesaba dayanır: ağın hashrate'indeki payınız, bloklarındaki payınızı belirler. bntpool.com'da havuzun bulduğu her bloktan pay kazanırsınız; havuz blok buldukça ödemeler düzenli gelir. Solo çalışırken bulduğunuz her bloğun tüm ödülünü tutarsınız; bu, büyük işletmelere uygundur. bntpool.com ikisini de sunar.
 </Answer>
 
-Çoğu madenci için bntpool.com kolay başlangıç noktasıdır. seine'in varsayılan havuzudur; adresiniz dışında ayar yapmanız, düğüm çalıştırmanız veya eşitlemeniz gerekmez. Solo madencilik de tam desteklenir: seine'in doğrudan kendi Blocknet düğümünüzle çalışan daemon modu vardır. Rehberin kalanı donanımınıza uygun seçeneği belirlemeyi gösterir.
+Çoğu madenci için bntpool.com kolay başlangıç noktasıdır. seine'in varsayılan havuzudur; adresiniz dışında ayar yapmanız, düğüm çalıştırmanız veya eşitlemeniz gerekmez. Solo madencilik de tam desteklenir. Adresinizin önüne `solo:` koyun; bntpool.com cihazlarınızın bulduğu her bloğun tüm ödülünü, düğüm çalıştırmanıza gerek kalmadan size öder. seine'in ayrıca doğrudan kendi Blocknet düğümünüzle çalışan daemon modu da vardır. Rehberin kalanı donanımınıza uygun seçeneği belirlemeyi gösterir.
 
 ## Solo çalışırken kaç blok bulursunuz?
 
@@ -67,7 +67,7 @@ bntpool.com üzerinde çalışan herkesin hashrate'ini birleştirir; böylece te
 Bunun sizin için birkaç pratik sonucu vardır:
 
 - **Her bloktan kazanç.** Share'leriniz altı saatlik pencerede olduğu sürece havuzun bulduğu her bloktan pay kazanırsınız. Gelişlerini [bloklar sayfasında](/blocks) izleyebilirsiniz.
-- **Otomatik ödemeler.** Blok 60 blok derine ulaştıktan sonra payınız onaylanmış bakiyeye geçer; havuz 0,1 BNT'ye ulaşınca adresinize gönderir. Gönderilen ödemeler [ödemeler sayfasında](/payouts) listelenir.
+- **Otomatik ödemeler.** Blok 60 blok derine ulaştıktan sonra payınız onaylanmış bakiyeye geçer; havuz bakiye minimum ödemeye, 4 Kasım 2026 itibarıyla 1 BNT'ye ulaşınca adresinize gönderir. Gönderilen ödemeler [ödemeler sayfasında](/payouts) listelenir.
 - **Yeniden başlatmalarda süreklilik.** Önceden gönderdiğiniz share'ler altı saat pencerede kalır; yeniden başlatma veya sürücü güncellemesi konumunuzu sıfırlamaz.
 - **Madenci dışında çalıştırılacak bir şey yok.** Havuz düğümü çalıştırır, blok şablonlarını oluşturur ve blokları gönderir. Birden fazla rig'den tek adrese veya Blocknet ID `@name` adına madencilik yapabilirsiniz.
 
@@ -75,13 +75,26 @@ Bunun sizin için birkaç pratik sonucu vardır:
 
 ## Neden Blocknet solo madenciliği yapmalı?
 
-Solo madencilik sürecin her parçasını sizin denetiminize verir. Kendi düğümünüz her blok şablonunu oluşturur ve her bloğu kendisi kontrol eder; bulduğunuz her blok tüm ödülünü doğrudan düğümünüzün cüzdanına öder.
+Solo madencilik bulduğunuz her bloğun tüm ödülünü size öder. Hashrate'iniz sık blok bulduğunda en uygunudur. Yukarıdaki örnekte ağın %10'una sahip işletme yaklaşık 50 dakikada bir blok bulur; solo ödemeler havuz kadar düzenli gelir.
 
-Hashrate'iniz sık blok bulduğunda en uygunudur. Yukarıdaki örnekte ağın %10'una sahip işletme yaklaşık 50 dakikada bir blok bulur; solo ödemeler havuz kadar düzenli gelir. Cüzdanınız veya başka hizmetler için zaten Blocknet düğümü çalıştırıyorsanız solo madencilik bunun üzerine madenciyi ekler.
+seine ile solo madenciliğin iki yolu vardır:
 
-seine bu mod için de tasarlanmıştır. Düğümün blok şablonlarıyla madencilik yapar; düğüm örneğin yeniden başlatmadan sonra bir şablonu unuttuysa seine çözülmüş bloğun tamamını yeniden gönderir, böylece bulunan blok yine zincire ulaşır.
+- **bntpool.com'da solo.** Adresinizin önüne `solo:` koyun. Havuz düğümü çalıştırır, bloklarınızı gönderir ve her birinin tüm ödülünü, havuz ücreti düşülerek, normal ödemeleriyle adresinize öder. Tek bir adreste solo ve paylaşılan cihazları birlikte kullanabilirsiniz.
+- **Kendi düğümünüzle solo.** seine'in daemon modu kendi düğümünüzün blok şablonlarıyla kazar ve her blok doğrudan düğümünüzün cüzdanına ödenir. Cüzdanınız veya başka hizmetler için zaten Blocknet düğümü çalıştırıyorsanız solo madencilik bunun üzerine madenciyi ekler.
+
+seine daemon modu için de tasarlanmıştır. Düğümün blok şablonlarıyla madencilik yapar; düğüm örneğin yeniden başlatmadan sonra bir şablonu unuttuysa seine çözülmüş bloğun tamamını yeniden gönderir, böylece bulunan blok yine zincire ulaşır.
 
 ## seine ile solo madencilik nasıl kurulur?
+
+bntpool.com'da solo madencilik için seine v0.3.1 veya daha yenisini kurun ve adresinizin önüne öneki koyarak başlatın:
+
+```sh
+./seine --address solo:YOUR_BLOCKNET_ADDRESS
+```
+
+Panel ardından hesabınızı **Solo** olarak etiketler. [bntpool.com'da Blocknet solo madenciliği](/blog/tr/solo-mine-blocknet-on-bntpool/) Blocknet ID adlarını, cihaz adlarını, ödemeleri ve solo bloklarınızın istatistik sayfasında nerede göründüğünü anlatır.
+
+Kendi düğümünüzle solo madencilik için:
 
 1. **Blocknet düğümü kurup eşitleyin.** `blocknet` sarmalayıcısıyla çalıştırın:
 
@@ -111,12 +124,13 @@ seine bu mod için de tasarlanmıştır. Düğümün blok şablonlarıyla madenc
 Formülü kendi hashrate'iniz ve [paneldeki](/) güncel ağ hashrate'iyle uygulayın, sonra bloklar arası ortalama süreye bakın.
 
 - **bntpool.com'da başlayın:** Masaüstü, dizüstü veya birkaç sunucuda madencilik yapıyorsanız ya da düğüm çalıştırmadan düzenli ödeme istiyorsanız. seine'i çalıştırın, adresinizi veya `@name` adınızı yapıştırın ve varsayılan havuzu kabul edin.
-- **Solo madencilik yapın:** İşletmeniz ağın büyük payını elinde tutup tek başına sık blok buluyorsa ve kendi eşitlenmiş düğümünüzü zaten çalıştırıyor veya çalıştırmak istiyorsanız.
+- **bntpool.com'da solo kazın:** İşletmeniz ağın büyük payını elinde tutup tek başına sık blok buluyorsa. Adresinize `solo:` ekleyin; havuzun düğümünü, istatistiklerini ve ödemelerini kullanmaya devam edin.
+- **Kendi düğümünüzle solo kazın:** Bu hashrate'e sahipseniz ve kendi eşitlenmiş düğümünüzü zaten çalıştırıyor veya çalıştırmak istiyorsanız.
 
-seine bu kararı değiştirmeyi kolaylaştırır. Havuz madenciliği ve daemon modu aynı indirmeyi kullanır; donanımınız büyüdükçe tek bayrak ve yeniden başlatmayla geçebilirsiniz. Havuzda madencilik yaparken yerel düğüm çalıştırırsanız seine düğümün cüzdan bakiyesini de havuz bakiyenizin yanında gösterir.
+seine bu kararı değiştirmeyi kolaylaştırır. Her seçenek aynı indirmeyi kullanır; donanımınız büyüdükçe tek bir önek veya bayrak ve yeniden başlatmayla geçebilirsiniz. Havuzda madencilik yaparken yerel düğüm çalıştırırsanız seine düğümün cüzdan bakiyesini de havuz bakiyenizin yanında gösterir.
 
 <Note>
-[blocknetcrypto.com](https://blocknetcrypto.com/#faraday) sitesine göre Blocknet, 16 Şubat 2027 civarında Faraday adlı bir ağ yükseltmesi planlıyor. İş kanıtını değiştirmesi planlanıyor. seine'i güncel tutun: başlangıçta ve her 12 saatte bir yeni sürümleri kontrol eder.
+[blocknetcrypto.com](https://blocknetcrypto.com/#faraday) sitesine göre Blocknet, 16 Şubat 2027 civarında Faraday adlı bir ağ yükseltmesi planlıyor. İş kanıtını değiştirmesi planlanıyor. seine v0.3.1 buna hazırdır: havuz madenciliği yeni iş kanıtına kendiliğinden geçer ve otomatik güncellemeler açıkken seine yeni sürümleri sizin için kurar.
 </Note>
 
-<CTA target="pool" title="bntpool.com'da madenciliğe başlayın" text="seine'i çalıştırın, adresinizi yapıştırın ve havuzun bulduğu her bloktan pay kazanın; 0,1 BNT'den itibaren otomatik ödensin." />
+<CTA target="pool" title="bntpool.com'da madenciliğe başlayın" text="seine'i çalıştırın, adresinizi yapıştırın ve havuzun bulduğu her bloktan pay kazanın ya da solo: ekleyip bulduğunuz her bloğu kendinize saklayın." />

@@ -1,19 +1,19 @@
 ---
 title: Les paiements PPLNS sur bntpool.com
-description: bntpool.com rémunère les mineurs Blocknet par PPLNS sur six heures. Découvrez la répartition, les 60 confirmations et le minimum de paiement de 0,1 BNT.
+description: bntpool.com rémunère les mineurs Blocknet par PPLNS sur six heures. Découvrez la répartition, les 60 confirmations et le minimum de paiement de 1 BNT.
 tags: [Paiements, PPLNS, bntpool, Guide de minage]
 faq:
   - q: 'Quelle est la durée de la fenêtre PPLNS sur bntpool.com ?'
     a: 'Six heures. Quand le pool trouve un bloc, il répartit sa récompense entre tous ceux qui ont envoyé des shares pendant les six heures précédentes, proportionnellement à leur difficulté. La valeur actuelle figure sur la page Get Started du pool.'
   - q: 'Quel est le paiement minimum sur bntpool.com ?'
-    a: 'Le minimum est de 0,1 BNT. Dès que votre solde confirmé atteint ce montant, le pool l’envoie automatiquement à votre adresse Blocknet, sans demande ni réclamation. Un solde inférieur reste sur votre compte et augmente avec chaque bloc confirmé auquel vous avez contribué, jusqu’au seuil.'
+    a: 'Le minimum est de 1 BNT. Dès que votre solde confirmé atteint ce montant, le pool l’envoie automatiquement à votre adresse Blocknet, sans demande ni réclamation. Un solde inférieur reste sur votre compte et augmente avec chaque bloc confirmé auquel vous avez contribué, jusqu’au seuil.'
   - q: 'Pourquoi Estimated Rewards diffère-t-il de Confirmed Rewards ?'
     a: 'Estimated Rewards représente votre part des blocs trouvés qui attendent encore leurs 60 confirmations : le chiffre peut donc évoluer. Confirmed Rewards provient de blocs enfouis à 60 blocs et attend le paiement. À chaque maturation, le montant passe de la première carte à la seconde.'
   - q: 'Mes récompenses cessent-elles dès que j’arrête de miner ?'
-    a: 'Non. Chaque share reste dans la fenêtre PPLNS pendant six heures après son envoi. Les blocs trouvés pendant ce délai vous créditent encore. Les récompenses déjà confirmées restent dans votre solde et sont payées dès qu’il atteint le minimum de 0,1 BNT.'
+    a: 'Non. Chaque share reste dans la fenêtre PPLNS pendant six heures après son envoi. Les blocs trouvés pendant ce délai vous créditent encore. Les récompenses déjà confirmées restent dans votre solde et sont payées dès qu’il atteint le minimum de 1 BNT.'
   - q: 'Que signifie un effort supérieur à 100 % sur la page de chance ?'
     a: 'L’effort compare le travail du pool pendant une période à la difficulté du bloc, soit le travail attendu. Au-dessus de 100 %, la période a pris plus de temps que la moyenne ; en dessous, elle a été plus rapide. Les deux sont normaux et, sur de nombreuses périodes, l’effort moyen se rapproche de 100 %.'
-sourceHash: 'f216680e1944'
+sourceHash: '2f69ab18ce0b'
 translation: draft
 ---
 
@@ -34,7 +34,7 @@ Sur bntpool.com, les « N derniers » correspondent à une durée : six heure
 | Système de paiement | PPLNS |
 | Fenêtre des shares | 6 heures |
 | Confirmations avant paiement | 60 blocs |
-| Paiement minimum | 0,1 BNT |
+| Paiement minimum | 1 BNT |
 
 Les shares sont comptés selon leur difficulté. Le pool attribue une difficulté à chaque connexion et l’ajuste pour que chaque mineur envoie un flux régulier. Une machine rapide reçoit des shares plus difficiles : chacun pèse donc davantage. Votre part dépend du travail total fourni, une mesure équitable pour un portable comme pour un serveur.
 
@@ -46,7 +46,7 @@ Les shares sont comptés selon leur difficulté. Le pool attribue une difficult�
 2. **La fenêtre est mesurée.** Le pool prend les six heures se terminant au bloc et additionne la difficulté des shares acceptés pour chaque adresse.
 3. **La récompense est divisée.** Chaque adresse reçoit la même fraction de récompense que sa fraction du travail total de la fenêtre.
 4. **Le bloc mûrit.** Votre part reste une estimation jusqu’à ce que le bloc soit enfoui à 60 blocs, puis rejoint le solde confirmé.
-5. **Le solde est payé.** Dès que le solde confirmé atteint 0,1 BNT, le pool l’envoie à votre adresse.
+5. **Le solde est payé.** Dès que le solde confirmé atteint 1 BNT, le pool l’envoie à votre adresse.
 
 ## Un exemple de calcul
 
@@ -64,7 +64,7 @@ Un deuxième mineur au même hashrate vous rejoint 30 minutes avant le bloc. Tre
 | Même hashrate, arrivé 30 minutes avant | 1 667 | environ 0,17 % | environ 0,67 BNT |
 | Petit mineur, pendant les six heures | 100 | 0,01 % | 0,04 BNT |
 
-Le petit mineur de la dernière ligne gagne 0,04 BNT par bloc. Son solde confirmé dépasse donc le minimum de 0,1 BNT après trois blocs de ce type, puis il est payé.
+Le petit mineur de la dernière ligne gagne 0,04 BNT par bloc. Son solde confirmé dépasse donc le minimum de 1 BNT après 25 blocs de ce type, puis il est payé.
 
 ## Pourquoi PPLNS favorise-t-il le minage régulier ?
 
@@ -83,7 +83,7 @@ Pendant la maturation, le pool vérifie que le bloc reste dans la chaîne princi
 ## Quand arrivent les paiements bntpool.com ?
 
 <Answer>
-Après 60 confirmations, environ cinq heures avec les blocs de cinq minutes de Blocknet, votre part rejoint Confirmed Rewards sur la page de statistiques. Dès que le solde confirmé atteint 0,1 BNT, bntpool.com l’envoie automatiquement à votre adresse. Rien à demander ni à réclamer.
+Après 60 confirmations, environ cinq heures avec les blocs de cinq minutes de Blocknet, votre part rejoint Confirmed Rewards sur la page de statistiques. Dès que le solde confirmé atteint 1 BNT, bntpool.com l’envoie automatiquement à votre adresse. Rien à demander ni à réclamer.
 </Answer>
 
 Pour un nouveau mineur, la première estimation apparaît quand le pool trouve un bloc avec vos shares dans la fenêtre. Le premier paiement suit la maturation du bloc et l’atteinte du minimum. Les envois sont répertoriés sur la [page des paiements](/payouts) et dans votre historique personnel.
@@ -106,4 +106,4 @@ La [page de chance](/luck) répertorie chaque période avec hauteur, effort, dur
 
 La chance influence la fréquence des blocs. Votre fraction de chacun dépend uniquement de votre part du travail dans la fenêtre, et un minage régulier la maintient complète, que la période soit courte ou longue.
 
-<CTA target="pool" title="Rejoignez le pool" text="Minez régulièrement sur bntpool.com : votre part de chaque bloc est payée automatiquement dès 0,1 BNT." />
+<CTA target="pool" title="Rejoignez le pool" text="Minez régulièrement sur bntpool.com : votre part de chaque bloc est payée automatiquement dès 1 BNT." />

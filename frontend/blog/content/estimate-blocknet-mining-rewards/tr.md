@@ -2,7 +2,7 @@
 title: "Blocknet madencilik hesaplayıcısı"
 description: "Hash gücünüz, canlı ağ verileri ve ödül takvimiyle günlük ve haftalık BNT miktarını tahmin edin. Ücretler ayrı gösterilir."
 tags: [Madencilik ödülleri, Madencilik rehberi, Hashrate, bntpool]
-sourceHash: 'ce91c64a8567'
+sourceHash: '9dace0600c53'
 translation: draft
 faq:
   - q: 'Blocknet madencilik ödülleri nasıl hesaplanır?'
@@ -109,7 +109,7 @@ Fark zamanlamadır. Tek başına madencilikte o Zen 5 sunucu yaklaşık 4,4 gün
 İlk gününüzü iki havuz ayrıntısı şekillendirir:
 
 - **Pencere altı saatte dolar.** Yeni madencinin her bloktaki payı, share'leri altı saatlik PPLNS penceresini doldurdukça büyür; madenciliği sürdürdüğü sürece sonra tam oranda kalır.
-- **Ödüller ödemeden önce olgunlaşır.** Her blok ödülü 60 onaydan, yaklaşık beş saatten sonra Confirmed Rewards'a geçer; havuz bakiyenizi 0,1 BNT'ye ulaşınca otomatik gönderir.
+- **Ödüller ödemeden önce olgunlaşır.** Her blok ödülü 60 onaydan, yaklaşık beş saatten sonra Confirmed Rewards'a geçer; havuz bakiyenizi 1 BNT'ye ulaşınca otomatik gönderir.
 
 ## Tahmini gerçek sonuçlarla nasıl karşılaştırırsınız?
 

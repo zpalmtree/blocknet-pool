@@ -9,7 +9,7 @@ faq:
     a: 'Etkin madencilik bağlantısı ödeme şartı değildir. Onaylanmış bakiyeler, güncel asgari eşik dahil havuz ödeme kurallarına göre işlenir. Bağlantıyı kesmek kendi başına bakiyeyi silmez veya hemen ödeme talep etmez.'
   - q: 'Yeniden bağlanmak eski payların yaşını sıfırlar mı?'
     a: 'Hayır. Mevcut paylar zaman damgalarını korur. Dönüşünüzden sonra kabul edilen yeni iş ilgili pencerelere girer; yeniden bağlanmak eski payları yenilemez veya çevrimdışı saatler için iş eklemez. Yeniden başlatınca yeni kabul edilmiş payları doğrulayın.'
-sourceHash: '0a11c393062e'
+sourceHash: 'a5bf859e0abb'
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Evet. Kısa oturumdaki uygun iş, PPLNS penceresi bu payları içeren bloklara k
 
 ## Hangi süreyi izlediğinizi bilin
 
-bntpool şu anda [başlangıç sayfasında](/start) altı saatlik PPLNS penceresi, ödeme uygunluğundan önce 60 blok ve 0,1 BNT asgari ödeme yayımlar. Bunlar üç ayrı aşamadır: blok için sayılan iş, o bloğun olgunlaşması ve bakiye eşiği. Altı saatlik pay penceresi altı saat sonra ödeme sözü veren bir sayaç değildir.
+bntpool şu anda [başlangıç sayfasında](/start) altı saatlik PPLNS penceresi, ödeme uygunluğundan önce 60 blok ve 1 BNT asgari ödeme yayımlar. Bunlar üç ayrı aşamadır: blok için sayılan iş, o bloğun olgunlaşması ve bakiye eşiği. Altı saatlik pay penceresi altı saat sonra ödeme sözü veren bir sayaç değildir.
 
 Dağıtım formülü için [PPLNS rehberine](/blog/tr/how-pplns-payouts-work/) bakın. Uygun paylarınız zorlukla ağırlıklandırılarak aynı penceredeki tüm uygun işle karşılaştırılır. Yalnızca çevrimiçi dakika sayısı sonraki ödülün yüzdesini belirlemez. Cihazlar, havuz katılımı ve pay sonuçları, eşit uzunluktaki oturumlarda bile ağırlıkları değiştirebilir.
 
@@ -45,7 +45,7 @@ seine’den panelde `q` veya terminalde `Ctrl+C` ile normal çıkın. Çalışan
 
 Bir pay daha sonraki bloğun penceresinden çıktığında, önceki bloğa zaten ayrılmış ödül silinmez. Tahmini ödüller blok durumunu ve olgunlaşmasını izlemeye devam eder; onaylanmış ödenmemiş ödüller ödeme işlemi ele alana dek hesapta kalır. [Onaylar rehberi](/blog/tr/block-confirmations-mining-rewards/), geçici blok alacağı ile olgun bakiyeyi ayırır.
 
-0,1 BNT altındaki onaylanmış bakiye, ek alacaklar asgari tutara ulaştırana kadar mevcut otomatik ödeme eşiğinin altında kalır. Yeniden bağlanmak tek başına bakiyeyi artırmaz veya ödemeyi zorlamaz. Öte yandan uygun bakiye işlenirken madencinin çevrimiçi kalması gerekmez. Ödenmemiş bakiyeyi gönderilmiş işlemden ayırmak için [ödeme geçmişini](/payouts) kullanın.
+1 BNT altındaki onaylanmış bakiye, ek alacaklar asgari tutara ulaştırana kadar mevcut otomatik ödeme eşiğinin altında kalır. Yeniden bağlanmak tek başına bakiyeyi artırmaz veya ödemeyi zorlamaz. Öte yandan uygun bakiye işlenirken madencinin çevrimiçi kalması gerekmez. Ödenmemiş bakiyeyi gönderilmiş işlemden ayırmak için [ödeme geçmişini](/payouts) kullanın.
 
 ## Aynı hesaba dönüp yeni işi doğrulayın
 

@@ -11,7 +11,7 @@ faq:
     a: 'Tidak. Tidak ada pendaftaran, kata sandi atau email. Alamat Blocknet, atau nama Blocknet ID yang mengarah ke sana, menjadi login dan tujuan pembayaran. Jalankan seine dengannya, lalu cari di halaman My Stats untuk melihat hashrate, share, rig, saldo dan pembayaran.'
   - q: 'Bisakah beberapa komputer menambang ke satu alamat?'
     a: 'Ya. Jalankan seine pada setiap komputer dengan alamat atau nama yang sama dan beri masing-masing nama rig sendiri. Pool menghitung share, saldo dan pembayaran per alamat, sehingga semua rig menambah satu saldo dan satu pembayaran, dan My Stats menampilkan setiap rig pada baris tersendiri.'
-sourceHash: 'df269126bb76'
+sourceHash: 9713e976f981
 translation: draft
 ---
 
@@ -23,7 +23,7 @@ Panduan ini membahas cara bergabung ke pool bntpool.com dengan seine: alamat poo
 Alamat Stratum bntpool.com adalah `stratum+tcp://bntpool.com:3333`. seine menawarkannya sebagai pool default saat pertama dijalankan, jadi tekan Enter pada pertanyaan pool untuk terhubung. Login menggunakan alamat Blocknet atau Blocknet ID `@name`. Tidak perlu membuat akun, dan imbalan masuk ke alamat itu.
 </Answer>
 
-Berikut pengaturan pool sebagaimana dilaporkan endpoint publik `/api/info` pada 25 Oktober 2026:
+Berikut pengaturan pool sebagaimana dilaporkan endpoint publik `/api/info` pada 4 November 2026:
 
 | Pengaturan | Nilai |
 |---|---|
@@ -31,9 +31,11 @@ Berikut pengaturan pool sebagaimana dilaporkan endpoint publik `/api/info` pada 
 | Login | Alamat Blocknet, `@name` atau `$name` |
 | Skema pembayaran | PPLNS dengan jendela 6 jam |
 | Konfirmasi sebelum pembayaran | 60 blok |
-| Pembayaran minimum | 0,1 BNT |
+| Pembayaran minimum | 1 BNT |
 
 Nilai yang sama selalu tersedia di halaman [Get Started](/start) milik pool.
+
+Untuk menyimpan seluruh imbalan setiap blok yang ditemukan rig Anda, tambahkan `solo:` di depan alamat. [Penambangan solo di bntpool.com](/blog/id/solo-mine-blocknet-on-bntpool/) menunjukkan caranya.
 
 ## Mengapa bntpool.com menjadi pool default seine?
 
@@ -105,7 +107,7 @@ Perhatikan tiga hal:
 
 Pool menetapkan kesulitan share secara terpisah per koneksi dan menyesuaikannya selama menambang, sehingga CPU kecil pun mengirim share secara teratur dan share diterima pertama muncul dalam beberapa menit setelah terhubung. Untuk hashrate yang dapat diharapkan dari perangkat Anda, lihat [panduan perangkat keras penambangan Blocknet](https://seineminer.com/id/blog/blocknet-mining-hardware-hashrate/).
 
-Imbalan menyusul. Estimated Rewards muncul setelah pool menemukan blok saat share Anda berada dalam jendela enam jam. Setelah blok mendapat 60 konfirmasi, bagian Anda berpindah ke Confirmed Rewards, dan pool mengirimnya otomatis setelah mencapai setidaknya 0,1 BNT. [Cara kerja pembayaran PPLNS](/blog/id/how-pplns-payouts-work/) menjelaskan pembagian imbalan tiap blok. Riwayat seluruh pool ada di halaman [Blocks](/blocks) dan [Payouts](/payouts).
+Imbalan menyusul. Estimated Rewards muncul setelah pool menemukan blok saat share Anda berada dalam jendela enam jam. Setelah blok mendapat 60 konfirmasi, bagian Anda berpindah ke Confirmed Rewards, dan pool mengirimnya otomatis setelah mencapai setidaknya 1 BNT. [Cara kerja pembayaran PPLNS](/blog/id/how-pplns-payouts-work/) menjelaskan pembagian imbalan tiap blok. Riwayat seluruh pool ada di halaman [Blocks](/blocks) dan [Payouts](/payouts).
 
 ## Apa yang dibahas halaman Get Started?
 

@@ -13,7 +13,7 @@ faq:
     a: 'La stima è una media. In un singolo giorno la pool può trovare più o meno blocchi del previsto e l’hashrate della rete cambia con l’arrivo di miner. Su una settimana o più di mining costante le oscillazioni si compensano. Puoi seguire le ricompense accreditate su My Stats.'
   - q: 'Minare in pool cambia i BNT che posso aspettarmi?'
     a: 'La quota attesa delle ricompense di rete resta uguale, perché dipende solo dalla tua quota di hashrate. La pool cambia il ritmo: anziché aspettare giorni per un blocco intero, ricevi una parte di ogni blocco trovato da bntpool.com, in importi piccoli e regolari.'
-sourceHash: 'ce91c64a8567'
+sourceHash: '9dace0600c53'
 translation: draft
 ---
 
@@ -109,7 +109,7 @@ La differenza è il ritmo. In solo il server Zen 5 attenderebbe un blocco circa 
 Due dettagli influenzano il primo giorno:
 
 - **La finestra si riempie in sei ore.** La quota del nuovo miner cresce mentre le share riempiono la finestra PPLNS, poi resta al livello pieno finché continua a minare.
-- **Le ricompense maturano prima del pagamento.** Passano in Confirmed Rewards dopo 60 conferme, circa cinque ore, e la pool invia il saldo automaticamente da 0,1 BNT.
+- **Le ricompense maturano prima del pagamento.** Passano in Confirmed Rewards dopo 60 conferme, circa cinque ore, e la pool invia il saldo automaticamente da 1 BNT.
 
 ## Come confrontare la stima con i risultati reali?
 

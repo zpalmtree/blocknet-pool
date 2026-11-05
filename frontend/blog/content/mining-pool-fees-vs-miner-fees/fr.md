@@ -4,16 +4,16 @@ description: 'Comprenez les frais du pool et du mineur sur Blocknet : où ils s'
 tags: ['Guide de minage', 'Frais de pool', 'Récompenses']
 faq:
   - q: 'S''agit-il des mêmes frais ?'
-    a: 'Non. Les frais du pool relèvent de la distribution, ceux du développeur du logiciel. seine v0.2.36 consacre 2% du temps soumis aux frais au développement après la période initiale. Le taux distinct publié par bntpool.com était de 0% le 26 octobre 2026.'
+    a: 'Non. Les frais du pool relèvent de la distribution, ceux du développeur du logiciel. seine v0.3.1 consacre 2% du temps soumis aux frais au développement après la période initiale. Le taux distinct publié par bntpool.com était de 0% le 26 octobre 2026.'
   - q: 'Comment les combiner ?'
     a: 'Multipliez l''estimation brute par un moins la fraction du mineur, puis par un moins celle du pool. Utilisez votre version réelle et le réglage courant. Cela estime les récompenses conservées, sans garantir un paiement ni calculer un bénéfice monétaire.'
   - q: 'Faut-il déduire les frais du mineur du hashrate du pool ?'
     a: 'Identifiez d''abord sa signification. S''il estime déjà le travail crédité à votre adresse après le temps développeur, une nouvelle déduction ferait doublon. Le calculateur permet zéro pour cet ajustement déjà inclus. Ne déduisez à nouveau aucun frais d''un solde confirmé ou paiement enregistré.'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-Repérez les deux niveaux de frais d'une estimation Blocknet et leurs étapes. Ce guide utilise seine v0.2.36 et les réglages publics de bntpool vérifiés le 26 octobre 2026. Il aide à saisir le [calculateur](/blog/fr/estimate-blocknet-mining-rewards/#mining-calculator) et à lire [My Stats](/stats).
+Repérez les deux niveaux de frais d'une estimation Blocknet et leurs étapes. Ce guide utilise seine v0.3.1 et les réglages publics de bntpool vérifiés le 26 octobre 2026. Il aide à saisir le [calculateur](/blog/fr/estimate-blocknet-mining-rewards/#mining-calculator) et à lire [My Stats](/stats).
 
 ## Quelle différence entre frais de pool et de mineur ?
 
@@ -31,7 +31,7 @@ Le 26 octobre 2026, `https://bntpool.com/api/info` publie `pool_fee_pct` à 0,0,
 
 ## Comment fonctionnent les frais de seine ?
 
-v0.2.36 documente 2% sur chaque pool et en solo. Il s'agit de temps de minage pour l'adresse du développeur, pas d'un retrait ultérieur de votre portefeuille. Les 10 premières minutes sont sans frais ; le suivi compte le temps suivant. Le [guide de configuration](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) décrit cette politique.
+v0.3.1 documente 2% sur chaque pool et en solo. Il s'agit de temps de minage pour l'adresse du développeur, pas d'un retrait ultérieur de votre portefeuille. Les 10 premières minutes sont sans frais ; le suivi compte le temps suivant. Le [guide de configuration](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) décrit cette politique.
 
 La planification fonctionne par tours : une courte fenêtre ne donne pas nécessairement exactement 2%. C'est l'objectif à long terme après la période initiale, pas une promesse par minute ou bloc. Notez la version ; une ancienne documentation ou un autre logiciel peut différer. Les frais du pool ne remplacent pas cette information.
 

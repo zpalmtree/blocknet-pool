@@ -13,7 +13,7 @@ faq:
     a: 'L’estimation est une moyenne. Un jour donné, le pool peut trouver plus ou moins de blocs que prévu, et le hashrate du réseau change avec l’arrivée de mineurs. Sur une semaine ou plus de minage régulier, ces variations s’atténuent. Vous pouvez suivre les récompenses créditées sur My Stats.'
   - q: 'Miner dans un pool change-t-il la quantité de BNT attendue ?'
     a: 'Votre part attendue des récompenses du réseau reste identique, car elle dépend uniquement de votre part du hashrate du réseau. Le pool change leur rythme. Au lieu d’attendre plusieurs jours un bloc entier, vous recevez une fraction de chaque bloc trouvé par bntpool.com, en petits montants réguliers.'
-sourceHash: 'ce91c64a8567'
+sourceHash: '9dace0600c53'
 translation: draft
 ---
 
@@ -109,7 +109,7 @@ La différence est le rythme. En solo, ce serveur Zen 5 attendrait un bloc entie
 Deux détails façonnent votre première journée :
 
 - **La fenêtre se remplit sur six heures.** La part d’un nouveau mineur augmente à mesure que ses shares remplissent la fenêtre PPLNS, puis reste complète tant qu’il continue.
-- **Les récompenses mûrissent avant paiement.** Elles passent dans Confirmed Rewards après 60 confirmations, environ cinq heures, puis le pool envoie automatiquement le solde dès 0,1 BNT.
+- **Les récompenses mûrissent avant paiement.** Elles passent dans Confirmed Rewards après 60 confirmations, environ cinq heures, puis le pool envoie automatiquement le solde dès 1 BNT.
 
 ## Comment comparer l’estimation aux résultats réels ?
 

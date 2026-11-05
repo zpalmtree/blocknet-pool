@@ -2,7 +2,7 @@
 title: bntpool.com에서 채굴기 상태 확인하기
 description: bntpool.com에서 주소나 @name으로 해시레이트, 셰어, 잔액, 지급 내역을 확인하세요. 블록과 운을 살펴보거나 공개 API를 활용할 수 있습니다.
 tags: [bntpool, 채굴 통계, 풀 API, Blocknet]
-sourceHash: 'f74ae9281fd2'
+sourceHash: '75495e49f3e9'
 translation: draft
 faq:
   - q: 'bntpool.com의 해시레이트가 seine에 표시되는 값과 다른 이유는 무엇인가요?'
@@ -54,7 +54,7 @@ bntpool.com/stats의 My Stats를 열고 Blocknet 주소나 @name을 붙여 넣�
 ./seine --pool-worker rig-01
 ```
 
-**Workers** 표에는 각 컴퓨터의 마이너 버전도 표시됩니다. 오래되거나 알 수 없는 버전이 있으면 통계 위에 알림이 나타나며 [seine 릴리스 페이지](https://github.com/zpalmtree/seine/releases)로 연결됩니다.
+주소 앞에 `solo:`를 붙여 솔로로 채굴하는 장비는 표의 Type 열에 **Solo**로 표시됩니다. **Workers** 표에는 각 컴퓨터의 마이너 버전도 표시됩니다. 오래되거나 알 수 없는 버전이 있으면 통계 위에 알림이 나타나며 [seine 릴리스 페이지](https://github.com/zpalmtree/seine/releases)로 연결됩니다.
 
 ## 풀의 해시레이트가 seine와 다른 이유는 무엇인가요?
 
@@ -69,7 +69,7 @@ Recent Shares 표를 보면 해시레이트 수치가 안정되기 전에도 셰
 
 ## 첫 지급은 언제 받을 수 있나요?
 
-첫 셰어부터 첫 지급까지 정해진 시간은 없습니다. 내 셰어가 지급 창 안에 있는 동안 풀이 블록을 찾아야 합니다. 이후 해당 블록에 60번의 확인이 필요합니다. **블록을 찾은 뒤** 평균 약 5시간이지만 실제 시간은 달라집니다. 확정 잔액이 현재 최소 지급액인 0.1 BNT에 도달하면 자동 지급 처리 대상이 됩니다. 현재 설정은 [Get Started](/start)에서 확인하세요.
+첫 셰어부터 첫 지급까지 정해진 시간은 없습니다. 내 셰어가 지급 창 안에 있는 동안 풀이 블록을 찾아야 합니다. 이후 해당 블록에 60번의 확인이 필요합니다. **블록을 찾은 뒤** 평균 약 5시간이지만 실제 시간은 달라집니다. 확정 잔액이 현재 최소 지급액인 1 BNT에 도달하면 자동 지급 처리 대상이 됩니다. 현재 설정은 [Get Started](/start)에서 확인하세요.
 
 **Recent Payouts**에서 지급 상태와 트랜잭션 링크를 확인하세요. 대기 중인 지급은 아직 네트워크에 전송되지 않았습니다. 전송된 지급이 지갑에 없다면 [지급 문제 해결 가이드](/blog/ko/pool-payout-missing-from-wallet/)를 참고하세요.
 
@@ -116,7 +116,7 @@ Recent Shares 표를 보면 해시레이트 수치가 안정되기 전에도 셰
 
 ### 블록
 
-[Blocks](/blocks)는 bntpool.com이 찾은 모든 블록을 최신순으로 표시합니다. 높이와 탐색기 링크, 보상, 투입 작업 비율, 라운드 시간, 상태, 발견 시각을 볼 수 있습니다. Confirmed, Pending, Orphaned로 필터링해 각 블록의 상태를 확인하세요.
+[Blocks](/blocks)는 bntpool.com이 찾은 모든 블록을 최신순으로 표시합니다. 높이와 탐색기 링크, 보상, 투입 작업 비율, 라운드 시간, 상태, 발견 시각을 볼 수 있습니다. 상태 앞의 Type 열은 블록이 공유 풀 채굴에서 나왔는지, 전체 보상을 받는 솔로 채굴자에게서 나왔는지 보여 줍니다. Confirmed, Pending, Orphaned로 필터링해 각 블록의 상태를 확인하세요.
 
 ### 지급
 

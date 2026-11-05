@@ -9,7 +9,7 @@ faq:
     a: 'Aktywne połączenie nie jest warunkiem wypłaty. Potwierdzone salda są rozpatrywane według zasad puli, w tym aktualnego minimum. Rozłączenie samo nie zeruje salda i nie żąda natychmiastowego przelewu.'
   - q: 'Czy ponowne połączenie odnawia wiek starych udziałów?'
     a: 'Nie. Zachowują swoje znaczniki czasu. Nowa praca trafia do właściwych okien po powrocie; połączenie nie odnawia starych udziałów ani nie dodaje pracy za godziny offline. Po uruchomieniu sprawdź nowe zaakceptowane udziały.'
-sourceHash: '0a11c393062e'
+sourceHash: 'a5bf859e0abb'
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Tak. Uprawniona praca krótkiej sesji może uczestniczyć w blokach, których ok
 
 ## Rozróżnij poszczególne etapy czasu
 
-bntpool obecnie publikuje sześciogodzinne okno PPLNS, 60 bloków przed możliwością wypłaty oraz minimum 0,1 BNT na [stronie startowej](/start). To trzy etapy: uwzględniana praca, dojrzewanie bloku i próg salda. Sześć godzin nie jest zegarem obiecującym wypłatę.
+bntpool obecnie publikuje sześciogodzinne okno PPLNS, 60 bloków przed możliwością wypłaty oraz minimum 1 BNT na [stronie startowej](/start). To trzy etapy: uwzględniana praca, dojrzewanie bloku i próg salda. Sześć godzin nie jest zegarem obiecującym wypłatę.
 
 [Poradnik PPLNS](/blog/pl/how-pplns-payouts-work/) wyjaśnia wzór. Uprawnione udziały są ważone trudnością wobec całej uprawnionej pracy w oknie. Minuty online nie ustalają procentu następnej nagrody. Sprzęt, uczestnictwo w puli i wyniki udziałów zmieniają wagi nawet przy równej długości sesji.
 
@@ -45,7 +45,7 @@ Zakończ seine normalnie przez `q` w panelu lub `Ctrl+C` w terminalu. Zachowaj d
 
 Wyjście udziału z okna późniejszego bloku nie usuwa nagrody już przypisanej do wcześniejszego. Szacunki nadal zależą od stanu i dojrzewania bloku; potwierdzone niewypłacone kwoty pozostają na koncie do przetworzenia. [Poradnik potwierdzeń](/blog/pl/block-confirmations-mining-rewards/) odróżnia tymczasowy kredyt od dojrzałego salda.
 
-Potwierdzone saldo poniżej 0,1 BNT pozostaje poniżej obecnego progu automatycznej wypłaty, aż kolejne kredyty osiągną minimum. Samo połączenie nie zwiększa salda ani nie wymusza wypłaty. Uprawnione saldo nie wymaga też minera online podczas przetwarzania. [Historia wypłat](/payouts) rozróżnia niewypłacone saldo i wysłaną transakcję.
+Potwierdzone saldo poniżej 1 BNT pozostaje poniżej obecnego progu automatycznej wypłaty, aż kolejne kredyty osiągną minimum. Samo połączenie nie zwiększa salda ani nie wymusza wypłaty. Uprawnione saldo nie wymaga też minera online podczas przetwarzania. [Historia wypłat](/payouts) rozróżnia niewypłacone saldo i wysłaną transakcję.
 
 ## Wróć na to samo konto i sprawdź nową pracę
 

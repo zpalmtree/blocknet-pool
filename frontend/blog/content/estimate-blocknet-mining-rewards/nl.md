@@ -2,7 +2,7 @@
 title: "Blocknet-miningcalculator"
 description: "Schat BNT per dag en week met je hashrate, actuele netwerkgegevens en het beloningsschema. Kosten worden apart getoond."
 tags: ['Miningbeloningen', 'Mininggids', 'Hashrate', 'bntpool']
-sourceHash: 'ce91c64a8567'
+sourceHash: '9dace0600c53'
 translation: draft
 faq:
   - q: 'Hoe bereken je Blocknet-miningbeloningen?'
@@ -109,7 +109,7 @@ Het verschil is timing. Solo zou deze Zen 5-server ongeveer elke 4,4 dagen één
 Twee pooldetails bepalen je eerste dag:
 
 - **Het venster vult zich in zes uur.** Het aandeel van een nieuwe miner groeit terwijl zijn shares het PPLNS-venster vullen. Daarna blijft het volledig zolang hij doorgaat.
-- **Beloningen rijpen vóór betaling.** Na 60 bevestigingen, circa vijf uur, gaat de beloning naar Confirmed Rewards. Vanaf 0,1 BNT stuurt de pool je saldo automatisch.
+- **Beloningen rijpen vóór betaling.** Na 60 bevestigingen, circa vijf uur, gaat de beloning naar Confirmed Rewards. Vanaf 1 BNT stuurt de pool je saldo automatisch.
 
 ## Hoe vergelijk je de schatting met echte resultaten?
 

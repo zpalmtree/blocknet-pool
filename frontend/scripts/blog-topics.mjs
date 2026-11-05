@@ -27,6 +27,8 @@ const groups = {
     "mine-multiple-computers-one-wallet",
     "stratum-mining-protocol",
     "mine-blocknet-on-bntpool",
+    "solo-mine-blocknet-on-bntpool",
+    "mine-blocknet-to-exchange",
     "what-is-a-mining-pool"
   ],
   "troubleshooting": [

@@ -9,7 +9,7 @@ faq:
     a: 'Una conexión activa no es un requisito de pago. Los saldos confirmados se consideran según las reglas del pool, incluido el mínimo actual. Desconectarte no borra el saldo ni solicita por sí mismo un pago inmediato.'
   - q: '¿Reconectar reinicia la antigüedad de mis shares?'
     a: 'No. Las shares existentes conservan sus marcas de tiempo. El trabajo nuevo entra en las ventanas correspondientes al volver; reconectar no renueva shares antiguas ni añade trabajo por las horas desconectadas. Comprueba nuevas shares aceptadas tras reiniciar.'
-sourceHash: '0a11c393062e'
+sourceHash: 'a5bf859e0abb'
 translation: draft
 ---
 
@@ -25,7 +25,7 @@ Sí. El trabajo apto de una sesión corta puede participar en bloques cuyas vent
 
 ## Distingue los distintos plazos
 
-bntpool publica actualmente una ventana PPLNS de seis horas, 60 bloques antes de que la recompensa pueda pagarse y un mínimo de 0,1 BNT en [Primeros pasos](/start). Son etapas distintas: trabajo incluido, maduración y umbral de saldo. La ventana de seis horas no es un temporizador que prometa un pago.
+bntpool publica actualmente una ventana PPLNS de seis horas, 60 bloques antes de que la recompensa pueda pagarse y un mínimo de 1 BNT en [Primeros pasos](/start). Son etapas distintas: trabajo incluido, maduración y umbral de saldo. La ventana de seis horas no es un temporizador que prometa un pago.
 
 La [guía PPLNS](/blog/es/how-pplns-payouts-work/) explica la fórmula. Las shares aptas se ponderan por dificultad frente al resto del trabajo apto de la ventana. Los minutos conectado no fijan un porcentaje de la próxima recompensa. Dispositivos, participación del pool y resultados de shares pueden cambiar los pesos aunque dos sesiones duren igual.
 
@@ -45,7 +45,7 @@ Sal normalmente de seine con `q` en el panel o `Ctrl+C` en la terminal. Conserva
 
 Que una share salga de la ventana de un bloque posterior no borra una recompensa ya asignada a otro anterior. Las estimadas siguen el estado y la maduración del bloque; las confirmadas sin pagar permanecen hasta que las procesa el sistema. La [guía de confirmaciones](/blog/es/block-confirmations-mining-rewards/) distingue crédito provisional y saldo maduro.
 
-Un saldo confirmado inferior a 0,1 BNT sigue por debajo del umbral automático actual hasta que nuevo crédito alcance el mínimo. Reconectar no lo incrementa ni fuerza un pago. Un saldo apto tampoco necesita que el minero siga conectado durante el procesamiento. El [historial de pagos](/payouts) distingue saldo pendiente y transacción enviada.
+Un saldo confirmado inferior a 1 BNT sigue por debajo del umbral automático actual hasta que nuevo crédito alcance el mínimo. Reconectar no lo incrementa ni fuerza un pago. Un saldo apto tampoco necesita que el minero siga conectado durante el procesamiento. El [historial de pagos](/payouts) distingue saldo pendiente y transacción enviada.
 
 ## Vuelve a la misma cuenta y verifica trabajo nuevo
 

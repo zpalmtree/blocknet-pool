@@ -2,7 +2,7 @@
 title: 'Je miner volgen op bntpool.com'
 description: 'Zoek je adres of @name op bntpool.com voor hashrate, shares, saldo en betalingen. Volg blokken en luck of gebruik de openbare API in je scripts.'
 tags: ['bntpool', 'Miningstatistieken', 'Pool-API', 'Blocknet']
-sourceHash: 'f74ae9281fd2'
+sourceHash: '75495e49f3e9'
 translation: draft
 faq:
   - q: 'Waarom verschilt mijn hashrate op bntpool.com van seine?'
@@ -54,7 +54,7 @@ Geef bij meerdere machines elke rig een eigen naam. De pool vermeldt ze apart me
 ./seine --pool-worker rig-01
 ```
 
-De tabel **Workers** toont ook de minerversie van iedere computer. Bij een oude of onbekende versie verwijst een melding boven je statistieken naar de [seine-releasepagina](https://github.com/zpalmtree/seine/releases).
+Rigs die solo minen, met `solo:` voor het adres, tonen **Solo** in de kolom Type van de tabel. De tabel **Workers** toont ook de minerversie van iedere computer. Bij een oude of onbekende versie verwijst een melding boven je statistieken naar de [seine-releasepagina](https://github.com/zpalmtree/seine/releases).
 
 ## Waarom verschilt de poolhashrate van die in seine?
 
@@ -69,7 +69,7 @@ Recent Shares toont meteen dat shares aankomen, nog voordat de hashrate stabiel 
 
 ## Wanneer kun je je eerste uitbetaling verwachten?
 
-Er is geen vaste wachttijd van je eerste share tot je eerste betaling. De pool moet een blok vinden terwijl je shares in het uitbetalingsvenster vallen. Dat blok heeft daarna 60 bevestigingen nodig: gemiddeld ongeveer vijf uur **nadat het blok is gevonden**, maar de werkelijke tijd varieert. Zodra je bevestigde saldo de huidige minimumgrens van 0,1 BNT bereikt, komt het in aanmerking voor een automatische uitbetalingsronde. Bekijk [Get Started](/start) voor de actuele instellingen.
+Er is geen vaste wachttijd van je eerste share tot je eerste betaling. De pool moet een blok vinden terwijl je shares in het uitbetalingsvenster vallen. Dat blok heeft daarna 60 bevestigingen nodig: gemiddeld ongeveer vijf uur **nadat het blok is gevonden**, maar de werkelijke tijd varieert. Zodra je bevestigde saldo de huidige minimumgrens van 1 BNT bereikt, komt het in aanmerking voor een automatische uitbetalingsronde. Bekijk [Get Started](/start) voor de actuele instellingen.
 
 Volg de status en transactielink onder **Recent Payouts**. Een betaling in de wachtrij is nog niet uitgezonden. Ontbreekt een verzonden betaling in je wallet, gebruik dan de [handleiding voor ontbrekende uitbetalingen](/blog/nl/pool-payout-missing-from-wallet/).
 
@@ -116,7 +116,7 @@ Deze pagina’s vereisen geen adreszoekopdracht en tonen openlijk wat de pool do
 
 ### Blokken
 
-[Blocks](/blocks) vermeldt alle gevonden blokken, nieuwste eerst, met hoogte en explorerlink, beloning, effort, rondetijd, status en vindmoment. Filter op Confirmed, Pending of Orphaned om de status te bekijken.
+[Blocks](/blocks) vermeldt alle gevonden blokken, nieuwste eerst, met hoogte en explorerlink, beloning, effort, rondetijd, status en vindmoment. Een kolom Type vóór de status laat zien of een blok uit gedeeld poolminen kwam of van een solominer, die de volledige beloning krijgt. Filter op Confirmed, Pending of Orphaned om de status te bekijken.
 
 ### Uitbetalingen
 

@@ -1,18 +1,18 @@
 ---
 title: So funktionieren PPLNS-Auszahlungen auf bntpool.com
-description: bntpool.com vergütet Blocknet-Miner mit PPLNS über ein sechsstündiges Share-Fenster. Erfahre, wie Belohnungen aufgeteilt werden, warum 60 Bestätigungen nötig sind und wann 0,1 BNT ausgezahlt werden.
+description: bntpool.com vergütet Blocknet-Miner mit PPLNS über ein sechsstündiges Share-Fenster. Erfahre, wie Belohnungen aufgeteilt werden, warum 60 Bestätigungen nötig sind und dass ab 1 BNT ausgezahlt wird.
 tags: [Auszahlungen, PPLNS, bntpool, Mining-Anleitung]
-sourceHash: 'f216680e1944'
+sourceHash: '2f69ab18ce0b'
 translation: draft
 faq:
   - q: 'Wie lang ist das PPLNS-Fenster auf bntpool.com?'
     a: 'Das Fenster beträgt sechs Stunden. Wenn der Pool einen Block findet, betrachtet er die sechs Stunden davor und verteilt die Belohnung unter allen, die in dieser Zeit Shares eingereicht haben, gewichtet nach deren Difficulty. Den aktuellen Wert findest du auf der Seite Get Started des Pools.'
   - q: 'Wie hoch ist die Mindestauszahlung auf bntpool.com?'
-    a: 'Die Mindestauszahlung beträgt 0,1 BNT. Sobald dein bestätigtes Guthaben diesen Betrag erreicht, sendet der Pool es automatisch an deine Blocknet-Adresse. Du musst nichts beantragen oder abrufen. Kleinere Guthaben bleiben erhalten und wachsen mit jedem bestätigten Block, an dem deine Shares beteiligt sind, bis zur Schwelle.'
+    a: 'Die Mindestauszahlung beträgt 1 BNT. Sobald dein bestätigtes Guthaben diesen Betrag erreicht, sendet der Pool es automatisch an deine Blocknet-Adresse. Du musst nichts beantragen oder abrufen. Kleinere Guthaben bleiben erhalten und wachsen mit jedem bestätigten Block, an dem deine Shares beteiligt sind, bis zur Schwelle.'
   - q: 'Warum unterscheiden sich Estimated Rewards und Confirmed Rewards?'
     a: 'Estimated Rewards sind dein Anteil an gefundenen Pool-Blöcken, die ihre 60 Bestätigungen noch sammeln; der Betrag kann sich daher ändern. Confirmed Rewards stammen aus Blöcken, die 60 Blöcke tief liegen, und warten auf die Auszahlung. Sobald ein Block reif ist, wandert sein Betrag von der ersten Karte zur zweiten.'
   - q: 'Enden meine Belohnungen, sobald ich das Mining stoppe?'
-    a: 'Nein. Jeder Share bleibt nach der Übermittlung sechs Stunden im PPLNS-Fenster. Blöcke, die der Pool in dieser Zeit findet, werden dir weiter anteilig gutgeschrieben. Bereits bestätigte Belohnungen bleiben im Guthaben und werden ausgezahlt, sobald es mindestens 0,1 BNT erreicht.'
+    a: 'Nein. Jeder Share bleibt nach der Übermittlung sechs Stunden im PPLNS-Fenster. Blöcke, die der Pool in dieser Zeit findet, werden dir weiter anteilig gutgeschrieben. Bereits bestätigte Belohnungen bleiben im Guthaben und werden ausgezahlt, sobald es mindestens 1 BNT erreicht.'
   - q: 'Was bedeutet ein Effort über 100 % auf der Luck-Seite?'
     a: 'Effort vergleicht die Arbeit des Pools in einer Runde mit der Difficulty des Blocks, also dem erwarteten Arbeitsaufwand. Über 100 % dauerte die Runde länger als im Mittel, unter 100 % war sie schneller. Beides ist normal; über viele Runden nähert sich der Durchschnitt 100 %.'
 ---
@@ -34,7 +34,7 @@ Auf bntpool.com bezeichnet „last N“ eine Zeitspanne: sechs Stunden. Die Seit
 | Auszahlungssystem | PPLNS |
 | Share-Fenster | 6 Stunden |
 | Bestätigungen vor Auszahlung | 60 Blöcke |
-| Mindestauszahlung | 0,1 BNT |
+| Mindestauszahlung | 1 BNT |
 
 Shares werden nach Difficulty gewichtet. Jede Miner-Verbindung bekommt ihre eigene Share-Difficulty, die der Pool für einen gleichmäßigen Share-Strom anpasst. Schnellere Rechner erhalten schwierigere Shares; jeder ihrer Shares hat deshalb mehr Gewicht. Entscheidend ist die insgesamt geleistete Arbeit, ein gleichermaßen fairer Maßstab für Laptop und Server.
 
@@ -46,7 +46,7 @@ Findet der Pool einen Block, durchläuft die Belohnung immer dieselben Schritte:
 2. **Das Fenster wird ausgewertet.** Der Pool summiert für jede Adresse die Difficulty aller akzeptierten Shares in den sechs Stunden bis zum Block.
 3. **Die Belohnung wird aufgeteilt.** Jede Adresse erhält denselben Anteil an der Belohnung wie ihr Anteil an der gesamten Arbeit im Fenster.
 4. **Der Block reift.** Dein Anteil erscheint zunächst als Schätzung. Liegt der Block 60 Blöcke tief, wandert er in dein bestätigtes Guthaben.
-5. **Das Guthaben wird ausgezahlt.** Ab 0,1 BNT bestätigtem Guthaben sendet der Pool es an deine Adresse.
+5. **Das Guthaben wird ausgezahlt.** Ab 1 BNT bestätigtem Guthaben sendet der Pool es an deine Adresse.
 
 ## Ein Rechenbeispiel
 
@@ -64,7 +64,7 @@ Ein zweiter Miner mit genau deiner Hashrate verbindet sich erst 30 Minuten vor d
 | Gleiche Hashrate, 30 Minuten vor dem Block beigetreten | 1.667 | etwa 0,17 % | etwa 0,67 BNT |
 | Kleiner Miner, während aller sechs Stunden aktiv | 100 | 0,01 % | 0,04 BNT |
 
-Der kleine Miner der letzten Zeile verdient 0,04 BNT pro Block. Nach drei solchen Blöcken überschreitet sein bestätigtes Guthaben die Schwelle von 0,1 BNT und wird ausgezahlt.
+Der kleine Miner der letzten Zeile verdient 0,04 BNT pro Block. Nach 25 solchen Blöcken überschreitet sein bestätigtes Guthaben die Schwelle von 1 BNT und wird ausgezahlt.
 
 ## Warum belohnt PPLNS kontinuierliches Mining?
 
@@ -83,7 +83,7 @@ Während ein Block reift, prüft der Pool, ob er weiterhin zur Hauptkette gehör
 ## Wann kommen Auszahlungen von bntpool.com an?
 
 <Answer>
-Nach 60 Bestätigungen, bei Blocknets fünfminütiger Blockzeit etwa fünf Stunden, wandert dein Anteil auf der Statistikseite zu Confirmed Rewards. Sobald dein bestätigtes Guthaben 0,1 BNT erreicht, sendet bntpool.com es automatisch an deine Blocknet-Adresse. Du musst nichts beantragen oder abrufen.
+Nach 60 Bestätigungen, bei Blocknets fünfminütiger Blockzeit etwa fünf Stunden, wandert dein Anteil auf der Statistikseite zu Confirmed Rewards. Sobald dein bestätigtes Guthaben 1 BNT erreicht, sendet bntpool.com es automatisch an deine Blocknet-Adresse. Du musst nichts beantragen oder abrufen.
 </Answer>
 
 Bei einem neuen Miner erscheint die erste Schätzung, sobald der Pool einen Block findet, während seine Shares im Fenster liegen. Die erste Zahlung folgt, wenn der Block gereift ist und das Guthaben die Mindesthöhe erreicht. Gesendete Zahlungen stehen auf der [Auszahlungsseite](/payouts) und in deinem eigenen Verlauf auf der Statistikseite.
@@ -106,4 +106,4 @@ Die [Luck-Seite](/luck) listet jede Runde mit Blockhöhe, Effort, Rundendauer, S
 
 Glück beeinflusst, wie oft Blöcke eintreffen. Dein Anteil an jedem Block hängt nur von deinem Arbeitsanteil im Fenster ab. Kontinuierliches Mining hält diesen Anteil vollständig, egal ob eine Runde kurz oder lang dauert.
 
-<CTA target="pool" title="Tritt dem Pool bei" text="Mine kontinuierlich auf bntpool.com. Dein Anteil an jedem Block wird automatisch ausgezahlt, sobald du 0,1 BNT erreichst." />
+<CTA target="pool" title="Tritt dem Pool bei" text="Mine kontinuierlich auf bntpool.com. Dein Anteil an jedem Block wird automatisch ausgezahlt, sobald du 1 BNT erreichst." />

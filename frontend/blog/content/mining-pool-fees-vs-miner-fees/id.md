@@ -4,16 +4,16 @@ description: 'Pahami biaya pool dan miner Blocknet: tahap penerapan, cara mengga
 tags: ['Panduan mining', 'Biaya pool', 'Imbalan mining']
 faq:
   - q: 'Apakah keduanya biaya yang sama?'
-    a: 'Tidak. Biaya pool terkait pembagian imbalan, biaya pengembang terkait perangkat lunak. seine v0.2.36 mengalokasikan 2% waktu mining yang diperhitungkan setelah masa awal untuk pengembangan. Biaya terpisah bntpool adalah 0% saat diperiksa 26 Oktober 2026.'
+    a: 'Tidak. Biaya pool terkait pembagian imbalan, biaya pengembang terkait perangkat lunak. seine v0.3.1 mengalokasikan 2% waktu mining yang diperhitungkan setelah masa awal untuk pengembangan. Biaya terpisah bntpool adalah 0% saat diperiksa 26 Oktober 2026.'
   - q: 'Bagaimana menggabungkannya?'
     a: 'Kalikan perkiraan bruto dengan satu dikurangi fraksi miner, lalu satu dikurangi fraksi pool. Gunakan versi aktual dan pengaturan terkini. Ini memperkirakan imbalan tersisa, bukan jaminan pembayaran atau laba uang.'
   - q: 'Perlukah biaya miner dipotong dari hashrate pool?'
     a: 'Kenali angka tersebut dahulu. Jika sudah memperkirakan pekerjaan untuk alamat Anda setelah waktu pengembang, pemotongan lagi menghitungnya dua kali. Masukkan nol untuk penyesuaian yang sudah tercermin. Saldo terkonfirmasi dan pembayaran tercatat tidak perlu dipotong lagi.'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-Ikuti dua lapisan biaya dalam perkiraan mining Blocknet. Panduan memakai seine v0.2.36 dan pengaturan bntpool yang diperiksa 26 Oktober 2026 untuk membantu mengisi [kalkulator](/blog/id/estimate-blocknet-mining-rewards/#mining-calculator) dan membaca [My Stats](/stats).
+Ikuti dua lapisan biaya dalam perkiraan mining Blocknet. Panduan memakai seine v0.3.1 dan pengaturan bntpool yang diperiksa 26 Oktober 2026 untuk membantu mengisi [kalkulator](/blog/id/estimate-blocknet-mining-rewards/#mining-calculator) dan membaca [My Stats](/stats).
 
 ## Apa perbedaan biaya pool dan miner?
 
@@ -31,7 +31,7 @@ Pada 26 Oktober 2026, `https://bntpool.com/api/info` menerbitkan `pool_fee_pct` 
 
 ## Bagaimana biaya pengembang seine bekerja?
 
-v0.2.36 mendokumentasikan 2% di semua pool dan mode solo. Biaya berupa waktu mining untuk alamat pengembang, bukan penarikan dompet kemudian. Sebanyak 10 menit pertama bebas biaya; pelacak menghitung waktu sesudahnya. Lihat [panduan konfigurasi](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md).
+v0.3.1 mendokumentasikan 2% di semua pool dan mode solo. Biaya berupa waktu mining untuk alamat pengembang, bukan penarikan dompet kemudian. Sebanyak 10 menit pertama bebas biaya; pelacak menghitung waktu sesudahnya. Lihat [panduan konfigurasi](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md).
 
 Penjadwalan memakai putaran, sehingga jendela singkat tidak harus tepat 2%. Persentase itu target jangka panjang setelah masa awal, bukan janji per menit atau blok. Catat versi karena panduan lama atau software lain bisa berbeda. Biaya pool tidak menggantikan informasi ini.
 

@@ -2,7 +2,7 @@
 title: 'Blocknet minen op bntpool.com'
 description: 'Sluit aan op bntpool.com, de standaardpool van seine. Gebruik je adres of @name met stratum+tcp://bntpool.com:3333, geef rigs namen en bekijk je statistieken.'
 tags: ['Mininggids', 'bntpool', 'Blocknet ID', 'seine']
-sourceHash: 'df269126bb76'
+sourceHash: '9713e976f981'
 translation: draft
 faq:
   - q: 'Wat is het Stratum-adres van bntpool.com?'
@@ -23,7 +23,7 @@ Deze gids behandelt aansluiten op bntpool.com met seine: het pooladres, inloggen
 Het Stratum-adres is `stratum+tcp://bntpool.com:3333`. Seine biedt dit bij de eerste start als standaardpool aan: druk bij de poolvraag op Enter om te verbinden. Je logt in met je Blocknet-adres of een Blocknet ID `@name`. Je hoeft geen account aan te maken en beloningen gaan naar dat adres.
 </Answer>
 
-Dit zijn de poolinstellingen zoals het openbare endpoint `/api/info` ze op 25 oktober 2026 meldde:
+Dit zijn de poolinstellingen zoals het openbare endpoint `/api/info` ze op 4 november 2026 meldde:
 
 | Instelling | Waarde |
 |---|---|
@@ -31,9 +31,11 @@ Dit zijn de poolinstellingen zoals het openbare endpoint `/api/info` ze op 25 ok
 | Login | Blocknet-adres, `@name` of `$name` |
 | Uitbetalingssysteem | PPLNS met een venster van 6 uur |
 | Bevestigingen voor uitbetaling | 60 blokken |
-| Minimumuitbetaling | 0,1 BNT |
+| Minimumuitbetaling | 1 BNT |
 
 Dezelfde waarden staan altijd op de pagina [Get Started](/start).
+
+Wil je de volledige beloning houden van elk blok dat je rigs vinden, zet dan `solo:` voor je adres. [Solo minen op bntpool.com](/blog/nl/solo-mine-blocknet-on-bntpool/) laat zien hoe.
 
 ## Waarom is bntpool.com de standaardpool van seine?
 
@@ -105,7 +107,7 @@ Let op drie dingen:
 
 De pool stelt de sharemoeilijkheid per verbinding in en past die tijdens het minen aan. Zelfs een kleine CPU stuurt daardoor geregeld shares en je eerste geaccepteerde shares verschijnen binnen enkele minuten na het verbinden. Zie voor de hashrate van je hardware de [hardwaregids voor Blocknet-mining](https://seineminer.com/nl/blog/blocknet-mining-hardware-hashrate/).
 
-Daarna volgen de beloningen. Estimated Rewards verschijnen zodra de pool een blok vindt terwijl je shares in het venster van zes uur zitten. Na 60 bevestigingen verhuist je aandeel naar Confirmed Rewards en stuurt de pool het automatisch zodra je minstens 0,1 BNT hebt. [Hoe PPLNS-uitbetalingen werken](/blog/nl/how-pplns-payouts-work/) legt de verdeling uit. Het poolbrede overzicht staat op [Blocks](/blocks) en [Payouts](/payouts).
+Daarna volgen de beloningen. Estimated Rewards verschijnen zodra de pool een blok vindt terwijl je shares in het venster van zes uur zitten. Na 60 bevestigingen verhuist je aandeel naar Confirmed Rewards en stuurt de pool het automatisch zodra je minstens 1 BNT hebt. [Hoe PPLNS-uitbetalingen werken](/blog/nl/how-pplns-payouts-work/) legt de verdeling uit. Het poolbrede overzicht staat op [Blocks](/blocks) en [Payouts](/payouts).
 
 ## Wat staat er op Get Started?
 

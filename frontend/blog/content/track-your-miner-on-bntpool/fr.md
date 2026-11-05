@@ -11,7 +11,7 @@ faq:
     a: 'Non. Les endpoints de statistiques, blocs, paiements, chance, statut et mineurs fournissent du JSON public via HTTPS. Un script curl ou un tableau de bord domestique peut donc les lire sans inscription. Les montants sont en unités atomiques : divisez par 100 000 000 pour obtenir des BNT et interrogez toutes les 30 à 60 secondes.'
   - q: 'Pourquoi My Stats affiche-t-il zéro dans Estimated Rewards ?'
     a: 'Les estimations apparaissent lorsque le pool trouve un bloc avec vos shares dans la fenêtre de paiement. Pour un nouveau mineur, cela peut prendre quelques périodes de minage. Shares acceptés et hashrate apparaissent d’abord, puis les récompenses estimées, qui deviennent Confirmed Rewards à maturité et sont payées automatiquement.'
-sourceHash: 'f74ae9281fd2'
+sourceHash: '75495e49f3e9'
 translation: draft
 ---
 
@@ -54,7 +54,7 @@ Si vous avez plusieurs machines, donnez à chacune un nom distinct : le pool le
 ./seine --pool-worker rig-01
 ```
 
-Le tableau **Workers** affiche aussi la version du mineur de chaque machine. Une notification au-dessus des statistiques mène à la [page des versions seine](https://github.com/zpalmtree/seine/releases) lorsqu’une version est ancienne ou inconnue.
+Les rigs qui minent en solo, avec `solo:` devant l’adresse, affichent **Solo** dans la colonne Type du tableau. Le tableau **Workers** affiche aussi la version du mineur de chaque machine. Une notification au-dessus des statistiques mène à la [page des versions seine](https://github.com/zpalmtree/seine/releases) lorsqu’une version est ancienne ou inconnue.
 
 ## Pourquoi le hashrate du pool diffère-t-il de celui de seine ?
 
@@ -69,7 +69,7 @@ Recent Shares confirme immédiatement leur arrivée, avant même la stabilisatio
 
 ## Quand attendre votre premier paiement ?
 
-Il n’y a pas de délai fixe entre votre premier share et votre premier paiement. Le pool doit trouver un bloc pendant que vos shares sont dans sa fenêtre de paiement. Ce bloc nécessite ensuite 60 confirmations, soit environ cinq heures en moyenne **après sa découverte**, avec une durée réelle variable. Une fois votre solde confirmé au minimum actuel de 0,1 BNT, il est admissible à un paiement automatique. Consultez [Get Started](/start) pour les paramètres actuels.
+Il n’y a pas de délai fixe entre votre premier share et votre premier paiement. Le pool doit trouver un bloc pendant que vos shares sont dans sa fenêtre de paiement. Ce bloc nécessite ensuite 60 confirmations, soit environ cinq heures en moyenne **après sa découverte**, avec une durée réelle variable. Une fois votre solde confirmé au minimum actuel de 1 BNT, il est admissible à un paiement automatique. Consultez [Get Started](/start) pour les paramètres actuels.
 
 Suivez le statut et le lien de transaction dans **Recent Payouts**. Un paiement en file d’attente n’a pas encore été diffusé. Si un paiement envoyé manque dans votre portefeuille, consultez le [guide de dépannage des paiements](/blog/fr/pool-payout-missing-from-wallet/).
 
@@ -116,7 +116,7 @@ Ces pages ne nécessitent aucune recherche et montrent ouvertement l’activité
 
 ### Blocs
 
-[Blocks](/blocks) liste tous les blocs trouvés, du plus récent au plus ancien : hauteur liée à l’explorateur, récompense, effort, durée, statut et date. Filtrez par Confirmed, Pending ou Orphaned pour connaître leur état.
+[Blocks](/blocks) liste tous les blocs trouvés, du plus récent au plus ancien : hauteur liée à l’explorateur, récompense, effort, durée, statut et date. Une colonne Type avant le statut indique si un bloc provient du minage partagé du pool ou d’un mineur solo, qui reçoit sa récompense entière. Filtrez par Confirmed, Pending ou Orphaned pour connaître leur état.
 
 ### Paiements
 

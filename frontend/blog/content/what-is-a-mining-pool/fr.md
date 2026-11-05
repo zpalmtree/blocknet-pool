@@ -11,7 +11,7 @@ faq:
     a: 'Non. Le pool gère le nœud, prépare les modèles, vérifie les shares et soumet les blocs. Sur bntpool.com, il suffit de seine et d’une adresse Blocknet ou d’un nom Blocknet ID. Lancez seine, collez votre adresse et acceptez le pool par défaut : votre part des blocs y est payée.'
   - q: 'Comment commencer sur bntpool.com ?'
     a: 'Téléchargez seine pour Windows, macOS ou Linux sur seineminer.com, lancez-le et collez votre adresse Blocknet ou @name. bntpool.com est le pool par défaut : acceptez-le pour commencer. Recherchez votre adresse dans les statistiques du pool pour voir hashrate, shares et solde.'
-sourceHash: '15d1453f41d9'
+sourceHash: '698c26d17e91'
 translation: draft
 ---
 
@@ -63,20 +63,20 @@ Le système de paiement définit comment transformer les shares en gains. Voici 
 |---|---|---|
 | PPLNS (pay per last N shares) | Blocs trouvés par le pool | Chaque récompense est répartie selon la difficulté des shares d’une fenêtre récente |
 | PPS (pay per share) | Chaque share accepté | Montant fixe par share selon sa valeur attendue, que le pool trouve un bloc ou non |
-| Solo | Blocs que vous trouvez | Vous utilisez votre nœud et gardez toute la récompense |
+| Solo | Blocs que vous trouvez | Vous gardez toute la récompense de chaque bloc trouvé, via un pool proposant le mode solo ou sur votre propre nœud |
 
 **PPLNS** regarde en arrière à partir de chaque bloc trouvé. Sur bntpool.com, les « N derniers shares » correspondent à six heures : le pool additionne leur difficulté et attribue à chacun la même fraction de récompense que de travail. Chaque share compte pour tous les blocs trouvés durant sa présence. Un mineur régulier conserve donc une fenêtre pleine et un redémarrage ne remet rien à zéro. [Les paiements PPLNS sur bntpool.com](/blog/fr/how-pplns-payouts-work/) détaillent la répartition.
 
 **PPS** paie chaque share à son arrivée selon sa valeur attendue : difficulté du share divisée par difficulté réseau, multipliée par récompense de bloc. L’opérateur assume les variations des découvertes et paie les mineurs depuis son propre solde entre les blocs.
 
-**Le minage solo** se passe de pool. Votre nœud prépare les modèles et chaque bloc trouvé verse toute sa récompense à votre portefeuille. Il convient aux installations assez grandes pour trouver souvent des blocs seules. seine prend en charge les deux : bntpool.com par défaut, ou `./seine --mode daemon` pour votre nœud synchronisé.
+**Le minage solo** verse toute la récompense de chaque bloc au mineur qui l’a trouvé. Il convient aux installations assez grandes pour trouver souvent des blocs seules. Sur bntpool.com, vous minez en solo en plaçant `solo:` devant votre adresse : le pool exploite toujours le nœud et paie vos blocs via ses paiements habituels, et [le minage solo sur bntpool.com](/blog/fr/solo-mine-blocknet-on-bntpool/) détaille la configuration. seine propose aussi un mode daemon, `./seine --mode daemon`, qui mine sur votre propre nœud Blocknet synchronisé.
 
 ## Que vérifier dans un pool ?
 
 Ces critères déterminent votre rémunération et la facilité de la contrôler :
 
 - **Un système clair.** Le pool doit annoncer son système et ses paramètres, notamment la fenêtre PPLNS. bntpool.com les indique sur [Get Started](/start) et à `https://bntpool.com/api/info`.
-- **Confirmations et minimum.** Les récompenses attendent généralement une profondeur suffisante, puis le paiement part au seuil. Sur bntpool.com, la confirmation demande 60 blocs, comme la maturité coinbase Blocknet, et les soldes de 0,1 BNT ou plus sont payés automatiquement.
+- **Confirmations et minimum.** Les récompenses attendent généralement une profondeur suffisante, puis le paiement part au seuil. Sur bntpool.com, la confirmation demande 60 blocs, comme la maturité coinbase Blocknet, et les soldes de 1 BNT ou plus sont payés automatiquement.
 - **Des chiffres publics et vérifiables.** Chaque bloc trouvé et paiement doit être visible. bntpool.com les affiche dans [blocs](/blocks) et [paiements](/payouts), ainsi que l’effort par période sur [chance](/luck).
 - **Vos statistiques.** Recherchez votre adresse pour voir hashrate, shares et soldes. C’est la [page des statistiques](/stats) ; le [guide de suivi](/blog/fr/track-your-miner-on-bntpool/) explique chaque carte.
 - **Une installation simple.** Moins de réglages signifie un démarrage plus rapide. bntpool.com est le pool par défaut de seine, qui optimise seul threads, kernels et mémoire. Vous pouvez utiliser un [nom Blocknet ID](https://seineminer.com/fr/blog/blocknet-id-pay-by-name/) comme `@name` au lieu de l’adresse complète.
@@ -88,11 +88,11 @@ Ces critères déterminent votre rémunération et la facilité de la contrôler
 | Système de paiement | PPLNS |
 | Fenêtre des shares | 6 heures |
 | Confirmations avant paiement | 60 blocs |
-| Paiement minimum | 0,1 BNT |
+| Paiement minimum | 1 BNT |
 | Adresse Stratum | `stratum+tcp://bntpool.com:3333` |
 
 Le [tableau de bord du pool](/) présente en direct mineurs connectés, hashrates du pool et du réseau, blocs et effort courant. Le 25 octobre 2026 à 02:25 EDT, le pool totalisait environ 5 200 H/s sur environ 44 400 H/s de réseau, avec 246 mineurs connectés. Cela représente environ 12 %, assez pour attendre environ 34 blocs par jour, un toutes les 42 minutes. Ces chiffres évoluent constamment : consultez les valeurs actuelles et le [guide d’estimation des récompenses](/blog/fr/estimate-blocknet-mining-rewards/) pour les convertir en BNT selon votre hashrate.
 
 Pour rejoindre le pool, [téléchargez seine](https://seineminer.com/fr/#download), lancez-le, collez votre adresse ou `@name` et acceptez le pool par défaut. Le [guide seine](https://seineminer.com/fr/blog/how-to-mine-blocknet/) décrit les étapes, et [miner sur bntpool.com](/blog/fr/mine-blocknet-on-bntpool/) couvre noms de rigs et premiers shares.
 
-<CTA target="pool" title="Rejoignez bntpool.com" text="Connectez seine au pool et gagnez une part de chaque bloc trouvé, envoyée automatiquement à votre adresse dès 0,1 BNT." />
+<CTA target="pool" title="Rejoignez bntpool.com" text="Connectez seine au pool et gagnez une part de chaque bloc trouvé, envoyée automatiquement à votre adresse dès 1 BNT." />

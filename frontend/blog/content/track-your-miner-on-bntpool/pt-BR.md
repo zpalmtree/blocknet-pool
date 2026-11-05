@@ -2,7 +2,7 @@
 title: Acompanhe seu minerador no bntpool.com
 description: Consulte endereço ou @name no bntpool.com para ver hashrate, shares, saldo e pagamentos. Acompanhe blocos e sorte ou use a API pública.
 tags: [bntpool, Estatísticas de mineração, API do pool, Blocknet]
-sourceHash: 'f74ae9281fd2'
+sourceHash: '75495e49f3e9'
 translation: draft
 faq:
   - q: 'Por que minha hashrate no bntpool.com difere da mostrada pelo seine?'
@@ -54,7 +54,7 @@ Se usa várias máquinas, dê um nome a cada uma. O pool as lista separadamente,
 ./seine --pool-worker rig-01
 ```
 
-A tabela **Workers** também mostra a versão do minerador de cada máquina. Um aviso acima das estatísticas leva à [página de versões do seine](https://github.com/zpalmtree/seine/releases) quando uma versão é antiga ou desconhecida.
+Rigs que mineram solo, com `solo:` antes do endereço, mostram **Solo** na coluna Tipo da tabela. A tabela **Workers** também mostra a versão do minerador de cada máquina. Um aviso acima das estatísticas leva à [página de versões do seine](https://github.com/zpalmtree/seine/releases) quando uma versão é antiga ou desconhecida.
 
 ## Por que a hashrate do pool difere da do seine?
 
@@ -69,7 +69,7 @@ A tabela Recent Shares confirma imediatamente a chegada de trabalho, antes de a 
 
 ## Quando esperar seu primeiro pagamento?
 
-Não existe um prazo fixo entre sua primeira share e o primeiro pagamento. O pool precisa encontrar um bloco enquanto suas shares estão na janela de pagamento. Depois, esse bloco precisa de 60 confirmações: cerca de cinco horas em média **após a descoberta do bloco**, com variação no tempo real. Quando seu saldo confirmado atinge o mínimo atual de 0,1 BNT, ele pode entrar em um ciclo automático de pagamento. Confira os parâmetros atuais em [Get Started](/start).
+Não existe um prazo fixo entre sua primeira share e o primeiro pagamento. O pool precisa encontrar um bloco enquanto suas shares estão na janela de pagamento. Depois, esse bloco precisa de 60 confirmações: cerca de cinco horas em média **após a descoberta do bloco**, com variação no tempo real. Quando seu saldo confirmado atinge o mínimo atual de 1 BNT, ele pode entrar em um ciclo automático de pagamento. Confira os parâmetros atuais em [Get Started](/start).
 
 Acompanhe o status e o link da transação em **Recent Payouts**. Um pagamento na fila ainda não foi transmitido. Se um pagamento enviado não aparecer na carteira, consulte o [guia de problemas com pagamentos](/blog/pt-br/pool-payout-missing-from-wallet/).
 
@@ -116,7 +116,7 @@ Elas não exigem busca e mostram publicamente toda a atividade. O [painel](/) re
 
 ### Blocos
 
-[Blocks](/blocks) lista todos os blocos encontrados pelo bntpool.com, mais recentes primeiro: altura com link ao explorador, recompensa, esforço, duração da rodada, status e horário. Filtre por Confirmed, Pending ou Orphaned para acompanhar a situação.
+[Blocks](/blocks) lista todos os blocos encontrados pelo bntpool.com, mais recentes primeiro: altura com link ao explorador, recompensa, esforço, duração da rodada, status e horário. Uma coluna Tipo antes do status mostra se o bloco veio da mineração compartilhada do pool ou de um minerador solo, que recebe a recompensa inteira. Filtre por Confirmed, Pending ou Orphaned para acompanhar a situação.
 
 ### Pagamentos
 

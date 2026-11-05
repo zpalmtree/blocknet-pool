@@ -4,16 +4,16 @@ description: 'Verstehe Pool- und Miner-Gebühren beim Blocknet-Mining: wo sie an
 tags: ['Mining-Anleitung', 'Pool-Gebühren', 'Mining-Erträge']
 faq:
   - q: 'Sind beide Gebühren dieselbe Belastung?'
-    a: 'Nein. Die Pool-Gebühr gehört zur Ertragsverteilung, die Entwicklergebühr zur Mining-Software. seine v0.2.36 verwendet nach der Startfreiphase 2% der gebührenpflichtigen Mining-Zeit für Entwicklung. Die separat veröffentlichte Gebühr von bntpool.com lag am 26. Oktober 2026 bei 0%.'
+    a: 'Nein. Die Pool-Gebühr gehört zur Ertragsverteilung, die Entwicklergebühr zur Mining-Software. seine v0.3.1 verwendet nach der Startfreiphase 2% der gebührenpflichtigen Mining-Zeit für Entwicklung. Die separat veröffentlichte Gebühr von bntpool.com lag am 26. Oktober 2026 bei 0%.'
   - q: 'Wie kombiniert man beide Gebühren?'
     a: 'Multipliziere eine Bruttoschätzung mit eins minus Miner-Gebührenanteil und danach mit eins minus Pool-Gebührenanteil. Nutze deine tatsächliche Version und die aktuelle Pool-Einstellung. Das schätzt verbleibende Erträge, garantiert aber weder eine Auszahlung noch einen Geldgewinn.'
   - q: 'Miner-Gebühr von der Pool-Hashrate abziehen?'
     a: 'Prüfe zuerst, was die Rate bedeutet. Schätzt sie bereits deiner Adresse gutgeschriebene Arbeit nach Entwicklerzeit, wäre ein weiterer Abzug doppelt. Im Rechner kannst du dafür null eingeben. Von einem bestätigten Guthaben oder aufgezeichneten Zahlungsvorgang wird keine der Gebühren erneut abgezogen.'
-sourceHash: '8d54fc4f307d'
+sourceHash: 067e7d97255d
 translation: draft
 ---
 
-Ordne die beiden Gebühren einer Blocknet-Schätzung ihren jeweiligen Stufen zu. Diese Anleitung nutzt seine v0.2.36 und öffentliche bntpool-Einstellungen vom 26. Oktober 2026. Sie hilft bei Eingaben im [Mining-Rechner](/blog/de/estimate-blocknet-mining-rewards/#mining-calculator) und beim Lesen von [My Stats](/stats).
+Ordne die beiden Gebühren einer Blocknet-Schätzung ihren jeweiligen Stufen zu. Diese Anleitung nutzt seine v0.3.1 und öffentliche bntpool-Einstellungen vom 26. Oktober 2026. Sie hilft bei Eingaben im [Mining-Rechner](/blog/de/estimate-blocknet-mining-rewards/#mining-calculator) und beim Lesen von [My Stats](/stats).
 
 ## Was unterscheidet Pool- und Miner-Gebühren?
 
@@ -31,7 +31,7 @@ Am 26. Oktober 2026 veröffentlicht `https://bntpool.com/api/info` für `pool_fe
 
 ## Wie funktioniert seines Entwicklergebühr?
 
-v0.2.36 dokumentiert pauschal 2% auf jedem Pool und im Solomodus. Die Software plant Mining-Zeit für die Entwickleradresse ein, statt später Geld aus deiner Wallet abzuziehen. Die ersten 10 Minuten sind gebührenfrei; der Tracker zählt danach. Die [Konfigurationsanleitung](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) beschreibt dies.
+v0.3.1 dokumentiert pauschal 2% auf jedem Pool und im Solomodus. Die Software plant Mining-Zeit für die Entwickleradresse ein, statt später Geld aus deiner Wallet abzuziehen. Die ersten 10 Minuten sind gebührenfrei; der Tracker zählt danach. Die [Konfigurationsanleitung](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) beschreibt dies.
 
 Die Planung erfolgt in Runden, daher muss ein kurzer Ausschnitt nicht genau 2% ergeben. Der Wert ist das langfristige Ziel nach der Freiphase, keine Zusage pro Minute oder Block. Notiere die Version: ältere Anleitungen oder andere Programme können anders arbeiten. Die Pool-Gebühr ersetzt diese Softwareinformation nicht.
 

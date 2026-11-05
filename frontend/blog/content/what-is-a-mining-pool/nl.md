@@ -2,7 +2,7 @@
 title: 'Wat is een miningpool?'
 description: 'Een miningpool bundelt de hashrate van miners en verdeelt elke blokbeloning. Lees hoe pools werken, wat PPLNS, PPS en solo betekenen en waarop je let.'
 tags: ['Miningbasis', 'Miningpools', 'PPLNS', 'bntpool']
-sourceHash: '15d1453f41d9'
+sourceHash: '698c26d17e91'
 translation: draft
 faq:
   - q: 'Verdien ik meer door bij een miningpool aan te sluiten?'
@@ -63,20 +63,20 @@ Het uitbetalingssysteem bepaalt hoe shares opbrengsten worden. Dit zijn de meest
 |---|---|---|
 | PPLNS (pay per last N shares) | Gevonden poolblokken | Elke beloning wordt verdeeld over shares in een recent venster, gewogen naar moeilijkheid |
 | PPS (pay per share) | Elke geaccepteerde share | De pool betaalt een vast bedrag naar de verwachte waarde, ongeacht gevonden blokken |
-| Solo | Blokken die je zelf vindt | Je mint op je eigen node en houdt de volledige beloning van elk eigen blok |
+| Solo | Blokken die je zelf vindt | Je houdt de volledige beloning van elk eigen blok, via een pool met solomodus of op je eigen node |
 
 **PPLNS** kijkt terug vanaf ieder gevonden blok. Op bntpool.com zijn de «laatste N shares» een venster van zes uur. De pool telt de moeilijkheid van alle geaccepteerde shares in die zes uur op en geeft iedere miner hetzelfde aandeel in de beloning als in dat werk. Een share telt voor elk blok terwijl hij in het venster zit. Een doorlopende miner heeft steeds een vol venster achter zich; herstarten reset niets. [Hoe PPLNS-uitbetalingen werken op bntpool.com](/blog/nl/how-pplns-payouts-work/) legt dit stap voor stap uit.
 
 **PPS** betaalt elke share bij binnenkomst volgens zijn verwachte waarde: sharemoeilijkheid gedeeld door netwerkmoeilijkheid, maal blokbeloning. De poolbeheerder draagt de schommelingen in blokvondsten en betaalt tussendoor uit zijn eigen saldo.
 
-**Solomining** gebruikt geen pool. Je node bouwt templates en elk eigen blok betaalt volledig aan je wallet. Dit past bij opstellingen die zelfstandig vaak blokken vinden. Seine ondersteunt beide: standaard bntpool.com, of `./seine --mode daemon` voor je eigen gesynchroniseerde Blocknet-node.
+**Solomining** betaalt de volledige beloning van elk blok aan de miner die het vond. Dit past bij opstellingen die zelfstandig vaak blokken vinden. Op bntpool.com mine je solo door `solo:` voor je adres te zetten: de pool draait nog steeds de node en betaalt je blokken via de normale uitbetalingen, en [solo minen op bntpool.com](/blog/nl/solo-mine-blocknet-on-bntpool/) toont de setup. Seine heeft daarnaast een daemonmodus, `./seine --mode daemon`, voor je eigen gesynchroniseerde Blocknet-node.
 
 ## Waarop let je bij een miningpool?
 
 Deze details bepalen hoe je wordt betaald en hoe eenvoudig je dat controleert:
 
 - **Een helder uitbetalingssysteem.** De pool hoort het systeem en de instellingen, zoals het PPLNS-venster, te vermelden. bntpool.com doet dat op [Get Started](/start) en `https://bntpool.com/api/info`.
-- **Bevestigingen en minimumuitbetaling.** Beloningen wachten doorgaans tot het blok diep genoeg ligt. Betalingen volgen zodra je saldo het minimum bereikt. Op bntpool.com is een beloning na 60 blokken bevestigd, gelijk aan Blocknets coinbase maturity. Saldi vanaf 0,1 BNT worden automatisch betaald.
+- **Bevestigingen en minimumuitbetaling.** Beloningen wachten doorgaans tot het blok diep genoeg ligt. Betalingen volgen zodra je saldo het minimum bereikt. Op bntpool.com is een beloning na 60 blokken bevestigd, gelijk aan Blocknets coinbase maturity. Saldi vanaf 1 BNT worden automatisch betaald.
 - **Openbare, controleerbare cijfers.** Je moet elk gevonden blok en elke betaling kunnen zien. bntpool.com toont ze op [Blocks](/blocks) en [Payouts](/payouts), evenals effort per ronde op [Luck](/luck).
 - **Je eigen statistieken.** Zoek je adres voor hashrate, shares en saldi. Dat kan op de [statistiekenpagina](/stats); de [gids voor het volgen van je miner](/blog/nl/track-your-miner-on-bntpool/) legt elke kaart uit.
 - **Eenvoudige instelling.** Minder instellingen betekent sneller minen. bntpool.com is de standaard in seine, dat threads, kernels en geheugen zelf afstemt. Je kunt inloggen met een [Blocknet ID-naam](https://seineminer.com/nl/blog/blocknet-id-pay-by-name/) zoals `@name` in plaats van een volledig adres.
@@ -88,11 +88,11 @@ Deze details bepalen hoe je wordt betaald en hoe eenvoudig je dat controleert:
 | Uitbetalingssysteem | PPLNS |
 | Sharevenster | 6 uur |
 | Bevestigingen voor uitbetaling | 60 blokken |
-| Minimumuitbetaling | 0,1 BNT |
+| Minimumuitbetaling | 1 BNT |
 | Stratum-adres | `stratum+tcp://bntpool.com:3333` |
 
 Het [pooldashboard](/) toont de actuele situatie: verbonden miners, pool- en netwerkhashrate, gevonden blokken en effort van de huidige ronde. Op 25 oktober 2026 om 02:25 EDT draaide de pool op circa 5.200 H/s binnen een netwerk van ongeveer 44.400 H/s, met 246 verbonden miners. Dat is circa 12% van het netwerk, goed voor naar verwachting 34 blokken per dag, ongeveer één per 42 minuten. Deze cijfers veranderen voortdurend. Kijk op het dashboard voor actuele waarden en gebruik de [gids voor beloningsschattingen](/blog/nl/estimate-blocknet-mining-rewards/) om ze naar BNT voor jouw hashrate om te rekenen.
 
 Om deel te nemen, [download je seine](https://seineminer.com/nl/#download), start je het, plak je je Blocknet-adres of `@name` en accepteer je de standaardpool. De [mininggids voor seine](https://seineminer.com/nl/blog/how-to-mine-blocknet/) behandelt elke stap. [Blocknet minen op bntpool.com](/blog/nl/mine-blocknet-on-bntpool/) bespreekt rignamen en het controleren van je eerste shares.
 
-<CTA target="pool" title="Sluit aan op bntpool.com" text="Verbind seine met de pool en verdien aan elk gevonden blok, automatisch naar je adres verstuurd zodra je 0,1 BNT bereikt." />
+<CTA target="pool" title="Sluit aan op bntpool.com" text="Verbind seine met de pool en verdien aan elk gevonden blok, automatisch naar je adres verstuurd zodra je 1 BNT bereikt." />

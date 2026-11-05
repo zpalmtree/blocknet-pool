@@ -2,7 +2,7 @@
 title: Madencilik havuzu nedir?
 description: Madencilik havuzu birçok madencinin hashrate'ini birleştirip her blok ödülünü paylaşır. Havuzları, PPLNS, PPS ve solo madenciliği öğrenin.
 tags: [Madencilik temelleri, Madencilik havuzları, PPLNS, bntpool]
-sourceHash: '15d1453f41d9'
+sourceHash: '698c26d17e91'
 translation: draft
 faq:
   - q: 'Madencilik havuzuna katılmak ürettiğim miktarı artırır mı?'
@@ -63,20 +63,20 @@ Share'ler zorlukla ağırlıklandırılır. Blocknet'te D zorluğu, hedefi karş
 |---|---|---|
 | PPLNS (pay per last N shares) | Havuzun bulduğu bloklar | Her blok ödülü son zaman penceresinde gönderilen share'ler arasında zorluklarına göre bölünür |
 | PPS (pay per share) | Kabul edilen her share | Havuz blok bulsa da bulmasa da share'in beklenen değerine göre sabit tutar öder |
-| Solo | Kendiniz bulduğunuz bloklar | Kendi düğümünüzle madencilik yapar, bulduğunuz her bloğun tüm ödülünü tutarsınız |
+| Solo | Kendiniz bulduğunuz bloklar | Solo modu sunan bir havuz üzerinden veya kendi düğümünüzle kazarak bulduğunuz her bloğun tüm ödülünü tutarsınız |
 
 **PPLNS**, havuzun bulduğu her bloktan geriye bakar. bntpool.com'da “son N share” altı saatlik penceredir: havuz bloktan önceki altı saatte kabul edilen her share'in zorluğunu toplar ve her madenciye işteki payıyla aynı ödül oranını verir. Her share penceredeyken bulunan tüm bloklara sayılır; düzenli çalışan madencinin arkasında her zaman tam pencere vardır ve yeniden başlatma hiçbir şeyi sıfırlamaz. [bntpool.com'da PPLNS ödemeleri nasıl çalışır?](/blog/tr/how-pplns-payouts-work/) paylaşımı adım adım anlatır.
 
 **PPS**, her share geldiğinde beklenen değerini kullanarak ödeme yapar: share zorluğu ağ zorluğuna bölünür, blok ödülüyle çarpılır. Havuz işletmecisi blok bulmanın iniş çıkışlarını üstlenir ve arada madencilere kendi bakiyesinden öder.
 
-**Solo madencilik** havuzu atlar. Kendi düğümünüz şablonları oluşturur ve bulduğunuz her blok tüm ödülü cüzdanınıza öder. Tek başına sık blok bulacak kadar büyük işletmelere uygundur. seine madencisi ikisini de destekler: varsayılan olarak bntpool.com'da çalışır; `./seine --mode daemon` ise kendi eşitlenmiş Blocknet düğümünüzle madencilik yapar.
+**Solo madencilik** her bloğun tüm ödülünü onu bulan madenciye öder. Tek başına sık blok bulacak kadar büyük işletmelere uygundur. bntpool.com'da adresinizin önüne `solo:` koyarak solo kazarsınız: havuz yine düğümü çalıştırır ve bloklarınızı normal ödemeleriyle öder; [bntpool.com'da solo madencilik](/blog/tr/solo-mine-blocknet-on-bntpool/) kurulumu gösterir. seine madencisinin ayrıca kendi eşitlenmiş Blocknet düğümünüzle madencilik yapan bir daemon modu da vardır: `./seine --mode daemon`.
 
 ## Madencilik havuzunda nelere bakmalısınız?
 
 Havuzları karşılaştırırken nasıl ödeme alacağınızı ve bunu ne kadar kolay denetleyebileceğinizi belirleyen ayrıntılar şunlardır:
 
 - **Açık ödeme yöntemi.** Havuz, yöntemini ve PPLNS penceresi gibi ayarlarını belirtmelidir. bntpool.com bunları [Get Started sayfasında](/start) listeler ve `https://bntpool.com/api/info` adresinde yayımlar.
-- **Onaylar ve en düşük ödeme.** Ödüller genelde blok zincirde yeterince derine ulaşana kadar bekler; bakiye alt sınırı geçtiğinde gönderilir. bntpool.com'da blok ödülü, Blocknet'in coinbase olgunlaşmasıyla uyumlu olarak 60 blok sonra onaylanır; 0,1 BNT ve üzeri bakiyeler otomatik ödenir.
+- **Onaylar ve en düşük ödeme.** Ödüller genelde blok zincirde yeterince derine ulaşana kadar bekler; bakiye alt sınırı geçtiğinde gönderilir. bntpool.com'da blok ödülü, Blocknet'in coinbase olgunlaşmasıyla uyumlu olarak 60 blok sonra onaylanır; 1 BNT ve üzeri bakiyeler otomatik ödenir.
 - **Herkese açık, kontrol edilebilir sayılar.** Havuzun bulduğu her bloğu ve gönderdiği her ödemeyi görebilmelisiniz. bntpool.com bunları [bloklar](/blocks) ve [ödemeler](/payouts) sayfalarında, tur bazında eforu ise [şans sayfasında](/luck) gösterir.
 - **Kendi istatistikleriniz.** Hashrate, share ve bakiyeleri görmek için adresinizi aratın. bntpool.com'da bu, [istatistikler sayfasıdır](/stats); [madencinizi takip etme](/blog/tr/track-your-miner-on-bntpool/) rehberi her kartı açıklar.
 - **Kolay kurulum.** Ne kadar az ayar gerekirse o kadar çabuk başlarsınız. bntpool.com, iş parçacıkları, kernel'ler ve belleği kendi ayarlayan seine'in varsayılan havuzudur. Tam adres yerine `@name` gibi bir [Blocknet ID adıyla](https://seineminer.com/tr/blog/blocknet-id-pay-by-name/) giriş yapabilirsiniz.
@@ -88,11 +88,11 @@ Havuzları karşılaştırırken nasıl ödeme alacağınızı ve bunu ne kadar 
 | Ödeme yöntemi | PPLNS |
 | Share penceresi | 6 saat |
 | Ödeme öncesi onaylar | 60 blok |
-| En düşük ödeme | 0,1 BNT |
+| En düşük ödeme | 1 BNT |
 | Stratum adresi | `stratum+tcp://bntpool.com:3333` |
 
 [Havuz paneli](/) canlı durumu gösterir: bağlı madenciler, havuz ve ağ hashrate'i, bulunan bloklar ve mevcut turun eforu. 25 Ekim 2026 saat 02:25 EDT'de alınan görüntüde havuz, yaklaşık 44.400 H/s ağ içinde 5.200 H/s hızında çalışıyor ve 246 madenci bağlı bulunuyordu. Bu, ağın yaklaşık %12'sidir; günde yaklaşık 34, kabaca 42 dakikada bir blok beklemek için yeterlidir. Rakamlar sürekli değişir; güncel değerleri panelden kontrol edin ve kendi hashrate'iniz için BNT'ye çevirmek üzere [ödül tahmini rehberini](/blog/tr/estimate-blocknet-mining-rewards/) kullanın.
 
 Katılmak için [seine'i indirin](https://seineminer.com/tr/#download), çalıştırın, Blocknet adresinizi veya `@name` adınızı yapıştırın ve varsayılan havuzu kabul edin. [seine madencilik rehberi](https://seineminer.com/tr/blog/how-to-mine-blocknet/) her adımı, [bntpool.com'da Blocknet madenciliği](/blog/tr/mine-blocknet-on-bntpool/) ise rig adlarını ve ilk share'lerin kontrolünü anlatır.
 
-<CTA target="pool" title="bntpool.com'a katılın" text="seine'i havuza yönlendirin ve bulduğu her bloktan pay kazanın; 0,1 BNT'ye ulaştığınızda adresinize otomatik gönderilsin." />
+<CTA target="pool" title="bntpool.com'a katılın" text="seine'i havuza yönlendirin ve bulduğu her bloktan pay kazanın; 1 BNT'ye ulaştığınızda adresinize otomatik gönderilsin." />

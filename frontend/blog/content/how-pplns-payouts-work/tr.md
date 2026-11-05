@@ -1,18 +1,18 @@
 ---
 title: bntpool.com'da PPLNS ödemeleri nasıl çalışır?
-description: bntpool.com Blocknet madencilerine altı saatlik share penceresiyle PPLNS öder. Ödül paylaşımını, 60 onayı ve 0,1 BNT ödeme alt sınırını öğrenin.
+description: bntpool.com Blocknet madencilerine altı saatlik share penceresiyle PPLNS öder. Ödül paylaşımını, 60 onayı ve 1 BNT ödeme alt sınırını öğrenin.
 tags: [Ödemeler, PPLNS, bntpool, Madencilik rehberi]
-sourceHash: 'f216680e1944'
+sourceHash: '2f69ab18ce0b'
 translation: draft
 faq:
   - q: 'bntpool.com''da PPLNS penceresi ne kadar uzun?'
     a: 'Pencere altı saattir. Havuz bir blok bulduğunda o bloktan önceki altı saate bakar ve bu sürede share gönderen herkes arasında ödülü share zorluklarıyla orantılı paylaşır. Güncel değer havuzun Get Started sayfasında listelenir.'
   - q: 'bntpool.com''da en düşük ödeme tutarı nedir?'
-    a: 'En düşük ödeme 0,1 BNT''dir. Onaylanmış bakiyeniz bu tutara ulaştığında havuz, talep veya alma işlemi gerektirmeden Blocknet adresinize otomatik gönderir. Daha küçük bakiye hesabınızda kalır ve share katkınız olan her onaylanmış blokla eşiği geçene kadar büyür.'
+    a: 'En düşük ödeme 1 BNT''dir. Onaylanmış bakiyeniz bu tutara ulaştığında havuz, talep veya alma işlemi gerektirmeden Blocknet adresinize otomatik gönderir. Daha küçük bakiye hesabınızda kalır ve share katkınız olan her onaylanmış blokla eşiği geçene kadar büyür.'
   - q: 'Estimated Rewards neden Confirmed Rewards değerinden farklı?'
     a: 'Estimated Rewards, havuzun bulduğu ve hâlâ 60 onayını toplayan bloklardaki payınızdır; bu yüzden tutar değişebilir. Confirmed Rewards, zincirde 60 blok derine ulaşmış bloklardan gelir ve ödenmeyi bekler. Her blok olgunlaştığında tutarı ilk karttan ikinciye geçer.'
   - q: 'Madenciliği durdurduğum anda ödüllerim kesilir mi?'
-    a: 'Hayır. Her share gönderilmesinden sonra altı saat PPLNS penceresinde kalır; havuzun bu sürede bulduğu bloklar yine size pay kazandırır. Önceden onaylanmış ödüller bakiyenizde kalır ve havuz, bakiye 0,1 BNT alt sınırına ulaşınca ödeme yapar.'
+    a: 'Hayır. Her share gönderilmesinden sonra altı saat PPLNS penceresinde kalır; havuzun bu sürede bulduğu bloklar yine size pay kazandırır. Önceden onaylanmış ödüller bakiyenizde kalır ve havuz, bakiye 1 BNT alt sınırına ulaşınca ödeme yapar.'
   - q: 'Şans sayfasında %100 üzerindeki efor ne anlama gelir?'
     a: 'Efor, havuzun bir turda yaptığı işi, beklenen iş miktarı olan blok zorluğuyla karşılaştırır. %100 üzeri turun ortalamadan uzun, %100 altı daha kısa sürdüğünü gösterir. İkisi de normaldir ve çok sayıda turda efor ortalaması %100 civarına gelir.'
 ---
@@ -34,7 +34,7 @@ bntpool.com'da “son N” bir süredir: altı saat. Havuzun [Get Started sayfas
 | Ödeme yöntemi | PPLNS |
 | Share penceresi | 6 saat |
 | Ödeme öncesi onaylar | 60 blok |
-| En düşük ödeme | 0,1 BNT |
+| En düşük ödeme | 1 BNT |
 
 Share'ler zorluğa göre sayılır. Havuz her madenci bağlantısına ayrı share zorluğu verir ve her madencinin düzenli share akışı göndermesi için ayarlar. Daha hızlı makine daha zor share'ler alır; her share'i daha fazla ağırlık taşır. Payınızı belirleyen toplam yaptığınız iştir; bu, dizüstü ve sunucu için eşit derecede adil bir ölçüdür.
 
@@ -46,7 +46,7 @@ Havuz blok bulduğunda ödül her seferinde aynı aşamalardan geçer:
 2. **Pencere ölçülür.** Havuz blokta biten altı saatlik süreyi alır ve o sürede her adresten kabul edilen share'lerin zorluklarını toplar.
 3. **Ödül bölünür.** Her adres, pencerenin toplam işindeki payıyla aynı oranda ödül alır.
 4. **Blok olgunlaşır.** Payınız blok 60 blok derine ulaşana kadar tahmin olarak görünür, sonra onaylanmış bakiyeye geçer.
-5. **Bakiye ödenir.** Onaylanmış bakiyeniz 0,1 BNT'ye ulaştığında havuz adresinize gönderir.
+5. **Bakiye ödenir.** Onaylanmış bakiyeniz 1 BNT'ye ulaştığında havuz adresinize gönderir.
 
 ## Hesaplama örneği
 
@@ -64,7 +64,7 @@ Bloktan önceki altı saatte havuzdaki tüm madencilerin toplam 1.000.000 zorluk
 | Aynı hashrate, bloktan 30 dakika önce katılan | 1.667 | yaklaşık %0,17 | yaklaşık 0,67 BNT |
 | Küçük madenci, altı saatin tamamında çalışan | 100 | %0,01 | 0,04 BNT |
 
-Son satırdaki küçük madenci blok başına 0,04 BNT kazanır; onaylanmış bakiyesi bu tür üç bloktan sonra 0,1 BNT alt sınırını aşar ve ödenir.
+Son satırdaki küçük madenci blok başına 0,04 BNT kazanır; onaylanmış bakiyesi bu tür 25 bloktan sonra 1 BNT alt sınırını aşar ve ödenir.
 
 ## PPLNS neden düzenli çalışan madencileri ödüllendirir?
 
@@ -83,7 +83,7 @@ Blok olgunlaşırken havuz hâlâ ana zincirin parçası olduğunu kontrol eder.
 ## bntpool.com ödemeleri ne zaman gelir?
 
 <Answer>
-Blok 60 onay aldıktan sonra, Blocknet'in beş dakikalık blok süresinde yaklaşık beş saat içinde, payınız istatistikler sayfasındaki Confirmed Rewards'a geçer. Onaylanmış bakiyeniz 0,1 BNT'ye ulaştığında bntpool.com bunu Blocknet adresinize otomatik gönderir. Talep etmeniz veya almanız gereken bir işlem yoktur.
+Blok 60 onay aldıktan sonra, Blocknet'in beş dakikalık blok süresinde yaklaşık beş saat içinde, payınız istatistikler sayfasındaki Confirmed Rewards'a geçer. Onaylanmış bakiyeniz 1 BNT'ye ulaştığında bntpool.com bunu Blocknet adresinize otomatik gönderir. Talep etmeniz veya almanız gereken bir işlem yoktur.
 </Answer>
 
 Yeni madenci için ilk tahmin, share'leri penceredeyken havuz bir blok bulduğunda görünür. İlk ödeme bu blok olgunlaştıktan ve bakiyeniz alt sınıra ulaştıktan sonra gelir. Gönderilen ödemeler [ödemeler sayfasında](/payouts) ve istatistikler sayfasındaki kendi geçmişinizde listelenir.
@@ -106,4 +106,4 @@ Efor, havuzun bir blok bulmak için ne kadar iş yaptığını ölçer. Tur sır
 
 Şans, blokların ne sıklıkta geldiğini etkiler. Her bloktaki payınız yalnızca pencerenin işindeki payınıza bağlıdır; düzenli madencilik, tur kısa da uzun da olsa bu payı tam tutar.
 
-<CTA target="pool" title="Havuza katılın" text="bntpool.com'da düzenli madencilik yapın; her bloktaki payınız 0,1 BNT'ye ulaştığında otomatik ödensin." />
+<CTA target="pool" title="Havuza katılın" text="bntpool.com'da düzenli madencilik yapın; her bloktaki payınız 1 BNT'ye ulaştığında otomatik ödensin." />

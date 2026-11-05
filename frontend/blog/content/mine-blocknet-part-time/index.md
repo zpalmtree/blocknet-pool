@@ -25,7 +25,7 @@ Yes. Eligible work from a short session can participate in blocks whose PPLNS wi
 
 ## Know which clock you are looking at
 
-bntpool currently publishes a six-hour PPLNS window, 60 blocks before payout eligibility and a 0.1 BNT minimum payout on its [Get Started page](/start). These describe three different stages: work considered for a block, maturation of that block and a balance threshold. A six-hour share window is not a six-hour timer promising a payment.
+bntpool currently publishes a six-hour PPLNS window, 60 blocks before payout eligibility and a 1 BNT minimum payout on its [Get Started page](/start). These describe three different stages: work considered for a block, maturation of that block and a balance threshold. A six-hour share window is not a six-hour timer promising a payment.
 
 For the allocation formula, use the [PPLNS guide](/blog/how-pplns-payouts-work/). Your eligible shares are weighted by difficulty relative to all eligible work in the same window. Minutes online alone do not fix a percentage of the next reward. Different devices, pool participation and share outcomes can change the weights even when two sessions last equally long.
 
@@ -45,7 +45,7 @@ Exit seine normally with `q` in the dashboard or `Ctrl+C` in the terminal. Keep 
 
 When a share leaves the window for a later block, that does not erase a reward already allocated to an earlier block. Estimated rewards still follow block status and maturation; confirmed unpaid rewards remain in the account until payout processing handles them. Read the [confirmations guide](/blog/block-confirmations-mining-rewards/) for the difference between tentative block credit and a mature balance.
 
-A confirmed balance below 0.1 BNT remains below the current automatic payout threshold until additional credit brings it to the minimum. Reconnecting by itself neither increases that balance nor forces a payment. Conversely, an eligible balance does not require your miner to stay online while the pool processes it. Use the [payout history](/payouts) to distinguish an unpaid balance from a sent transaction.
+A confirmed balance below 1 BNT remains below the current automatic payout threshold until additional credit brings it to the minimum. Reconnecting by itself neither increases that balance nor forces a payment. Conversely, an eligible balance does not require your miner to stay online while the pool processes it. Use the [payout history](/payouts) to distinguish an unpaid balance from a sent transaction.
 
 ## Return to the same account and verify fresh work
 
