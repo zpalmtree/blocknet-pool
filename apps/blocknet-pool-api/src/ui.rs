@@ -141,7 +141,7 @@ const RETIRED_PATHS: &[&str] = &["/status"];
 
 fn is_spa_route(path: &str) -> bool {
     let path = normalize_path(path);
-    matches!(path, "/admin" | "/wallet") || SITEMAP_PATHS.contains(&path)
+    matches!(path, "/admin" | "/wallet" | "/alerts") || SITEMAP_PATHS.contains(&path)
 }
 
 fn normalize_path(path: &str) -> &str {

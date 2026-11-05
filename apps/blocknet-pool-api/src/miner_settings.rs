@@ -23,8 +23,9 @@ use axum::{Json, Router};
 use parking_lot::Mutex;
 use pool_runtime::config::Config as RuntimeConfig;
 use pool_runtime::miner_settings::{
-    effective_min_payout, max_min_payout, take_back_decision, validate_min_payout, MinerSettings,
-    MinerSettingsRecord, TakeBack, ATOMIC_PER_BNT, TAKE_BACK_WINDOW,
+    effective_min_payout, max_min_payout, plausible_email, take_back_decision, validate_min_payout,
+    MinerAlert, MinerSettings, MinerSettingsRecord, TakeBack, ALERT_OFFLINE_MINUTES,
+    ATOMIC_PER_BNT, TAKE_BACK_WINDOW,
 };
 use pool_runtime::store::PoolStore;
 use serde::Deserialize;
@@ -160,10 +161,23 @@ struct Limits {
     take_back_by_account: AttemptLimiter,
     take_back_by_client: AttemptLimiter,
     password_writes_by_client: AttemptLimiter,
+    alert_emails_by_account: AttemptLimiter,
+    alert_emails_by_client: AttemptLimiter,
+    alert_emails_total: AttemptLimiter,
 }
+
+/// Confirmation emails per account per hour.
+const ALERT_EMAILS_PER_ACCOUNT: u32 = 3;
+/// Confirmation emails per client per hour, across accounts.
+const ALERT_EMAILS_PER_CLIENT: u32 = 10;
+/// Confirmation emails to one recipient per day, across accounts.
+const ALERT_EMAILS_PER_RECIPIENT: u64 = 3;
+/// Confirmation emails the pool sends per hour in all.
+const ALERT_EMAILS_PER_HOUR: u32 = 200;
 
 pub(crate) struct MinerSettingsService {
     store: Arc<PoolStore>,
+    alerts: Option<Arc<crate::alerts::AlertService>>,
     runtime: RuntimeConfig,
     client_ip: Arc<ClientIpPolicy>,
     sessions: Mutex<Sessions>,
@@ -329,6 +343,26 @@ struct SettingsRequest {
     min_payout: Option<f64>,
     default_solo: bool,
     hide_workers: bool,
+    /// Alert choices; applied only once an alert email is set.
+    #[serde(default)]
+    alerts: Option<AlertChoices>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlertChoices {
+    /// 0 turns rig-stopped alerts off.
+    offline_minutes: u32,
+    notify_payouts: bool,
+    notify_solo_blocks: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlertEmailRequest {
+    email: String,
+    #[serde(default)]
+    lang: String,
 }
 
 /// Request context: account, client IP group and session token.
@@ -343,9 +377,11 @@ impl MinerSettingsService {
         store: Arc<PoolStore>,
         runtime: RuntimeConfig,
         client_ip: Arc<ClientIpPolicy>,
+        alerts: Option<Arc<crate::alerts::AlertService>>,
     ) -> Self {
         Self {
             store,
+            alerts,
             runtime,
             client_ip,
             sessions: Mutex::new(Sessions::default()),
@@ -355,6 +391,9 @@ impl MinerSettingsService {
                 take_back_by_account: AttemptLimiter::new(),
                 take_back_by_client: AttemptLimiter::new(),
                 password_writes_by_client: AttemptLimiter::new(),
+                alert_emails_by_account: AttemptLimiter::new(),
+                alert_emails_by_client: AttemptLimiter::new(),
+                alert_emails_total: AttemptLimiter::new(),
             }),
             hashing: Semaphore::new(MAX_CONCURRENT_HASHES),
             hide_workers: Mutex::new(HashMap::new()),
@@ -579,6 +618,7 @@ impl MinerSettingsService {
         caller: &Caller,
         record: Option<&MinerSettingsRecord>,
         unlocked: bool,
+        alert: Option<&MinerAlert>,
     ) -> Value {
         let mut body = json!({
             "account": caller.account,
@@ -590,6 +630,7 @@ impl MinerSettingsService {
             "default_min_payout": coins(self.default_minimum(&caller.account)),
             "max_min_payout": coins(self.max_min_payout(&caller.account)),
             "your_ip": caller.client,
+            "alerts_available": self.alerts.is_some(),
         });
         if let (true, Some(record)) = (unlocked, record) {
             body["settings"] = json!({
@@ -597,18 +638,45 @@ impl MinerSettingsService {
                 "default_solo": record.settings.default_solo,
                 "hide_workers": record.settings.hide_workers,
             });
+            body["alerts"] = alert.map_or(Value::Null, |alert| {
+                json!({
+                    "email": alert.email,
+                    "confirmed": alert.confirmed_at.is_some(),
+                    "offline_minutes": alert.offline_minutes,
+                    "notify_payouts": alert.notify_payouts,
+                    "notify_solo_blocks": alert.notify_solo_blocks,
+                })
+            });
         }
         body
     }
 
-    fn respond(
+    /// The account's alert email, read only for an unlocked caller.
+    async fn alert_for(
+        &self,
+        account: &str,
+        unlocked: bool,
+    ) -> Result<Option<MinerAlert>, ApiError> {
+        if !unlocked || self.alerts.is_none() {
+            return Ok(None);
+        }
+        let account = account.to_string();
+        self.blocking(move |store| store.miner_alert(&account))
+            .await
+    }
+
+    async fn respond(
         &self,
         caller: &Caller,
         record: Option<&MinerSettingsRecord>,
         unlocked: bool,
         new_token: Option<String>,
-    ) -> Response {
-        respond_body(self.state_body(caller, record, unlocked), new_token)
+    ) -> ApiResult {
+        let alert = self.alert_for(&caller.account, unlocked).await?;
+        Ok(respond_body(
+            self.state_body(caller, record, unlocked, alert.as_ref()),
+            new_token,
+        ))
     }
 }
 
@@ -651,7 +719,7 @@ impl MinerSettingsService {
         let unlocked = record
             .as_ref()
             .is_some_and(|record| self.unlocked(&caller, record));
-        Ok(self.respond(&caller, record.as_ref(), unlocked, None))
+        self.respond(&caller, record.as_ref(), unlocked, None).await
     }
 
     fn require_client(&self, caller: &Caller) -> Result<String, ApiError> {
@@ -701,7 +769,7 @@ impl MinerSettingsService {
             .await?
             .ok_or_else(|| ApiError::internal(anyhow::anyhow!("claimed settings row missing")))?;
         let token = self.unlock_session(&caller, &record);
-        Ok(self.respond(&caller, Some(&record), true, token))
+        self.respond(&caller, Some(&record), true, token).await
     }
 
     async fn unlock(&self, caller: Caller, request: PasswordRequest) -> ApiResult {
@@ -763,7 +831,7 @@ impl MinerSettingsService {
             .unlock_by_account
             .release(&caller.account);
         let token = self.unlock_session(&caller, &record);
-        Ok(self.respond(&caller, Some(&record), true, token))
+        self.respond(&caller, Some(&record), true, token).await
     }
 
     async fn take_back(&self, caller: Caller, request: TakeBackRequest) -> ApiResult {
@@ -862,8 +930,12 @@ impl MinerSettingsService {
                 let record = self.record(&caller.account).await?.ok_or_else(|| {
                     ApiError::internal(anyhow::anyhow!("taken back settings row missing"))
                 })?;
+                // The new owner sets its own alert email.
+                let alert_account = caller.account.clone();
+                self.blocking(move |store| store.remove_miner_alert(&alert_account))
+                    .await?;
                 let token = self.unlock_session(&caller, &record);
-                let mut body = self.state_body(&caller, Some(&record), true);
+                let mut body = self.state_body(&caller, Some(&record), true, None);
                 body["share"] = json!(share);
                 Ok(respond_body(body, token))
             }
@@ -909,7 +981,7 @@ impl MinerSettingsService {
             .ok_or_else(|| ApiError::internal(anyhow::anyhow!("settings row missing")))?;
         // Other sessions end with the old password; this one stays open.
         let token = self.unlock_session(&caller, &record);
-        Ok(self.respond(&caller, Some(&record), true, token))
+        self.respond(&caller, Some(&record), true, token).await
     }
 
     async fn save(&self, caller: Caller, request: SettingsRequest) -> ApiResult {
@@ -975,11 +1047,158 @@ impl MinerSettingsService {
                 "miner settings saved"
             );
         }
+        if let (Some(choices), Some(_)) = (request.alerts, &self.alerts) {
+            if choices.offline_minutes != 0
+                && !ALERT_OFFLINE_MINUTES.contains(&choices.offline_minutes)
+            {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_settings",
+                    "Choose 10, 30 or 60 minutes.",
+                ));
+            }
+            let account = caller.account.clone();
+            self.blocking(move |store| {
+                store.update_miner_alert_choices(
+                    &account,
+                    choices.offline_minutes,
+                    choices.notify_payouts,
+                    choices.notify_solo_blocks,
+                )
+            })
+            .await?;
+        }
         let record = self
             .record(&caller.account)
             .await?
             .ok_or_else(|| ApiError::internal(anyhow::anyhow!("settings row missing")))?;
-        Ok(self.respond(&caller, Some(&record), true, None))
+        self.respond(&caller, Some(&record), true, None).await
+    }
+
+    fn alert_service(&self) -> Result<&Arc<crate::alerts::AlertService>, ApiError> {
+        self.alerts.as_ref().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "alerts_unavailable",
+                "Alert emails are not available on this pool.",
+            )
+        })
+    }
+
+    /// Sets the alert email and sends its confirmation link.
+    async fn set_alert_email(&self, caller: Caller, request: AlertEmailRequest) -> ApiResult {
+        let service = Arc::clone(self.alert_service()?);
+        let email = request.email.trim().to_string();
+        if !plausible_email(&email) {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_email",
+                "Enter an email address, like you@example.com.",
+            ));
+        }
+        let client = self.require_client(&caller)?;
+        let record = self.require_unlocked(&caller).await?;
+        // Only addresses that mine here get alerts, and one inbox gets only a
+        // few confirmation emails a day however many addresses ask.
+        let account = caller.account.clone();
+        let recipient = email.clone();
+        let (active, recent) = self
+            .blocking(move |store| {
+                let since = SystemTime::now()
+                    .checked_sub(Duration::from_secs(86_400))
+                    .unwrap_or(UNIX_EPOCH);
+                Ok((
+                    store.miner_has_any_activity(&account)?,
+                    store.alert_confirmations_to(&recipient, since)?,
+                ))
+            })
+            .await?;
+        if !active {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "not_mining",
+                "Alert emails are available once this address has mined on the pool.",
+            ));
+        }
+        if recent >= ALERT_EMAILS_PER_RECIPIENT {
+            return Err(ApiError::rate_limited(3_600));
+        }
+        {
+            let now = Instant::now();
+            let mut limits = self.limits.lock();
+            if !limits
+                .alert_emails_total
+                .try_take("all", ALERT_EMAILS_PER_HOUR, now)
+            {
+                return Err(ApiError::rate_limited(
+                    limits.alert_emails_total.retry_after("all", now),
+                ));
+            }
+            if !limits
+                .alert_emails_by_client
+                .try_take(&client, ALERT_EMAILS_PER_CLIENT, now)
+            {
+                return Err(ApiError::rate_limited(
+                    limits.alert_emails_by_client.retry_after(&client, now),
+                ));
+            }
+            if !limits.alert_emails_by_account.try_take(
+                &caller.account,
+                ALERT_EMAILS_PER_ACCOUNT,
+                now,
+            ) {
+                return Err(ApiError::rate_limited(
+                    limits
+                        .alert_emails_by_account
+                        .retry_after(&caller.account, now),
+                ));
+            }
+        }
+        let lang = crate::alerts::supported_lang(request.lang.trim()).to_string();
+        let confirm_token = crate::alerts::new_token();
+        let unsubscribe_token = crate::alerts::new_token();
+        let hash = crate::alerts::token_hash(&confirm_token);
+        let account = caller.account.clone();
+        let stored_email = email.clone();
+        let stored_lang = lang.clone();
+        self.blocking(move |store| {
+            store.set_miner_alert_email(
+                &account,
+                &stored_email,
+                &stored_lang,
+                &hash,
+                &unsubscribe_token,
+                SystemTime::now(),
+            )
+        })
+        .await?;
+        let mail = crate::alerts::confirm_mail(
+            &service.config,
+            &email,
+            &lang,
+            &caller.account,
+            &confirm_token,
+        );
+        if let Err(err) = service.mailer.send(&mail).await {
+            tracing::warn!(account = %caller.account, error = %err, "alert confirmation email failed");
+            return Err(ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "email_failed",
+                "The confirmation email could not be sent. Try again shortly.",
+            ));
+        }
+        tracing::info!(account = %caller.account, "alert confirmation email sent");
+        self.respond(&caller, Some(&record), true, None).await
+    }
+
+    async fn remove_alert_email(&self, caller: Caller) -> ApiResult {
+        self.alert_service()?;
+        let record = self.require_unlocked(&caller).await?;
+        let account = caller.account.clone();
+        self.blocking(move |store| store.remove_miner_alert(&account))
+            .await?;
+        tracing::info!(account = %caller.account, "alert email removed");
+        self.respond(&caller, Some(&record), true, None).await
     }
 }
 
@@ -1063,6 +1282,27 @@ async fn handle_password(
     finish(service.set_password(caller, request).await)
 }
 
+async fn handle_alert_email(
+    State(service): State<Arc<MinerSettingsService>>,
+    Path(account): Path<String>,
+    connect: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+    Json(request): Json<AlertEmailRequest>,
+) -> Response {
+    let caller = service.caller(normalize_account(&account), &headers, peer(connect));
+    finish(service.set_alert_email(caller, request).await)
+}
+
+async fn handle_alert_email_remove(
+    State(service): State<Arc<MinerSettingsService>>,
+    Path(account): Path<String>,
+    connect: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
+) -> Response {
+    let caller = service.caller(normalize_account(&account), &headers, peer(connect));
+    finish(service.remove_alert_email(caller).await)
+}
+
 pub(crate) fn router<S>(service: Arc<MinerSettingsService>) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -1082,6 +1322,14 @@ where
         .route(
             "/api/miner-settings/:account/password",
             post(handle_password),
+        )
+        .route(
+            "/api/miner-settings/:account/alert-email",
+            post(handle_alert_email),
+        )
+        .route(
+            "/api/miner-settings/:account/alert-email/remove",
+            post(handle_alert_email_remove),
         )
         .layer(body_limit)
         .with_state(service)
@@ -1283,6 +1531,7 @@ mod tests {
             Arc::clone(&store),
             runtime,
             Arc::new(ClientIpPolicy::default()),
+            None,
         ));
         let app: Router = router(Arc::clone(&service));
         let account = test_address();
@@ -1458,6 +1707,262 @@ mod tests {
             .await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(body["error"], "cooling_down");
+    }
+
+    #[tokio::test]
+    async fn alert_emails_confirm_then_report_stopped_and_returning_rigs() {
+        use crate::alert_mail::{AlertsConfig, MemoryMailer};
+        use crate::alerts::{run_cycle, AlertService, WorkerContext};
+        let Ok(url) = std::env::var("BLOCKNET_POOL_TEST_POSTGRES_URL") else {
+            eprintln!("skipping postgres test: set BLOCKNET_POOL_TEST_POSTGRES_URL");
+            return;
+        };
+        let store = tokio::task::spawn_blocking(move || PoolStore::open(&url, 2))
+            .await
+            .unwrap()
+            .expect("open test store");
+        let mailer = Arc::new(MemoryMailer::default());
+        let alerts = Arc::new(AlertService {
+            config: AlertsConfig::default(),
+            mailer: Arc::clone(&mailer) as Arc<dyn crate::alert_mail::Mailer>,
+        });
+        let service = Arc::new(MinerSettingsService::new(
+            Arc::clone(&store),
+            RuntimeConfig {
+                min_payout_amount: 1.0,
+                ..Default::default()
+            },
+            Arc::new(ClientIpPolicy::default()),
+            Some(Arc::clone(&alerts)),
+        ));
+        let app: Router =
+            router(Arc::clone(&service)).merge(crate::alerts::router(Arc::clone(&store)));
+        let account = test_address();
+        let path = format!("/api/miner-settings/{account}");
+        let mut owner = Client {
+            app: app.clone(),
+            ip: "198.51.100.7",
+            cookie: None,
+        };
+        let (status, _) = owner
+            .send(
+                "POST",
+                &format!("{path}/claim"),
+                Some(json!({"password": "correct horse"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Only an address that has mined may set one.
+        let (status, body) = owner
+            .send(
+                "POST",
+                &format!("{path}/alert-email"),
+                Some(json!({"email": "miner@example.com", "lang": "en"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "not_mining");
+        let seed = Arc::clone(&store);
+        let first = pool_runtime::engine::ShareRecord {
+            job_id: format!("alert-first-{}", rand::random::<u64>()),
+            miner: account.clone(),
+            worker: "old-rig".into(),
+            difficulty: 6_000,
+            nonce: rand::random::<u32>() as u64,
+            status: "verified",
+            was_sampled: true,
+            block_hash: None,
+            claimed_hash: None,
+            reject_reason: None,
+            created_at: SystemTime::now() - Duration::from_secs(5 * 3600),
+            solo: false,
+        };
+        tokio::task::spawn_blocking(move || seed.add_share(first).unwrap())
+            .await
+            .unwrap();
+
+        // A bad address is refused; a good one gets a confirmation email.
+        let (status, _) = owner
+            .send(
+                "POST",
+                &format!("{path}/alert-email"),
+                Some(json!({"email": "not an email"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, state) = owner
+            .send(
+                "POST",
+                &format!("{path}/alert-email"),
+                Some(json!({"email": "miner@example.com", "lang": "en"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{state}");
+        assert_eq!(state["alerts"]["email"], "miner@example.com");
+        assert_eq!(state["alerts"]["confirmed"], false);
+        let confirm = mailer.sent.lock().pop().expect("confirmation email");
+        assert_eq!(confirm.to, "miner@example.com");
+        assert!(confirm.unsubscribe_url.is_none());
+        let token = confirm
+            .text
+            .split("confirm=")
+            .nth(1)
+            .map(|rest| rest[..64].to_string())
+            .expect("token in link");
+
+        // Nothing is sent before the link is opened.
+        let context = WorkerContext {
+            store: Arc::clone(&store),
+            service: Arc::clone(&alerts),
+            pool_fee_pct: 0.0,
+            confirmations: 60,
+            // The pool has been up long enough to judge rigs.
+            pool_up_since: parking_lot::Mutex::new(Some(
+                SystemTime::now() - Duration::from_secs(3_600),
+            )),
+        };
+        let now = SystemTime::now();
+        let share = |worker: &str, at: SystemTime, nonce: u64| pool_runtime::engine::ShareRecord {
+            job_id: format!("alert-test-{nonce}"),
+            miner: account.clone(),
+            worker: worker.to_string(),
+            difficulty: 6_000,
+            nonce,
+            status: "verified",
+            was_sampled: true,
+            block_hash: None,
+            claimed_hash: None,
+            reject_reason: None,
+            created_at: at,
+            solo: false,
+        };
+        let base = rand::random::<u32>() as u64 * 1_000;
+        let seed = Arc::clone(&store);
+        let shares = vec![
+            share("rig-1", now - Duration::from_secs(20 * 60), base + 1),
+            share("laptop", now - Duration::from_secs(30), base + 2),
+        ];
+        tokio::task::spawn_blocking(move || {
+            for share in shares {
+                seed.add_share(share).unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        run_cycle(&context, now).await.unwrap();
+        assert!(mailer.sent.lock().is_empty(), "unconfirmed");
+
+        let mut stranger = Client {
+            app: app.clone(),
+            ip: "192.0.2.50",
+            cookie: None,
+        };
+        let (status, _) = stranger
+            .send(
+                "POST",
+                "/api/alerts/confirm",
+                Some(json!({"token": "f".repeat(64)})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, body) = stranger
+            .send("POST", "/api/alerts/confirm", Some(json!({"token": token})))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, state) = owner.send("GET", &path, None).await;
+        assert_eq!(state["alerts"]["confirmed"], true);
+        // Strangers never see the alert email.
+        let (_, public) = stranger.send("GET", &path, None).await;
+        assert!(public.get("alerts").is_none());
+
+        let (status, state) = owner
+            .send("PUT", &path, Some(json!({
+                "min_payout": null, "default_solo": false, "hide_workers": false,
+                "alerts": {"offline_minutes": 10, "notify_payouts": true, "notify_solo_blocks": true}
+            })))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{state}");
+        assert_eq!(state["alerts"]["offline_minutes"], 10);
+        let (status, _) = owner
+            .send("PUT", &path, Some(json!({
+                "min_payout": null, "default_solo": false, "hide_workers": false,
+                "alerts": {"offline_minutes": 7, "notify_payouts": true, "notify_solo_blocks": true}
+            })))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // rig-1 has been quiet for 20 minutes: one email, not repeated.
+        run_cycle(&context, now).await.unwrap();
+        let sent = std::mem::take(&mut *mailer.sent.lock());
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0].subject, "rig-1 stopped mining");
+        assert!(sent[0].text.contains("laptop"));
+        assert!(sent[0].unsubscribe_url.is_some());
+        run_cycle(&context, now).await.unwrap();
+        assert!(mailer.sent.lock().is_empty(), "not repeated");
+
+        // It mines again.
+        let seed = Arc::clone(&store);
+        let back = share("rig-1", now, base + 3);
+        tokio::task::spawn_blocking(move || seed.add_share(back).unwrap())
+            .await
+            .unwrap();
+        run_cycle(&context, now + Duration::from_secs(60))
+            .await
+            .unwrap();
+        let sent = std::mem::take(&mut *mailer.sent.lock());
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0].subject, "rig-1 is mining again");
+
+        // A solo block found after confirming.
+        let seed = Arc::clone(&store);
+        let block_account = account.clone();
+        // Above any block earlier runs left in the shared test database.
+        let height = 3_000_000_000
+            + SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+        tokio::task::spawn_blocking(move || {
+            seed.add_block(&pool_common::db::DbBlock {
+                height,
+                hash: format!("alert-test-{height}"),
+                difficulty: 1,
+                finder: block_account,
+                finder_worker: "rig-1".into(),
+                reward: 43_946_080_260,
+                timestamp: SystemTime::now(),
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+                solo: true,
+            })
+            .unwrap()
+        })
+        .await
+        .unwrap();
+        run_cycle(&context, now + Duration::from_secs(120))
+            .await
+            .unwrap();
+        let sent = std::mem::take(&mut *mailer.sent.lock());
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0].subject, "You found a block: 439.4608026 BNT");
+
+        // One-click unsubscribe from the email header.
+        let one_click = sent[0].unsubscribe_url.clone().unwrap();
+        let query = one_click.split("/api/alerts/unsubscribe").nth(1).unwrap();
+        let (status, _) = stranger
+            .send("POST", &format!("/api/alerts/unsubscribe{query}"), None)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, state) = owner.send("GET", &path, None).await;
+        assert_eq!(state["alerts"], Value::Null);
+        run_cycle(&context, now + Duration::from_secs(180))
+            .await
+            .unwrap();
+        assert!(mailer.sent.lock().is_empty());
     }
 
     #[test]

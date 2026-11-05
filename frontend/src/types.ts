@@ -1,5 +1,6 @@
 export type Route =
   | "wallet"
+  | "alerts"
   | "dashboard"
   | "start"
   | "info"
@@ -528,6 +529,20 @@ export interface MinerSettingsValues {
   min_payout: number;
   default_solo: boolean;
   hide_workers: boolean;
+  /** Alert choices; ignored until an alert email is set. */
+  alerts?: MinerAlertChoices;
+}
+
+export interface MinerAlertChoices {
+  /** 0 turns rig-stopped alerts off. */
+  offline_minutes: number;
+  notify_payouts: boolean;
+  notify_solo_blocks: boolean;
+}
+
+export interface MinerAlertState extends MinerAlertChoices {
+  email: string;
+  confirmed: boolean;
 }
 
 export interface MinerSettingsState {
@@ -546,6 +561,10 @@ export interface MinerSettingsState {
   /** The caller's own IP group, to fill in the take-back form. */
   your_ip: string | null;
   settings?: MinerSettingsValues;
+  /** The pool sends alert emails. */
+  alerts_available?: boolean;
+  /** The alert email, for an unlocked caller; null when none is set. */
+  alerts?: MinerAlertState | null;
   /** After a take-back: the rig network's part of the account's work. */
   share?: number;
 }

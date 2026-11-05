@@ -167,6 +167,71 @@ pub fn take_back_decision(
     }
 }
 
+/// Choices for alert emails offered on My Stats.
+pub const ALERT_OFFLINE_MINUTES: [u32; 3] = [10, 30, 60];
+
+/// Most alert emails sent for one account per UTC day.
+pub const ALERT_DAILY_LIMIT: u32 = 10;
+
+/// Rigs seen in this window are watched for stopping.
+pub const ALERT_WATCH_WINDOW: Duration = Duration::from_secs(2 * 3600);
+
+/// How long a confirmation link works.
+pub const ALERT_CONFIRM_TTL: Duration = Duration::from_secs(86_400);
+
+/// Alert email set for an account on My Stats.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MinerAlert {
+    pub account: String,
+    pub email: String,
+    /// Site language when the email was set; emails use it.
+    pub lang: String,
+    /// `None` until the confirmation link is opened. Nothing but the
+    /// confirmation email is sent before then.
+    pub confirmed_at: Option<SystemTime>,
+    pub confirm_sent_at: SystemTime,
+    pub unsubscribe_token: String,
+    /// 0 turns rig-stopped alerts off.
+    pub offline_minutes: u32,
+    pub notify_payouts: bool,
+    pub notify_solo_blocks: bool,
+    /// Highest payout id and block height already considered.
+    pub payout_cursor: i64,
+    pub block_cursor: i64,
+    /// UTC day (days since the epoch) `sent_today` counts.
+    pub day: i64,
+    pub sent_today: u32,
+}
+
+/// Days since the epoch, in UTC.
+pub fn utc_day(at: SystemTime) -> i64 {
+    (at.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() / 86_400) as i64
+}
+
+/// A plausible email address: one `@`, a dotted domain, no spaces or
+/// control characters, at most 254 bytes. Delivery is proven by the
+/// confirmation link, not by this check.
+pub fn plausible_email(email: &str) -> bool {
+    let email = email.trim();
+    if email.is_empty()
+        || email.len() > 254
+        || email.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return false;
+    }
+    let Some((local, domain)) = email.rsplit_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && local.len() <= 64
+        && !local.contains('@')
+        && !email.contains(['<', '>', ',', ';', '"', '\\'])
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !domain.contains("..")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +356,28 @@ mod tests {
         assert_eq!(effective_min_payout(10 * pool, None), 10 * pool);
         assert_eq!(effective_min_payout(10 * pool, Some(20 * pool)), 20 * pool);
         assert_eq!(effective_min_payout(10 * pool, Some(2 * pool)), 10 * pool);
+    }
+
+    #[test]
+    fn alert_emails_are_checked_loosely() {
+        for good in ["miner@example.com", "a.b+pool@mail.example.co.uk"] {
+            assert!(plausible_email(good), "{good}");
+        }
+        for bad in [
+            "",
+            "no-at",
+            "a@b",
+            "a@.com",
+            "a@b.",
+            "a b@c.com",
+            "a@b..com",
+            "x@y.com, z@w.com",
+            "<a@b.com>",
+            "a\r\n@b.com",
+        ] {
+            assert!(!plausible_email(bad), "{bad}");
+        }
+        assert_eq!(utc_day(UNIX_EPOCH + Duration::from_secs(86_400 * 3 + 5)), 3);
     }
 
     #[test]

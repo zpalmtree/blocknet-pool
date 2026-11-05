@@ -73,6 +73,9 @@ fn observe_read<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
     result
 }
 
+/// A payout an alert reports: (id, amount, fee, tx_hash, timestamp).
+pub type AlertPayout = (i64, u64, u64, String, SystemTime);
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ShareWindowAddressPreview {
     pub address: String,
@@ -701,6 +704,329 @@ impl PostgresStore {
         Ok(rows)
     }
 
+    pub fn miner_alert(&self, account: &str) -> Result<Option<crate::miner_settings::MinerAlert>> {
+        let row = self.conn().query_opt(
+            &format!("SELECT {MINER_ALERT_COLUMNS} FROM miner_alerts WHERE account = $1"),
+            &[&account],
+        )?;
+        Ok(row.map(|row| miner_alert_from_row(&row)))
+    }
+
+    /// Alerts whose email is confirmed.
+    pub fn confirmed_miner_alerts(&self) -> Result<Vec<crate::miner_settings::MinerAlert>> {
+        let rows = self.conn().query(
+            &format!(
+                "SELECT {MINER_ALERT_COLUMNS} FROM miner_alerts
+                 WHERE confirmed_at IS NOT NULL ORDER BY account"
+            ),
+            &[],
+        )?;
+        Ok(rows.iter().map(miner_alert_from_row).collect())
+    }
+
+    /// Sets (or replaces) an account's alert email, unconfirmed. Choices made
+    /// before are kept; a new email has to be confirmed again.
+    pub fn set_miner_alert_email(
+        &self,
+        account: &str,
+        email: &str,
+        lang: &str,
+        confirm_token_hash: &str,
+        unsubscribe_token: &str,
+        now: SystemTime,
+    ) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO miner_alerts (account, email, lang, confirm_token_hash, confirm_sent_at, unsubscribe_token)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (account) DO UPDATE SET
+                 email = EXCLUDED.email,
+                 lang = EXCLUDED.lang,
+                 confirmed_at = NULL,
+                 confirm_token_hash = EXCLUDED.confirm_token_hash,
+                 confirm_sent_at = EXCLUDED.confirm_sent_at",
+            &[&account, &email, &lang, &confirm_token_hash, &to_unix(now), &unsubscribe_token],
+        )?;
+        self.conn().execute(
+            "DELETE FROM miner_alert_offline WHERE account = $1",
+            &[&account],
+        )?;
+        Ok(())
+    }
+
+    /// Confirms the email whose link carries `confirm_token_hash`, if the link
+    /// is still valid. Alerts start from now: earlier payouts and blocks are
+    /// skipped. Returns the account.
+    pub fn confirm_miner_alert(
+        &self,
+        confirm_token_hash: &str,
+        now: SystemTime,
+    ) -> Result<Option<String>> {
+        let now_unix = to_unix(now);
+        let oldest = now_unix - crate::miner_settings::ALERT_CONFIRM_TTL.as_secs() as i64;
+        let row = self.conn().query_opt(
+            "UPDATE miner_alerts SET
+                 confirmed_at = $2,
+                 confirm_token_hash = NULL,
+                 payout_cursor = (SELECT COALESCE(MAX(id), 0) FROM payouts),
+                 block_cursor = (SELECT COALESCE(MAX(height), 0) FROM blocks)
+             WHERE confirm_token_hash = $1 AND confirm_sent_at >= $3
+             RETURNING account, offline_minutes",
+            &[&confirm_token_hash, &now_unix, &oldest],
+        )?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let account: String = row.get(0);
+        let offline_minutes: i32 = row.get(1);
+        // Rigs that had already stopped are not news: record them quietly so
+        // the first pass does not email about them.
+        let watch_since = now_unix - crate::miner_settings::ALERT_WATCH_WINDOW.as_secs() as i64;
+        let stopped_before = now_unix - i64::from(offline_minutes.max(1)) * 60;
+        self.conn().execute(
+            "INSERT INTO miner_alert_offline (account, worker, since)
+             SELECT miner, worker, MAX(created_at) FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND status IN ('verified', 'provisional')
+             GROUP BY miner, worker HAVING MAX(created_at) < $3
+             ON CONFLICT (account, worker) DO NOTHING",
+            &[&account, &watch_since, &stopped_before],
+        )?;
+        Ok(Some(account))
+    }
+
+    /// Removes the alert email of whoever holds `unsubscribe_token`.
+    pub fn unsubscribe_miner_alert(&self, unsubscribe_token: &str) -> Result<Option<String>> {
+        let row = self.conn().query_opt(
+            "DELETE FROM miner_alerts WHERE unsubscribe_token = $1 RETURNING account",
+            &[&unsubscribe_token],
+        )?;
+        let account: Option<String> = row.map(|row| row.get(0));
+        if let Some(account) = &account {
+            self.conn().execute(
+                "DELETE FROM miner_alert_offline WHERE account = $1",
+                &[account],
+            )?;
+        }
+        Ok(account)
+    }
+
+    pub fn remove_miner_alert(&self, account: &str) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM miner_alerts WHERE account = $1", &[&account])?;
+        self.conn().execute(
+            "DELETE FROM miner_alert_offline WHERE account = $1",
+            &[&account],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_miner_alert_choices(
+        &self,
+        account: &str,
+        offline_minutes: u32,
+        notify_payouts: bool,
+        notify_solo_blocks: bool,
+    ) -> Result<bool> {
+        let rows = self.conn().execute(
+            "UPDATE miner_alerts SET offline_minutes = $2, notify_payouts = $3, notify_solo_blocks = $4
+             WHERE account = $1",
+            &[&account, &(offline_minutes as i32), &notify_payouts, &notify_solo_blocks],
+        )?;
+        if offline_minutes == 0 {
+            self.conn().execute(
+                "DELETE FROM miner_alert_offline WHERE account = $1",
+                &[&account],
+            )?;
+        }
+        Ok(rows == 1)
+    }
+
+    /// Per worker: last accepted share and accepted difficulty since
+    /// `recent_since`, for workers with accepted shares since `since`.
+    pub fn alert_worker_activity(
+        &self,
+        account: &str,
+        since: SystemTime,
+        recent_since: SystemTime,
+    ) -> Result<Vec<(String, SystemTime, u64)>> {
+        let rows = self.conn().query(
+            "SELECT worker, MAX(created_at),
+                    COALESCE(SUM(difficulty) FILTER (WHERE created_at >= $3), 0)::bigint
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND status IN ('verified', 'provisional')
+             GROUP BY worker",
+            &[&account, &to_unix(since), &to_unix(recent_since)],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    from_unix(row.get::<_, i64>(1)),
+                    row.get::<_, i64>(2).max(0) as u64,
+                )
+            })
+            .collect())
+    }
+
+    /// Whether any share at all was accepted since `since` (a pool-wide
+    /// outage must not look like every rig stopping).
+    pub fn any_accepted_share_since(&self, since: SystemTime) -> Result<bool> {
+        Ok(self
+            .conn()
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM shares WHERE created_at >= $1
+                    AND status IN ('verified', 'provisional'))",
+                &[&to_unix(since)],
+            )?
+            .get(0))
+    }
+
+    /// Rigs an account was told stopped mining, with when.
+    pub fn alert_offline_workers(&self, account: &str) -> Result<HashMap<String, SystemTime>> {
+        let rows = self.conn().query(
+            "SELECT worker, since FROM miner_alert_offline WHERE account = $1",
+            &[&account],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), from_unix(row.get::<_, i64>(1))))
+            .collect())
+    }
+
+    pub fn mark_alert_workers_offline(
+        &self,
+        account: &str,
+        workers: &[(String, SystemTime)],
+    ) -> Result<()> {
+        for (worker, since) in workers {
+            self.conn().execute(
+                "INSERT INTO miner_alert_offline (account, worker, since) VALUES ($1, $2, $3)
+                 ON CONFLICT (account, worker) DO NOTHING",
+                &[&account, worker, &to_unix(*since)],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_alert_workers_offline(&self, account: &str, workers: &[String]) -> Result<()> {
+        if workers.is_empty() {
+            return Ok(());
+        }
+        self.conn().execute(
+            "DELETE FROM miner_alert_offline WHERE account = $1 AND worker = ANY($2)",
+            &[&account, &workers],
+        )?;
+        Ok(())
+    }
+
+    /// Payouts to `account` after `cursor` (payout id), oldest first.
+    pub fn alert_payouts_after(&self, account: &str, cursor: i64) -> Result<Vec<AlertPayout>> {
+        let rows = self.conn().query(
+            "SELECT id, amount, fee, tx_hash, timestamp FROM payouts
+             WHERE address = $1 AND id > $2 AND reverted_at IS NULL
+             ORDER BY id LIMIT 20",
+            &[&account, &cursor],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, i64>(0),
+                    row.get::<_, i64>(1).max(0) as u64,
+                    row.get::<_, i64>(2).max(0) as u64,
+                    row.get::<_, String>(3),
+                    from_unix(row.get::<_, i64>(4)),
+                )
+            })
+            .collect())
+    }
+
+    /// Solo blocks found by `account` above `cursor` (height), lowest first:
+    /// (height, hash, reward, finder_worker).
+    pub fn alert_solo_blocks_after(
+        &self,
+        account: &str,
+        cursor: i64,
+    ) -> Result<Vec<(i64, String, u64, String)>> {
+        let rows = self.conn().query(
+            "SELECT height, hash, reward, finder_worker FROM blocks
+             WHERE finder = $1 AND solo AND NOT orphaned AND height > $2
+             ORDER BY height LIMIT 20",
+            &[&account, &cursor],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, i64>(0),
+                    row.get::<_, String>(1),
+                    row.get::<_, i64>(2).max(0) as u64,
+                    row.get::<_, String>(3),
+                )
+            })
+            .collect())
+    }
+
+    pub fn advance_alert_cursors(
+        &self,
+        account: &str,
+        payout_cursor: i64,
+        block_cursor: i64,
+    ) -> Result<()> {
+        self.conn().execute(
+            "UPDATE miner_alerts SET payout_cursor = GREATEST(payout_cursor, $2),
+                 block_cursor = GREATEST(block_cursor, $3) WHERE account = $1",
+            &[&account, &payout_cursor, &block_cursor],
+        )?;
+        Ok(())
+    }
+
+    /// Counts one alert email for today's limit. False (nothing counted) when
+    /// the account already reached `limit` today.
+    /// Counts one alert email to `email` for today's limit. False (nothing
+    /// counted) when the account reached `limit` today, or its confirmed
+    /// email is no longer `email`.
+    pub fn take_alert_send(
+        &self,
+        account: &str,
+        email: &str,
+        day: i64,
+        limit: u32,
+    ) -> Result<bool> {
+        let rows = self.conn().execute(
+            "UPDATE miner_alerts SET
+                 sent_today = CASE WHEN day = $3 THEN sent_today + 1 ELSE 1 END,
+                 day = $3
+             WHERE account = $1 AND email = $2 AND confirmed_at IS NOT NULL
+               AND (day <> $3 OR sent_today < $4)",
+            &[&account, &email, &day, &(limit as i32)],
+        )?;
+        Ok(rows == 1)
+    }
+
+    /// Gives back an alert counted by `take_alert_send` that was not sent.
+    pub fn refund_alert_send(&self, account: &str, day: i64) -> Result<()> {
+        self.conn().execute(
+            "UPDATE miner_alerts SET sent_today = GREATEST(sent_today - 1, 0)
+             WHERE account = $1 AND day = $2",
+            &[&account, &day],
+        )?;
+        Ok(())
+    }
+
+    /// Confirmation emails sent to `email` since `since`, across accounts.
+    pub fn alert_confirmations_to(&self, email: &str, since: SystemTime) -> Result<u64> {
+        Ok(self
+            .conn()
+            .query_one(
+                "SELECT COUNT(*) FROM miner_alerts
+                 WHERE lower(email) = lower($1) AND confirm_sent_at >= $2",
+                &[&email, &to_unix(since)],
+            )?
+            .get::<_, i64>(0)
+            .max(0) as u64)
+    }
+
     pub fn register_payout_destination(
         &self,
         destination: &pool_common::destination::PayoutDestination,
@@ -1103,6 +1429,35 @@ CREATE TABLE IF NOT EXISTS miner_source_work (
     PRIMARY KEY (account, ip_group, hour)
 );
 CREATE INDEX IF NOT EXISTS idx_miner_source_work_hour ON miner_source_work(hour);
+
+-- Alert emails set on My Stats (see miner_settings.rs). Nothing but the
+-- confirmation email is sent until confirmed_at is set.
+CREATE TABLE IF NOT EXISTS miner_alerts (
+    account TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    lang TEXT NOT NULL DEFAULT 'en',
+    confirmed_at BIGINT,
+    confirm_token_hash TEXT,
+    confirm_sent_at BIGINT NOT NULL,
+    unsubscribe_token TEXT NOT NULL UNIQUE,
+    offline_minutes INTEGER NOT NULL DEFAULT 30,
+    notify_payouts BOOLEAN NOT NULL DEFAULT TRUE,
+    notify_solo_blocks BOOLEAN NOT NULL DEFAULT FALSE,
+    payout_cursor BIGINT NOT NULL DEFAULT 0,
+    block_cursor BIGINT NOT NULL DEFAULT 0,
+    day BIGINT NOT NULL DEFAULT 0,
+    sent_today INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_miner_alerts_confirm_token ON miner_alerts(confirm_token_hash)
+    WHERE confirm_token_hash IS NOT NULL;
+
+-- Rigs a "stopped mining" email was sent for, until they mine again.
+CREATE TABLE IF NOT EXISTS miner_alert_offline (
+    account TEXT NOT NULL,
+    worker TEXT NOT NULL,
+    since BIGINT NOT NULL,
+    PRIMARY KEY (account, worker)
+);
 
 CREATE TABLE IF NOT EXISTS stat_snapshots (
     id BIGSERIAL PRIMARY KEY,
@@ -7128,6 +7483,27 @@ fn log_share_partition_maintenance(report: &share_partitions::SharePartitionMain
             rows = report.default_rows,
             "default share partition holds rows outside every weekly partition"
         );
+    }
+}
+
+const MINER_ALERT_COLUMNS: &str = "account, email, lang, confirmed_at, confirm_sent_at, unsubscribe_token,
+     offline_minutes, notify_payouts, notify_solo_blocks, payout_cursor, block_cursor, day, sent_today";
+
+fn miner_alert_from_row(row: &postgres::Row) -> crate::miner_settings::MinerAlert {
+    crate::miner_settings::MinerAlert {
+        account: row.get(0),
+        email: row.get(1),
+        lang: row.get(2),
+        confirmed_at: row.get::<_, Option<i64>>(3).map(from_unix),
+        confirm_sent_at: from_unix(row.get(4)),
+        unsubscribe_token: row.get(5),
+        offline_minutes: row.get::<_, i32>(6).max(0) as u32,
+        notify_payouts: row.get(7),
+        notify_solo_blocks: row.get(8),
+        payout_cursor: row.get(9),
+        block_cursor: row.get(10),
+        day: row.get(11),
+        sent_today: row.get::<_, i32>(12).max(0) as u32,
     }
 }
 

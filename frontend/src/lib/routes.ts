@@ -3,6 +3,7 @@ import type { Route } from '../types';
 
 const ROUTES = {
   wallet: ['/wallet', 'hostedWallet'],
+  alerts: ['/alerts', 'alertsTitle'],
   dashboard: ['/', 'm399'],
   start: ['/start', 'm611'],
   info: ['/info', 'infoTitle'],

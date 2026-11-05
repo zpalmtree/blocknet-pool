@@ -13,6 +13,11 @@ const STATES = {
   unlocked: 'Unlocked, pool defaults',
   custom: 'Unlocked, 5 BNT minimum, solo, names hidden',
   exchange: 'Exchange account: 10 BNT minimum, can be raised',
+  'alerts-pending': 'Alert email waiting for its link',
+  'alerts-on': 'Alert email confirmed, alerts on',
+  'link-confirm': 'Confirmation link opened (/alerts)',
+  'link-unsubscribe': 'Unsubscribe link opened (/alerts)',
+  'link-expired': 'Expired confirmation link (/alerts)',
   'no-password': 'Taken back elsewhere, no password yet',
   'public-hidden': 'Stats tab as a visitor sees hidden worker names',
   loading: 'Settings still loading',
@@ -43,13 +48,16 @@ const ts = (secondsAgo: number) => ({ secs_since_epoch: now - secondsAgo, nanos_
 const server = {
   claimed: state !== 'unclaimed',
   hasPassword: state !== 'unclaimed' && state !== 'no-password',
-  unlocked: state === 'unlocked' || state === 'custom' || state === 'exchange',
+  unlocked: ['unlocked', 'custom', 'exchange', 'alerts-pending', 'alerts-on'].includes(state),
   changedAt: now - 3 * 3600,
   minPayout: state === 'custom' ? 5 : state === 'exchange' ? 10 : 1,
   solo: state === 'custom',
   hide: state === 'custom' || state === 'public-hidden',
   unlockTries: 5,
   takeBackTries: 5,
+  alertEmail: state === 'alerts-pending' || state === 'alerts-on' ? 'miner@example.com' : '',
+  alertConfirmed: state === 'alerts-on',
+  alertChoices: { offline_minutes: 30, notify_payouts: true, notify_solo_blocks: false },
 };
 
 function settingsState(extra: Partial<MinerSettingsState> = {}): MinerSettingsState {
@@ -64,6 +72,10 @@ function settingsState(extra: Partial<MinerSettingsState> = {}): MinerSettingsSt
     max_min_payout: 10_000,
     your_ip: RIG_IP,
     settings: server.unlocked ? { min_payout: server.minPayout, default_solo: server.solo, hide_workers: server.hide } : undefined,
+    alerts_available: true,
+    alerts: server.unlocked
+      ? server.alertEmail ? { email: server.alertEmail, confirmed: server.alertConfirmed, ...server.alertChoices } : null
+      : undefined,
     ...extra,
   };
 }
@@ -71,6 +83,7 @@ function settingsState(extra: Partial<MinerSettingsState> = {}): MinerSettingsSt
 const fail = (status: number, error: string, extra: Record<string, unknown> = {}) =>
   Response.json({ error, ...extra }, { status });
 
+let path4 = '';
 function settingsRoute(method: string, action: string, body: Record<string, unknown>): Response | Promise<Response> {
   if (state === 'loading') return new Promise<Response>(() => {});
   if (state === 'error') return fail(500, 'internal');
@@ -109,6 +122,16 @@ function settingsRoute(method: string, action: string, body: Record<string, unkn
     touch();
     return Response.json(settingsState());
   }
+  if (action === 'alert-email') {
+    if (!server.unlocked) return fail(401, 'locked');
+    if (path4 === 'remove') {
+      Object.assign(server, { alertEmail: '', alertConfirmed: false });
+      return Response.json(settingsState());
+    }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(body.email ?? ''))) return fail(400, 'invalid_email');
+    Object.assign(server, { alertEmail: String(body.email), alertConfirmed: false });
+    return Response.json(settingsState());
+  }
   if (method === 'PUT') {
     if (!server.unlocked) return fail(401, 'locked');
     if (saveMode === 'fail') {
@@ -123,6 +146,7 @@ function settingsRoute(method: string, action: string, body: Record<string, unkn
       }, 4000));
     }
     Object.assign(server, { minPayout: body.min_payout, solo: body.default_solo, hide: body.hide_workers });
+    if (body.alerts && server.alertEmail) server.alertChoices = body.alerts;
     touch();
     return Response.json(settingsState());
   }
@@ -173,9 +197,15 @@ window.fetch = async (input, init) => {
   const method = init?.method ?? 'GET';
   if (path.startsWith('/api/miner-settings/')) {
     const action = path.split('/')[4] ?? '';
+    path4 = path.split('/')[5] ?? '';
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     await new Promise((resolve) => setTimeout(resolve, 120));
     return settingsRoute(method, action, body);
+  }
+  if (path === '/api/alerts/confirm' || path === '/api/alerts/unsubscribe') {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (state === 'link-expired') return Response.json({ error: 'invalid_link' }, { status: 404 });
+    return json({ ok: true, account: '8yAUM9…1bVm' });
   }
   if (path === '/api/info') return json(info);
   if (path === '/api/stats') return json({ pool: { miners: 285, hashrate: 15_030 }, chain: { current_job_height: 71_573 } });
@@ -191,7 +221,14 @@ window.fetch = async (input, init) => {
 };
 
 const tab = state === 'public-hidden' ? '' : '#settings';
-history.replaceState(null, '', `/stats${location.search}${tab}`);
+const linkToken = 'c'.repeat(64);
+if (state === 'link-confirm' || state === 'link-expired') {
+  history.replaceState(null, '', `/alerts?confirm=${linkToken}&${params}`);
+} else if (state === 'link-unsubscribe') {
+  history.replaceState(null, '', `/alerts?unsubscribe=${linkToken}&${params}`);
+} else {
+  history.replaceState(null, '', `/stats${location.search}${tab}`);
+}
 
 function Bar() {
   return (

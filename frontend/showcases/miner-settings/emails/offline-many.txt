@@ -1,0 +1,16 @@
+Subject: 3 rigs stopped mining
+
+3 rigs stopped mining
+
+These rigs haven't sent a share for 30 min. We'll email you when they start again.
+
+rig-1: since 2026-11-05 04:12 UTC
+rig-2: since 2026-11-05 04:12 UTC
+basement: since 2026-11-05 04:12 UTC
+Still mining: 6 rigs, 1.50 KH/s
+Your hashrate now: 1.50 KH/s
+
+Open My Stats: https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm
+
+--
+You get this because alerts are on for miner 8yAUM9…1bVm on bntpool.com. Change alerts (https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm#settings) · Unsubscribe (https://bntpool.com/alerts?unsubscribe=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)

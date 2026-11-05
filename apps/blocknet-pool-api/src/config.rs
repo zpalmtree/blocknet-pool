@@ -12,6 +12,8 @@ pub(crate) struct Config {
     pub(crate) hosted_wallet: Option<crate::hosted_wallet::HostedWalletConfig>,
     /// Payout-hint feed for the hosted wallet service; off unless enabled.
     pub(crate) wallet_hints: Option<crate::wallet_hints::WalletHintsConfig>,
+    /// Alert emails set up on My Stats; off unless enabled.
+    pub(crate) alerts: Option<crate::alert_mail::AlertsConfig>,
     #[serde(flatten)]
     pub(crate) runtime: RuntimeConfig,
     pub(crate) pool_url: String,
@@ -42,6 +44,7 @@ impl Default for Config {
         Self {
             hosted_wallet: None,
             wallet_hints: None,
+            alerts: None,
             runtime: RuntimeConfig::default(),
             pool_url: "http://localhost:24783".to_string(),
             checkpoints_path: String::new(),
@@ -76,7 +79,12 @@ impl Config {
     pub(crate) fn advertised_hosted_wallet(
         &self,
     ) -> Option<&crate::hosted_wallet::HostedWalletConfig> {
-        self.active_hosted_wallet().filter(|wallet| wallet.advertise)
+        self.active_hosted_wallet()
+            .filter(|wallet| wallet.advertise)
+    }
+
+    pub(crate) fn active_alerts(&self) -> Option<&crate::alert_mail::AlertsConfig> {
+        self.alerts.as_ref().filter(|alerts| alerts.enabled)
     }
 
     pub(crate) fn active_wallet_hints(&self) -> Option<&crate::wallet_hints::WalletHintsConfig> {
@@ -84,6 +92,17 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
+        if let Some(alerts) = self.active_alerts() {
+            if alerts.credentials_file.trim().is_empty() {
+                anyhow::bail!("alerts.credentials_file is required when alerts are enabled");
+            }
+            if !pool_runtime::miner_settings::plausible_email(&alerts.from_address) {
+                anyhow::bail!("alerts.from_address is not an email address");
+            }
+            if !alerts.site_url.starts_with("https://") && !alerts.site_url.starts_with("http://") {
+                anyhow::bail!("alerts.site_url must be an http(s) URL");
+            }
+        }
         if let Some(hints) = self.active_wallet_hints() {
             if hints.token_file.trim().is_empty() {
                 anyhow::bail!("wallet_hints.token_file is required when wallet_hints is enabled");

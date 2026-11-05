@@ -228,6 +228,13 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, memo }),
       }),
     getMiner: (address: string) => fetchJson<MinerResponse>(`/api/miner/${encodeURIComponent(address)}`),
+    alertLink: async (action: 'confirm' | 'unsubscribe', token: string) => {
+      const res = await fetch(`/api/alerts/${action}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }),
+      });
+      if (!res.ok) throw new SettingsError(res.status, res.status === 404 ? 'invalid_link' : `http_${res.status}`);
+      return (await res.json()) as { ok: boolean; account?: string };
+    },
     minerSettings: {
       get: (account: string) => settingsRequest('GET', `/api/miner-settings/${encodeURIComponent(account)}`),
       claim: (account: string, password: string) =>
@@ -238,6 +245,10 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/take-back`, { ip }),
       setPassword: (account: string, password: string) =>
         settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/password`, { password }),
+      setAlertEmail: (account: string, email: string, lang: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/alert-email`, { email, lang }),
+      removeAlertEmail: (account: string) =>
+        settingsRequest('POST', `/api/miner-settings/${encodeURIComponent(account)}/alert-email/remove`),
       save: (account: string, settings: MinerSettingsValues) =>
         settingsRequest('PUT', `/api/miner-settings/${encodeURIComponent(account)}`, settings),
     },

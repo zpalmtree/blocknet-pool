@@ -194,5 +194,13 @@
     "index": false,
     "label": "Wallet",
     "guides": []
+  },
+  "/alerts": {
+    "title": "Miner alert emails",
+    "description": "Confirm or stop bntpool.com alert emails for your miner.",
+    "image": "og-dashboard.png",
+    "index": false,
+    "label": "Alerts",
+    "guides": []
   }
 }

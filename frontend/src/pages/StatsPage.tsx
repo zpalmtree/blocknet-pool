@@ -49,7 +49,11 @@ const lookupResult = async <T,>(promise: Promise<T>) =>
   promise.then((value) => ({ ok: true as const, value })).catch(() => ({ ok: false as const }));
 
 export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
-  const [savedDestination] = useState(readDestination);
+  // Alert emails link here with `?miner=<address>`.
+  const [savedDestination] = useState(() => {
+    const linked = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('miner')?.trim();
+    return linked && !linked.startsWith('memo:') ? { address: linked, memo: '' } : readDestination();
+  });
   const [minerInput, setMinerInput] = useState(savedDestination.address);
   const [memoInput, setMemoInput] = useState(savedDestination.memo);
   const [memoOpen, setMemoOpen] = useState(!!savedDestination.memo);

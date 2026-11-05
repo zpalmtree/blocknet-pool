@@ -1,0 +1,15 @@
+Subject: Payout sent: 12.45 BNT
+
+12.45 BNT is on its way
+
+The pool sent a payout to your wallet.
+
+Amount: 12.45 BNT
+Network fee: 0.00028 BNT
+Transaction: https://explorer.blocknetcrypto.com/tx/9b31a063aa11bb22cc33dd44ee55ff66e4c2
+Paid so far: 48.65 BNT
+
+Open My Stats: https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm
+
+--
+You get this because alerts are on for miner 8yAUM9…1bVm on bntpool.com. Change alerts (https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm#settings) · Unsubscribe (https://bntpool.com/alerts?unsubscribe=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)

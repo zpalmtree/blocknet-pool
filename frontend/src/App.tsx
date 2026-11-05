@@ -15,6 +15,7 @@ import { LuckPage } from './pages/LuckPage';
 import { PayoutsPage } from './pages/PayoutsPage';
 import { StartPage } from './pages/StartPage';
 import { InfoPage } from './pages/InfoPage';
+import { AlertsPage } from './pages/AlertsPage';
 import { NewsPage, NewsStrip } from './components/News';
 import { AdminPage, StatsPage, WalletPage, PageBoundary, preloadPage } from './components/DeferredPages';
 import type { InfoResponse, Route } from './types';
@@ -195,6 +196,8 @@ export function App() {
     );
   } else if (route === 'wallet') {
     currentPage = <WalletPage />;
+  } else if (route === 'alerts') {
+    currentPage = <AlertsPage api={api} />;
   } else if (route === 'start') {
     currentPage = <StartPage poolInfo={poolInfo} />;
   } else if (route === 'news') {

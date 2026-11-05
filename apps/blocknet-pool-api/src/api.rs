@@ -363,6 +363,7 @@ pub(crate) struct ApiState {
     checkpoint_file_cache: Arc<CheckpointFileCache>,
     admin_auth_failures: Arc<Mutex<WindowedCounter>>,
     miner_settings: Arc<crate::miner_settings::MinerSettingsService>,
+    alerts: Option<Arc<crate::alerts::AlertService>>,
     /// Newest accepted Cloudflare `checked_at` (only the `public_http` probe
     /// exists). `None` until seeded from the latest stored heartbeat.
     monitor_ingest_last_checked_at: Arc<tokio::sync::Mutex<Option<u64>>>,
@@ -965,6 +966,16 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
     let wallet_hints =
         crate::wallet_hints::router(state.config.active_wallet_hints(), Arc::clone(&state.store))?;
     let miner_settings = crate::miner_settings::router(Arc::clone(&state.miner_settings));
+    let alerts = crate::alerts::router(Arc::clone(&state.store));
+    if let Some(service) = &state.alerts {
+        crate::alerts::spawn_worker(crate::alerts::WorkerContext {
+            store: Arc::clone(&state.store),
+            service: Arc::clone(service),
+            pool_fee_pct: state.config.runtime.pool_fee_pct,
+            confirmations: state.config.runtime.blocks_before_payout.max(0) as u64,
+            pool_up_since: parking_lot::Mutex::new(None),
+        });
+    }
     let app_state = state.clone();
     let protected = Router::new()
         .route("/api/miners", get(handle_miners))
@@ -1074,6 +1085,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
         .merge(hosted_wallet)
         .merge(wallet_hints)
         .merge(miner_settings)
+        .merge(alerts)
         .merge(public_telemetry)
         .merge(protected)
         .layer(middleware::from_fn_with_state(
@@ -4549,9 +4561,11 @@ impl ApiState {
             Arc::clone(&store),
             config.runtime.clone(),
             Arc::clone(&client_ip_policy),
+            None,
         ));
         Self {
             miner_settings,
+            alerts: None,
             recovery: Arc::new(RecoveryAgentClient::new(
                 config.recovery.socket_path.clone(),
             )),
@@ -4597,6 +4611,18 @@ impl ApiState {
             live_runtime_snapshot_cache: Arc::new(Mutex::new(LiveRuntimeSnapshotCache::new())),
             started_at: Instant::now(),
         }
+    }
+
+    /// Turns on alert emails (settings endpoints and the worker).
+    pub(crate) fn with_alerts(mut self, alerts: Arc<crate::alerts::AlertService>) -> Self {
+        self.miner_settings = Arc::new(crate::miner_settings::MinerSettingsService::new(
+            Arc::clone(&self.store),
+            self.config.runtime.clone(),
+            Arc::clone(&self.client_ip_policy),
+            Some(Arc::clone(&alerts)),
+        ));
+        self.alerts = Some(alerts);
+        self
     }
 
     async fn persisted_runtime_snapshot(&self) -> Option<PersistedRuntimeSnapshot> {

@@ -1,10 +1,10 @@
-import { localizePath, t, tx } from '../i18n';
+import { locale, localizePath, t, tx } from '../i18n';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { SettingsError } from '../api/client';
 import { timeAgo } from '../lib/format';
-import type { MinerSettingsState, MinerSettingsValues } from '../types';
+import type { MinerAlertChoices, MinerSettingsState, MinerSettingsValues } from '../types';
 
 const LOCK = (
   <svg viewBox="0 0 16 16" aria-hidden="true" className="settings-lock">
@@ -43,6 +43,12 @@ function formatWait(seconds: number): string {
   return new Intl.RelativeTimeFormat(lang(), { numeric: 'always' }).format(value, unit);
 }
 
+/** "10 min" or "1 hour" for the rig-stopped choice. */
+function formatWaitShort(minutes: number): string {
+  const [value, unit]: [number, Intl.NumberFormatOptions['unit']] = minutes < 60 ? [minutes, 'minute'] : [minutes / 60, 'hour'];
+  return new Intl.NumberFormat(lang(), { style: 'unit', unit, unitDisplay: 'long' }).format(value);
+}
+
 /** A form message for a refused request. */
 function errorText(error: unknown): string {
   if (!(error instanceof SettingsError)) return t('settingsError');
@@ -63,6 +69,10 @@ function errorText(error: unknown): string {
       return t('settingsAlreadyClaimed');
     case 'locked':
       return t('settingsLockedAgain');
+    case 'invalid_email':
+      return t('alertsInvalidEmail');
+    case 'email_failed':
+      return t('alertsSendFailed');
     default:
       return t('settingsError');
   }
@@ -121,6 +131,10 @@ interface MinerSettingsProps {
   onUnlockedChange?: (unlocked: boolean) => void;
 }
 
+function alertChoices(alerts: MinerAlertChoices): MinerAlertChoices {
+  return { offline_minutes: alerts.offline_minutes, notify_payouts: alerts.notify_payouts, notify_solo_blocks: alerts.notify_solo_blocks };
+}
+
 export function MinerSettings({ api, account, onSaved, onUnlockedChange }: MinerSettingsProps) {
   const [state, setState] = useState<MinerSettingsState | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -130,7 +144,8 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
   const [takingBack, setTakingBack] = useState(false);
   const [rigIp, setRigIp] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
-  const [draft, setDraft] = useState<{ minPayout: string; solo: boolean; hide: boolean } | null>(null);
+  const [draft, setDraft] = useState<{ minPayout: string; solo: boolean; hide: boolean; alerts: MinerAlertChoices } | null>(null);
+  const [alertEmail, setAlertEmail] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [saveNote, setSaveNote] = useState('');
   // Values of the newest change, saved or still on its way to the server.
@@ -147,7 +162,9 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
       minPayout: String(next.settings.min_payout),
       solo: next.settings.default_solo,
       hide: next.settings.hide_workers,
+      alerts: next.alerts ? alertChoices(next.alerts) : { offline_minutes: 30, notify_payouts: true, notify_solo_blocks: false },
     } : null);
+    setAlertEmail(next.alerts?.email ?? '');
   }, [onUnlockedChange]);
 
   useEffect(() => () => window.clearTimeout(minPayoutTimer.current), []);
@@ -211,7 +228,10 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
       const settings = result.settings;
       intended.current = settings ?? null;
       // Keep whatever is being typed in the amount field; the toggles follow the server.
-      setDraft((draft) => settings && draft ? { ...draft, solo: settings.default_solo, hide: settings.hide_workers } : draft);
+      const alerts = result.alerts;
+      setDraft((draft) => settings && draft ? {
+        ...draft, solo: settings.default_solo, hide: settings.hide_workers, alerts: alerts ? alertChoices(alerts) : draft.alerts,
+      } : draft);
       const notes: string[] = [];
       if (settings && before && settings.min_payout !== before.min_payout) notes.push(t('settingsSavedMinNote'));
       if (settings && before && settings.default_solo !== before.default_solo) notes.push(t('settingsSavedModeNote'));
@@ -225,7 +245,10 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
       // Show what the server still has, not the change that failed.
       const saved = state?.settings;
       intended.current = saved ?? null;
-      if (saved) setDraft((draft) => draft ? { ...draft, solo: saved.default_solo, hide: saved.hide_workers } : draft);
+      const savedAlerts = state?.alerts;
+      if (saved) setDraft((draft) => draft ? {
+        ...draft, solo: saved.default_solo, hide: saved.hide_workers, alerts: savedAlerts ? alertChoices(savedAlerts) : draft.alerts,
+      } : draft);
       if (err instanceof SettingsError && (err.code === 'locked' || err.code === 'already_claimed')) {
         api.minerSettings.get(account).then(adopt).catch(() => {});
       }
@@ -313,6 +336,11 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
       const base = intended.current ?? state.settings!;
       void persist({ ...base, ...values });
     };
+    const changeAlerts = (choices: Partial<MinerAlertChoices>) => {
+      const alerts = { ...draft.alerts, ...choices };
+      setDraft({ ...draft, alerts });
+      change({ alerts });
+    };
     /** Saves a typed minimum once it is valid; `final` also reports a bad value. */
     const commitMinPayout = (text: string, final: boolean) => {
       window.clearTimeout(minPayoutTimer.current);
@@ -361,6 +389,51 @@ export function MinerSettings({ api, account, onSaved, onUnlockedChange }: Miner
             }} /> {t('settingsHideWorkers')}</label>
           </div>
         </Row>
+        {state.alerts_available && (<>
+          <Row label={t('alertsEmail')} hint={!state.alerts
+            ? t('alertsEmailHint')
+            : state.alerts.confirmed
+              ? <button type="button" className="link-button" disabled={busy}
+                  onClick={() => void run(() => api.minerSettings.removeAlertEmail(account), () => setNotice(t('alertsRemoved')))}>{t('alertsRemove')}</button>
+              : <>{t('alertsPendingHint', [state.alerts.email])}{' '}
+                  <button type="button" className="link-button" disabled={busy}
+                    onClick={() => void run(() => api.minerSettings.setAlertEmail(account, state.alerts!.email, locale),
+                      () => setNotice(t('alertsLinkSent', [state.alerts!.email])))}>{t('alertsResend')}</button>{' · '}
+                  <button type="button" className="link-button" disabled={busy}
+                    onClick={() => void run(() => api.minerSettings.removeAlertEmail(account), () => setNotice(t('alertsRemoved')))}>{t('alertsRemove')}</button></>}>
+            <div className="settings-email">
+              <input type="email" dir="ltr" autoComplete="email" aria-label={t('alertsEmail')} placeholder="you@example.com"
+                value={alertEmail} onChange={(event) => setAlertEmail(event.target.value)} />
+              {(!state.alerts || alertEmail.trim() !== state.alerts.email) && (
+                <button type="button" className="btn btn-secondary" disabled={busy || !alertEmail.trim()}
+                  onClick={() => void run(() => api.minerSettings.setAlertEmail(account, alertEmail.trim(), locale),
+                    () => setNotice(t('alertsLinkSent', [alertEmail.trim()])))}>{t('alertsSendLink')}</button>
+              )}
+              {state.alerts && alertEmail.trim() === state.alerts.email && (state.alerts.confirmed
+                ? <span className="badge settings-badge-ok">{t('alertsConfirmed')}</span>
+                : <span className="badge settings-badge-warn">{t('alertsNotConfirmed')}</span>)}
+            </div>
+          </Row>
+          <Row label={t('alertsWhen')} hint={state.alerts?.confirmed ? t('alertsLimitHint') : t('alertsAfterConfirmHint')}>
+            <div className={`settings-checks ${state.alerts?.confirmed ? '' : 'is-disabled'}`}>
+              <label>
+                <input type="checkbox" disabled={!state.alerts?.confirmed} checked={draft.alerts.offline_minutes > 0}
+                  onChange={(event) => changeAlerts({ offline_minutes: event.target.checked ? 30 : 0 })} />
+                {' '}{t('alertsRigStops')}
+                <select aria-label={t('alertsRigStops')} disabled={!state.alerts?.confirmed || draft.alerts.offline_minutes === 0}
+                  value={draft.alerts.offline_minutes || 30}
+                  onChange={(event) => changeAlerts({ offline_minutes: Number(event.target.value) })}>
+                  {[10, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{formatWaitShort(minutes)}</option>)}
+                </select>
+              </label>
+              <span className="settings-check-note">{t('alertsRigStopsNote')}</span>
+              <label><input type="checkbox" disabled={!state.alerts?.confirmed} checked={draft.alerts.notify_payouts}
+                onChange={(event) => changeAlerts({ notify_payouts: event.target.checked })} /> {t('alertsPayout')}</label>
+              <label><input type="checkbox" disabled={!state.alerts?.confirmed} checked={draft.alerts.notify_solo_blocks}
+                onChange={(event) => changeAlerts({ notify_solo_blocks: event.target.checked })} /> {t('alertsSoloBlock')}</label>
+            </div>
+          </Row>
+        </>)}
         {error && <p className="settings-error settings-row-error" role="alert">{error}</p>}
         <div className="settings-actions">
           <p className={`settings-autosave ${saveStatus === 'saved' ? 'is-saved' : ''}`} role="status" aria-live="polite">

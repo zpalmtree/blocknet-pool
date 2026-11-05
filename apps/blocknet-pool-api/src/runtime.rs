@@ -17,13 +17,21 @@ pub(crate) async fn bootstrap_api_runtime(config_path: &Path) -> Result<(Config,
     Ok((cfg, runtime))
 }
 
-pub(crate) fn build_api_state(cfg: &Config, runtime: &ApiRuntime) -> ApiState {
-    ApiState::new(
+pub(crate) fn build_api_state(cfg: &Config, runtime: &ApiRuntime) -> Result<ApiState> {
+    let state = ApiState::new(
         cfg.clone(),
         Arc::clone(&runtime.store),
         Arc::clone(&runtime.jobs),
         Arc::clone(&runtime.node),
-    )
+    );
+    let Some(alerts) = cfg.active_alerts() else {
+        return Ok(state);
+    };
+    let mailer = crate::alert_mail::SmtpMailer::new(alerts.clone())?;
+    Ok(state.with_alerts(Arc::new(crate::alerts::AlertService {
+        config: alerts.clone(),
+        mailer,
+    })))
 }
 
 pub(crate) fn api_listen_addr(cfg: &Config) -> Result<SocketAddr> {

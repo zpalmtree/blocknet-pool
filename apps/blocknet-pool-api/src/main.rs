@@ -2,6 +2,8 @@ use anyhow::{anyhow, Result};
 use pool_common::{cli::parse_config_path, logging::init_logging};
 use tracing::info;
 
+mod alert_mail;
+mod alerts;
 mod api;
 mod background_read;
 mod blog;
@@ -24,7 +26,7 @@ async fn main() -> Result<()> {
     let config_path = parse_config_path("blocknet-pool-api", std::env::args().skip(1));
     let (cfg, runtime) = bootstrap_api_runtime(&config_path).await?;
     let api_addr = api_listen_addr(&cfg)?;
-    let api_state = build_api_state(&cfg, &runtime);
+    let api_state = build_api_state(&cfg, &runtime)?;
 
     info!(pool = %cfg.runtime.pool_name, "api runtime started");
 

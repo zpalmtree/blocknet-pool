@@ -2606,3 +2606,17 @@ html { scroll-padding-top: 72px; }
   .news-strip-items { flex: 1; }
   .news-timeline li { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 18px; }
 }
+
+/* My Stats alert emails */
+.settings-email { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; }
+.settings-card input[type='email'] { font-family: 'JetBrains Mono', monospace; font-size: 14px; padding: 9px 14px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); outline: none; flex: 1 1 220px; min-width: 0; max-width: 320px; }
+.settings-card input[type='email']:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-light); }
+.settings-badge-ok { background: var(--status-confirmed-bg); border: 1px solid var(--status-confirmed-border); color: var(--status-confirmed-text); }
+.settings-badge-warn { background: var(--status-pending-bg); border: 1px solid var(--status-pending-border); color: var(--status-pending-text); }
+.settings-checks select { font: 600 13px 'Manrope', sans-serif; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); }
+.settings-checks.is-disabled label { opacity: 0.5; }
+.settings-check-note { margin: -4px 0 0 24px; font-size: 13px; color: var(--muted); }
+.settings-hint .link-button { font-size: 13px; }
+.alerts-page .card { max-width: 640px; }
+.alerts-page .card h2 { margin: 0 0 8px; font-size: 20px; }
+.alerts-page .card p { margin: 0 0 16px; }

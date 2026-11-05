@@ -1,0 +1,12 @@
+Subject: Confirm alerts for your bntpool.com miner
+
+Confirm your alert email
+
+Someone asked for bntpool.com alerts for miner 8yAUM9…1bVm to go to this address.
+
+Confirm email: https://bntpool.com/alerts?confirm=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+If that wasn't you, ignore this email. We won't send anything else.
+
+--
+This link works for 24 hours.

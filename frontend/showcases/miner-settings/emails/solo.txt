@@ -1,0 +1,14 @@
+Subject: You found a block: 439.4608026 BNT
+
+You found block 72140
+
+Your rig rig-1 found a block while mining solo. Its reward is yours once it has 60 confirmations.
+
+Block: https://explorer.blocknetcrypto.com/block/72140
+Reward: 439.4608026 BNT
+Pool fee: 0%
+
+Open My Stats: https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm
+
+--
+You get this because alerts are on for miner 8yAUM9…1bVm on bntpool.com. Change alerts (https://bntpool.com/stats?miner=8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm#settings) · Unsubscribe (https://bntpool.com/alerts?unsubscribe=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)

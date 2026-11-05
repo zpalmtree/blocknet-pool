@@ -25,6 +25,15 @@ real pool. The demo password is `correct horse`; the rig IP that wins a take-bac
 - `public-hidden`: the Stats tab as a visitor sees it when names are hidden (Rig 1, Rig 2).
 - `loading`, `error`: settings still loading, and the settings API failing.
 
+- `alerts-pending`, `alerts-on`: an alert email waiting for its confirmation link, and
+  confirmed with alerts on (rig stopped for 10/30/60 minutes, payout sent, solo block found).
+  From `unlocked`, typing an email and pressing Send link shows the waiting state.
+- `link-confirm`, `link-unsubscribe`, `link-expired`: the `/alerts` page that email links open.
+
+`emails/` holds every alert email rendered by the real templates
+(`ALERT_SAMPLES_DIR=$PWD/frontend/showcases/miner-settings/emails cargo test -p
+blocknet-pool-api-app -- write_sample_mails_when_asked`), as HTML and plain text.
+
 Add `save=slow` to hold each save for 4 s (shows "Saving…" and lets changes queue), or
 `save=fail` to end the session on the first save (the "locked again" path).
 
@@ -36,3 +45,8 @@ The captures in `captures/` were taken through the shared Playwright browser on 
 `miner-settings`. The unlocked-form captures (`unlocked-*`, `saved`, `saving`, `help-notes`,
 `exchange`, `take-back-done`, `min-payout-invalid`, `locked-again`) were retaken on 2026-11-05
 (EST) for auto-save, from branch `settings-autosave`.
+
+The alert captures (`alerts-*`) and the unlocked forms that now show the alert rows
+(`unlocked-*`, `saved`, `exchange`, `min-payout-invalid`) were retaken on 2026-11-05 (EST) from
+branch `email-alerts`. `alerts-saved` and `alerts-saving` show an alert choice saving on its own;
+`alerts-locked-again` is `save=fail`.

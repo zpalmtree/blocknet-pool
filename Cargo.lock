@@ -175,9 +175,12 @@ dependencies = [
  "sha3",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tower",
  "tracing",
+ "urlencoding",
+ "webpki-roots",
 ]
 
 [[package]]
