@@ -36,7 +36,7 @@ export function NewsStrip() {
         </ul>
         <a className="news-strip-all" href={localizePath('/news')}>{t('newsAll')}</a>
         <button type="button" className="news-strip-close" aria-label={t('newsDismiss')} title={t('newsDismiss')}
-          onClick={() => { dismissStripNews(items); setItems([]); }}>{CLOSE}</button>
+          onClick={() => { dismissStripNews(); setItems([]); }}>{CLOSE}</button>
       </div>
     </div>
   );
