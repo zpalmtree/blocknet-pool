@@ -41,17 +41,17 @@ groups:
           summary: Growth mode is on
           description: The share rate passed growth_submit_rate, so miners were moved to fewer, larger shares (growth_vardiff_target_shares, growth_sample_rate). Expected as the pool grows; see VERIFY_PERFORMANCE.md.
 
-      # Level 2 (growth2_vardiff_target_shares 3) keeps verification within
-      # capacity up to roughly 160/s at the normal share size.
+      # Level 3 (growth3_vardiff_target_shares 2) keeps verification within
+      # capacity up to roughly 240/s at the normal share size.
       - alert: BlocknetPoolBeyondGrowthCapacity
-        expr: blocknet_pool_monitor_growth_normal_size_submits_per_s > 150
+        expr: blocknet_pool_monitor_growth_normal_size_submits_per_s > 225
         for: 30m
         labels:
           severity: warning
           visibility: private
         annotations:
           summary: Load is beyond what growth mode was tested for
-          description: Even at growth level 2 verification is near capacity; coverage will fall. Add verifier capacity (a faster verifier host) or a further growth level.
+          description: Even at growth level 3 verification is near capacity; coverage will fall. Add verifier capacity (a faster verifier host) or enable count-based verification (VERIFY_COUNT_SAMPLING.md).
 
       - alert: BlocknetPoolGatewayNoEngine
         expr: blocknet_pool_gateway_engines == 0

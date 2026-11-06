@@ -7507,6 +7507,21 @@ mod tests {
         assert!(engine.set_growth_level(2));
         assert_eq!(engine.cfg().vardiff_target_shares, 3);
         assert_eq!(engine.cfg().sample_rate, 0.08);
+        assert!(engine.set_growth_level(3));
+        assert_eq!(engine.cfg().vardiff_target_shares, 2);
+        assert_eq!(engine.cfg().sample_rate, 0.08);
+        // Disabling the third level in config falls back to the second.
+        engine.reload_hot_config(&Config {
+            sample_rate: 0.06,
+            growth3_submit_rate: 0.0,
+            ..cfg.clone()
+        });
+        assert_eq!(engine.cfg().vardiff_target_shares, 3);
+        engine.reload_hot_config(&Config {
+            sample_rate: 0.06,
+            ..cfg.clone()
+        });
+        assert!(engine.set_growth_level(2));
         // Disabling the second level in config falls back to the first.
         engine.reload_hot_config(&Config {
             sample_rate: 0.06,

@@ -339,11 +339,13 @@ fn start_growth_mode(
         let load_store = Arc::clone(&store);
         let persisted =
             tokio::task::spawn_blocking(move || load_store.get_meta(GROWTH_MODE_META_KEY)).await;
-        // Stored as "0", "1" or "2" (engines before level 2 read only "1").
+        // Stored as "0" to "3" (engines before level 2 read only "1", engines
+        // before level 3 read "3" as off).
         let level = match persisted {
             Ok(Ok(Some(value))) => match value.as_slice() {
                 b"1" => 1,
                 b"2" => 2,
+                b"3" => 3,
                 _ => 0,
             },
             Ok(Ok(None)) => 0,
@@ -379,7 +381,8 @@ fn start_growth_mode(
             let value: &'static [u8] = match level {
                 0 => b"0",
                 1 => b"1",
-                _ => b"2",
+                2 => b"2",
+                _ => b"3",
             };
             match tokio::task::spawn_blocking(move || store.set_meta(GROWTH_MODE_META_KEY, value))
                 .await

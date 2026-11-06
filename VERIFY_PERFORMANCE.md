@@ -64,6 +64,30 @@ Metric `blocknet_pool_monitor_growth_level`. On 2026-10-29 level 1 was active
 at ~59/s normal-size (30 shares/s actual), verifying ~6.6 hashes/s at ~540 ms;
 `BlocknetPoolBeyondGrowthCapacity` now fires above 150/s.
 
+Level 3 (owner-approved 2026-11-05, after that alert fired at ~162/s with
+level 2 active): above `growth3_submit_rate` (150/s at the normal size)
+Stratum asks for `growth3_vardiff_target_shares` (2) with the same sample
+rate, and returns to level 2 below `growth3_exit_submit_rate` (120/s). The
+persisted meta value can now be `3`; engines before level 3 read it as off
+and climb back one level per settle time. Rollback without a deploy:
+`"growth3_submit_rate": 0` and `systemctl reload` the active engine (falls
+back to level 2). `BlocknetPoolBeyondGrowthCapacity` now fires above 225/s.
+On 2026-11-05 at level 2 the pool ran 162/s normal-size (49.6 shares/s
+actual, 9,600 workers on 320 addresses), live audits 6.1/s plus 2.7/s of
+background backfill, mean hash ~700 ms, 100% Normal.
+
+- 2026-11-05 · T2 · level 3 vs level 2 only (`VERIFY_REPLAY_GROWTH3_RATE=0`),
+  fresh 1-hour production mix (321 addresses, 47.8 shares/s), runs starting at
+  level 2 (`VERIFY_REPLAY_GROWTH_LEVEL=2`), capacity 11/s, 540 ms single hash,
+  hold 0.25, warmup 5, 6 h seeded history with backfill, 50 simulated minutes,
+  one run each. 1x (162/s): verifies 7.06 → 5.40/s (live 6.37 → 4.70), level 3
+  engaged at minute 5, Normal 88% → 88%, 0 drops in both. 1.4x (227/s):
+  verifies 7.93 → 7.05/s, Normal 59% → 82%, drops 0.69 → 0.37/s, small-address
+  coverage 12.8% → 25.9%, large 11.5% → 14.0%. 0 block candidates refused. The
+  replay is harsher than production (88% Normal at 1x vs 100% live; 14 forced
+  addresses vs 5), so read it as level 2 vs level 3, not as absolute
+  headroom. Raw: perf-results/2026-11-05/pool-verify/replay-growth3/.
+
 - 2026-10-27 · T2 · load ramping 1x → 2x over 30 simulated minutes, then
   held at 2x, with the real controller in the loop and miners' share size
   following its target with a 2-minute lag: 100% Normal in 2/2 runs, 0

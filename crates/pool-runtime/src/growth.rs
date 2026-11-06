@@ -2,9 +2,10 @@
 //! audit at the configured coverage, Stratum asks miners for fewer, larger
 //! shares and samples at `growth_sample_rate`, so verification keeps up as
 //! the pool grows. Level 1 uses `growth_vardiff_target_shares`; level 2, above
-//! `growth2_submit_rate`, uses `growth2_vardiff_target_shares`. Approved as
-//! the pool's load-growth plan on 2026-10-27 (level 2 on 2026-10-29); see
-//! VERIFY_PERFORMANCE.md.
+//! `growth2_submit_rate`, uses `growth2_vardiff_target_shares`; level 3, above
+//! `growth3_submit_rate`, uses `growth3_vardiff_target_shares`. Approved as
+//! the pool's load-growth plan on 2026-10-27 (level 2 on 2026-10-29, level 3
+//! on 2026-11-05); see VERIFY_PERFORMANCE.md.
 
 use std::time::{Duration, Instant};
 
@@ -84,7 +85,9 @@ impl GrowthController {
                 0 if max >= 1 && rate > cfg.growth_submit_rate => 1,
                 1 if max >= 2 && rate > cfg.growth2_submit_rate => 2,
                 1 if rate < cfg.growth_exit_submit_rate => 0,
+                2 if max >= 3 && rate > cfg.growth3_submit_rate => 3,
                 2 if rate < cfg.growth2_exit_submit_rate => 1,
+                3 if rate < cfg.growth3_exit_submit_rate => 2,
                 level => level,
             }
         };
@@ -110,6 +113,9 @@ mod tests {
             growth2_vardiff_target_shares: 3,
             growth2_submit_rate: 110.0,
             growth2_exit_submit_rate: 80.0,
+            growth3_vardiff_target_shares: 2,
+            growth3_submit_rate: 150.0,
+            growth3_exit_submit_rate: 120.0,
             ..Config::default()
         }
     }
@@ -123,12 +129,22 @@ mod tests {
         rate: f64,
         minutes: u64,
     ) -> Vec<u8> {
-        let cfg = cfg();
+        drive_with(c, now, total, rate, minutes, &cfg())
+    }
+
+    fn drive_with(
+        c: &mut GrowthController,
+        now: &mut Instant,
+        total: &mut u64,
+        rate: f64,
+        minutes: u64,
+        cfg: &Config,
+    ) -> Vec<u8> {
         let mut switches = Vec::new();
         for _ in 0..minutes * 2 {
             *now += Duration::from_secs(30);
             *total += (rate * 30.0) as u64;
-            if let Some(level) = c.observe(*now, *total, &cfg) {
+            if let Some(level) = c.observe(*now, *total, cfg) {
                 switches.push(level);
             }
         }
@@ -198,15 +214,30 @@ mod tests {
         let mut now = Instant::now();
         let mut c = GrowthController::default();
         let mut total = 0;
+        // Level 3 off: 150/s is its trigger, and the old share size driven
+        // for a while after a switch reads as a higher normal-size rate.
+        let two_levels = Config {
+            growth3_submit_rate: 0.0,
+            ..cfg()
+        };
         // 150/s at the normal size: level 1 first, level 2 after it settles.
-        assert_eq!(drive(&mut c, &mut now, &mut total, 150.0, 5), vec![1]);
-        assert_eq!(drive(&mut c, &mut now, &mut total, 75.0, 30), vec![2]);
+        assert_eq!(
+            drive_with(&mut c, &mut now, &mut total, 150.0, 5, &two_levels),
+            vec![1]
+        );
+        assert_eq!(
+            drive_with(&mut c, &mut now, &mut total, 75.0, 30, &two_levels),
+            vec![2]
+        );
         // Level 2 asks for 3 shares instead of 10: 45/s is still 150/s.
-        assert!(drive(&mut c, &mut now, &mut total, 45.0, 60).is_empty());
+        assert!(drive_with(&mut c, &mut now, &mut total, 45.0, 60, &two_levels).is_empty());
         assert!((c.normal_size_rate().unwrap() - 150.0).abs() < 2.0);
         // 60/s at the normal size: down to level 1, then held there.
-        assert_eq!(drive(&mut c, &mut now, &mut total, 18.0, 12), vec![1]);
-        assert!(drive(&mut c, &mut now, &mut total, 30.0, 60).is_empty());
+        assert_eq!(
+            drive_with(&mut c, &mut now, &mut total, 18.0, 12, &two_levels),
+            vec![1]
+        );
+        assert!(drive_with(&mut c, &mut now, &mut total, 30.0, 60, &two_levels).is_empty());
         assert_eq!(c.level(), 1);
     }
 
@@ -228,5 +259,44 @@ mod tests {
             }
         }
         assert_eq!(switched, Some(1));
+    }
+
+    #[test]
+    fn climbs_to_the_third_level_and_back() {
+        let mut now = Instant::now();
+        let mut c = GrowthController::new(2, now);
+        let mut total = 0;
+        // 180/s at the normal size is 54/s at level 2 (3 shares instead of 10).
+        assert_eq!(drive(&mut c, &mut now, &mut total, 54.0, 15), vec![3]);
+        // Level 3 asks for 2 shares: 36/s is still 180/s.
+        assert!(drive(&mut c, &mut now, &mut total, 36.0, 60).is_empty());
+        assert!((c.normal_size_rate().unwrap() - 180.0).abs() < 2.0);
+        // 130/s sits between level 3's exit and its trigger: no change.
+        assert!(drive(&mut c, &mut now, &mut total, 26.0, 60).is_empty());
+        assert_eq!(c.level(), 3);
+        // 100/s at the normal size: down to level 2, then held there.
+        assert_eq!(drive(&mut c, &mut now, &mut total, 20.0, 4), vec![2]);
+        assert!(drive(&mut c, &mut now, &mut total, 30.0, 60).is_empty());
+        assert_eq!(c.level(), 2);
+    }
+
+    #[test]
+    fn disabling_the_third_level_steps_down_to_the_second() {
+        let mut now = Instant::now();
+        let mut c = GrowthController::new(3, now);
+        let mut total = 0;
+        let two_levels = Config {
+            growth3_submit_rate: 0.0,
+            ..cfg()
+        };
+        let mut switched = None;
+        for _ in 0..40 {
+            now += Duration::from_secs(30);
+            total += 36 * 30;
+            if let Some(level) = c.observe(now, total, &two_levels) {
+                switched = Some(level);
+            }
+        }
+        assert_eq!(switched, Some(2));
     }
 }

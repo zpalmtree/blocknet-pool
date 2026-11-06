@@ -88,6 +88,13 @@ pub struct Config {
     /// The second level drops back to the first below this rate.
     pub growth2_exit_submit_rate: f64,
     pub growth2_vardiff_target_shares: i32,
+    /// Third growth level: above this rate (same units) Stratum moves on to
+    /// `growth3_vardiff_target_shares`, keeping `growth_sample_rate`. 0
+    /// disables the third level.
+    pub growth3_submit_rate: f64,
+    /// The third level drops back to the second below this rate.
+    pub growth3_exit_submit_rate: f64,
+    pub growth3_vardiff_target_shares: i32,
     /// How share verification is spent across addresses (VERIFY_COUNT_SAMPLING.md).
     /// "ratio" samples every address at `sample_rate` and requires verified
     /// difficulty in proportion to provisional difficulty. "count" gives each
@@ -225,6 +232,9 @@ impl Default for Config {
             growth2_submit_rate: 110.0,
             growth2_exit_submit_rate: 80.0,
             growth2_vardiff_target_shares: 3,
+            growth3_submit_rate: 150.0,
+            growth3_exit_submit_rate: 120.0,
+            growth3_vardiff_target_shares: 2,
             verification_policy: VERIFICATION_POLICY_RATIO.to_string(),
             count_target_samples: 50.0,
             count_window: "1h".to_string(),
@@ -364,6 +374,9 @@ impl Config {
                 growth2_submit_rate,
                 growth2_exit_submit_rate,
                 growth2_vardiff_target_shares,
+                growth3_submit_rate,
+                growth3_exit_submit_rate,
+                growth3_vardiff_target_shares,
                 count_target_samples,
                 count_window,
                 count_coverage_floor,
@@ -381,8 +394,13 @@ impl Config {
                 sample_rate: self.growth_sample_rate,
                 ..self.clone()
             },
-            _ => Config {
+            2 => Config {
                 vardiff_target_shares: self.growth2_vardiff_target_shares,
+                sample_rate: self.growth_sample_rate,
+                ..self.clone()
+            },
+            _ => Config {
+                vardiff_target_shares: self.growth3_vardiff_target_shares,
                 sample_rate: self.growth_sample_rate,
                 ..self.clone()
             },
@@ -400,8 +418,10 @@ impl Config {
             0
         } else if self.growth2_submit_rate <= 0.0 {
             1
-        } else {
+        } else if self.growth3_submit_rate <= 0.0 {
             2
+        } else {
+            3
         }
     }
 
@@ -686,6 +706,11 @@ impl Config {
                 1,
             ),
             (
+                "growth3_vardiff_target_shares",
+                self.growth3_vardiff_target_shares,
+                1,
+            ),
+            (
                 "payout_min_verified_shares",
                 self.payout_min_verified_shares,
                 0,
@@ -777,6 +802,34 @@ impl Config {
             if self.growth2_vardiff_target_shares > self.growth_vardiff_target_shares {
                 anyhow::bail!(
                     "growth2_vardiff_target_shares must not exceed growth_vardiff_target_shares"
+                );
+            }
+        }
+        ensure_f64_range(
+            "growth3_submit_rate",
+            self.growth3_submit_rate,
+            0.0,
+            f64::MAX,
+        )?;
+        ensure_f64_range(
+            "growth3_exit_submit_rate",
+            self.growth3_exit_submit_rate,
+            0.0,
+            f64::MAX,
+        )?;
+        if self.growth3_submit_rate > 0.0 && self.growth2_submit_rate > 0.0 {
+            if self.growth3_exit_submit_rate >= self.growth3_submit_rate {
+                anyhow::bail!("growth3_exit_submit_rate must be below growth3_submit_rate");
+            }
+            if self.growth3_submit_rate <= self.growth2_submit_rate {
+                anyhow::bail!("growth3_submit_rate must be above growth2_submit_rate");
+            }
+            if self.growth3_exit_submit_rate <= self.growth2_exit_submit_rate {
+                anyhow::bail!("growth3_exit_submit_rate must be above growth2_exit_submit_rate");
+            }
+            if self.growth3_vardiff_target_shares > self.growth2_vardiff_target_shares {
+                anyhow::bail!(
+                    "growth3_vardiff_target_shares must not exceed growth2_vardiff_target_shares"
                 );
             }
         }
@@ -900,6 +953,41 @@ impl LiveConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn third_growth_level_is_ordered_above_the_second() {
+        let cfg = Config::default();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.max_growth_level(), 3);
+        assert_eq!(cfg.with_growth_level(3).vardiff_target_shares, 2);
+        assert_eq!(cfg.with_growth_level(3).sample_rate, cfg.growth_sample_rate);
+        for bad in [
+            Config {
+                growth3_submit_rate: 100.0,
+                ..Config::default()
+            },
+            Config {
+                growth3_exit_submit_rate: 70.0,
+                ..Config::default()
+            },
+            Config {
+                growth3_exit_submit_rate: 160.0,
+                ..Config::default()
+            },
+            Config {
+                growth3_vardiff_target_shares: 4,
+                ..Config::default()
+            },
+        ] {
+            assert!(bad.validate().is_err());
+        }
+        let two_levels = Config {
+            growth3_submit_rate: 0.0,
+            ..Config::default()
+        };
+        assert!(two_levels.validate().is_ok());
+        assert_eq!(two_levels.max_growth_level(), 2);
+    }
 
     #[test]
     fn memo_admission_requires_a_higher_atomic_payout_floor() {

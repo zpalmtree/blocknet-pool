@@ -3540,6 +3540,11 @@ mod tests {
         // share size follows its target with a vardiff-like lag.
         let growth = env_f64("VERIFY_REPLAY_GROWTH", 0.0) > 0.0;
         let growth_start_active = env_f64("VERIFY_REPLAY_GROWTH_ACTIVE", 0.0) > 0.0;
+        // Level the run starts at (VERIFY_REPLAY_GROWTH_ACTIVE=1 means 1).
+        let growth_start_level = env_f64(
+            "VERIFY_REPLAY_GROWTH_LEVEL",
+            f64::from(u8::from(growth_start_active)),
+        ) as u8;
         // "start,end,factor" in wall seconds.
         let surge: Option<(f64, f64, f64)> = std::env::var("VERIFY_REPLAY_SURGE").ok().map(|v| {
             let parts: Vec<f64> = v.split(',').map(|p| p.parse().expect("surge")).collect();
@@ -3616,6 +3621,8 @@ mod tests {
         });
         let replay_base_cfg = Config {
             vardiff_target_shares: 10,
+            // 0 limits the replay to two growth levels.
+            growth3_submit_rate: env_f64("VERIFY_REPLAY_GROWTH3_RATE", cfg.growth3_submit_rate),
             ..cfg.clone()
         };
         let difficulty = (60.0 / share_scale).round() as u64;
@@ -3681,16 +3688,14 @@ mod tests {
         let mut shares_by_address = vec![0u64; weights.len()];
         let sim_start = Instant::now();
         let sim_now = |started: Instant| sim_start + started.elapsed().mul_f64(speedup);
-        let mut controller =
-            crate::growth::GrowthController::new(u8::from(growth_start_active), sim_start);
-        if growth && growth_start_active {
-            engine.reload_hot_config(&replay_base_cfg.with_growth_mode());
+        let mut controller = crate::growth::GrowthController::new(growth_start_level, sim_start);
+        let mut share_size = 1.0;
+        if growth && growth_start_level > 0 {
+            let effective = replay_base_cfg.with_growth_level(growth_start_level);
+            share_size = replay_base_cfg.vardiff_target_shares as f64
+                / effective.vardiff_target_shares.max(1) as f64;
+            engine.reload_hot_config(&effective);
         }
-        let mut share_size = if growth && growth_start_active {
-            2.0
-        } else {
-            1.0
-        };
         let mut share_size_target = share_size;
         let mut last_growth_tick = 0.0f64;
         let mut growth_switches = Vec::<(f64, u8)>::new();

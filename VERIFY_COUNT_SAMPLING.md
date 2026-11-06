@@ -241,7 +241,7 @@ production numbers exist.
 
 Enable when sustained verifier demand approaches capacity (for example
 `BlocknetPoolBeyondGrowthCapacity`, or live + background audits above ~8-9/s
-for an hour with growth level 2 already active), and after:
+for an hour with growth level 3 already active), and after:
 
 1. the API preview follow-up below is done;
 2. one production reload in shadow (or a short enabled window) confirms the
