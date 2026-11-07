@@ -41,17 +41,23 @@ groups:
           summary: Growth mode is on
           description: The share rate passed growth_submit_rate, so miners were moved to fewer, larger shares (growth_vardiff_target_shares, growth_sample_rate). Expected as the pool grows; see VERIFY_PERFORMANCE.md.
 
-      # Level 3 (growth3_vardiff_target_shares 2) keeps verification within
-      # capacity up to roughly 240/s at the normal share size.
+      # Fires only when load is past what level 3 was tested for and the
+      # verifiers are spending real time outside Normal (Shed or Emergency),
+      # so coverage is actually falling. keep_firing_for stops it flapping
+      # while load hovers at the threshold.
       - alert: BlocknetPoolBeyondGrowthCapacity
-        expr: blocknet_pool_monitor_growth_normal_size_submits_per_s > 225
-        for: 30m
+        expr: >-
+          blocknet_pool_monitor_growth_normal_size_submits_per_s > 225
+          and on()
+          sum(rate(blocknet_pool_monitor_validation_overload_seconds_total{mode!="normal"}[30m])) > 0.05
+        for: 15m
+        keep_firing_for: 30m
         labels:
           severity: warning
           visibility: private
         annotations:
           summary: Load is beyond what growth mode was tested for
-          description: Even at growth level 3 verification is near capacity; coverage will fall. Add verifier capacity (a faster verifier host) or enable count-based verification (VERIFY_COUNT_SAMPLING.md).
+          description: Load is past what growth level 3 was tested for and the verifiers spent over 5% of the last 30 minutes shedding, so audit coverage is falling. Add verifier capacity (a faster verifier host) or enable count-based verification (VERIFY_COUNT_SAMPLING.md).
 
       - alert: BlocknetPoolGatewayNoEngine
         expr: blocknet_pool_gateway_engines == 0

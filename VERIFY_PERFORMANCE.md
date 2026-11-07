@@ -76,6 +76,13 @@ On 2026-11-05 at level 2 the pool ran 162/s normal-size (49.6 shares/s
 actual, 9,600 workers on 320 addresses), live audits 6.1/s plus 2.7/s of
 background backfill, mean hash ~700 ms, 100% Normal.
 
+On 2026-11-07 load held at 220-265/s normal-size (~45 shares/s actual,
+13,600 workers on 305 miners) and the load-only alert flapped at 225/s while
+the verifiers stayed Normal (0 s Shed over 6 hours, regular verifiers about
+half busy, accept p99 49 ms). The alert now also needs over 5% of the last
+30 minutes spent in Shed or Emergency, sustained 15 minutes, and keeps firing
+30 minutes after it clears.
+
 - 2026-11-05 · T2 · level 3 vs level 2 only (`VERIFY_REPLAY_GROWTH3_RATE=0`),
   fresh 1-hour production mix (321 addresses, 47.8 shares/s), runs starting at
   level 2 (`VERIFY_REPLAY_GROWTH_LEVEL=2`), capacity 11/s, 540 ms single hash,
