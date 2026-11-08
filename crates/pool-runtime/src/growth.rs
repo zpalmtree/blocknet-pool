@@ -16,6 +16,11 @@ const RATE_TIME_CONSTANT: Duration = Duration::from_secs(5 * 60);
 /// After a switch, vardiff needs minutes to move miners to the new share
 /// size; decisions wait until it has.
 const SETTLE: Duration = Duration::from_secs(10 * 60);
+/// A step down needs the rate below the level's exit for this long without a
+/// break. Outages and mass reconnects cut the share rate for a while even
+/// though the miners are all still there, and stepping down then floods the
+/// pool with small shares when they recover. Stepping up stays immediate.
+const STEP_DOWN_HOLD: Duration = Duration::from_secs(2 * 60 * 60);
 
 #[derive(Debug, Default)]
 pub(crate) struct GrowthController {
@@ -24,6 +29,8 @@ pub(crate) struct GrowthController {
     rate: Option<f64>,
     last: Option<(Instant, u64)>,
     settle_until: Option<Instant>,
+    /// Since when the rate has been below the current level's exit.
+    below_exit_since: Option<Instant>,
 }
 
 /// Shares per vardiff window that miners are asked for at `level`.
@@ -40,6 +47,7 @@ impl GrowthController {
             // A restart resumes the persisted level; give the share rate time
             // to be measured before reconsidering it.
             settle_until: Some(now + SETTLE / 2),
+            below_exit_since: None,
         }
     }
 
@@ -81,20 +89,37 @@ impl GrowthController {
         let next = if self.level > max {
             max
         } else {
-            match self.level {
-                0 if max >= 1 && rate > cfg.growth_submit_rate => 1,
-                1 if max >= 2 && rate > cfg.growth2_submit_rate => 2,
-                1 if rate < cfg.growth_exit_submit_rate => 0,
-                2 if max >= 3 && rate > cfg.growth3_submit_rate => 3,
-                2 if rate < cfg.growth2_exit_submit_rate => 1,
-                3 if rate < cfg.growth3_exit_submit_rate => 2,
-                level => level,
+            let up = match self.level {
+                0 => max >= 1 && rate > cfg.growth_submit_rate,
+                1 => max >= 2 && rate > cfg.growth2_submit_rate,
+                2 => max >= 3 && rate > cfg.growth3_submit_rate,
+                _ => false,
+            };
+            let below_exit = match self.level {
+                1 => rate < cfg.growth_exit_submit_rate,
+                2 => rate < cfg.growth2_exit_submit_rate,
+                3 => rate < cfg.growth3_exit_submit_rate,
+                _ => false,
+            };
+            if up {
+                self.level + 1
+            } else if below_exit {
+                let since = *self.below_exit_since.get_or_insert(now);
+                if now.saturating_duration_since(since) >= STEP_DOWN_HOLD {
+                    self.level - 1
+                } else {
+                    self.level
+                }
+            } else {
+                self.below_exit_since = None;
+                self.level
             }
         };
         if next == self.level {
             return None;
         }
         self.level = next;
+        self.below_exit_since = None;
         self.settle_until = Some(now + SETTLE);
         Some(next)
     }
@@ -164,7 +189,9 @@ mod tests {
         assert!(drive(&mut c, &mut now, &mut total, 35.0, 60).is_empty());
         assert_eq!(c.level(), 1);
         // Load falls to 30/s at the normal size (15/s in growth mode).
-        assert_eq!(drive(&mut c, &mut now, &mut total, 15.0, 60), vec![0]);
+        // It must stay there for two hours before growth mode is left.
+        assert!(drive(&mut c, &mut now, &mut total, 15.0, 60).is_empty());
+        assert_eq!(drive(&mut c, &mut now, &mut total, 15.0, 70), vec![0]);
     }
 
     #[test]
@@ -234,7 +261,7 @@ mod tests {
         assert!((c.normal_size_rate().unwrap() - 150.0).abs() < 2.0);
         // 60/s at the normal size: down to level 1, then held there.
         assert_eq!(
-            drive_with(&mut c, &mut now, &mut total, 18.0, 12, &two_levels),
+            drive_with(&mut c, &mut now, &mut total, 18.0, 135, &two_levels),
             vec![1]
         );
         assert!(drive_with(&mut c, &mut now, &mut total, 30.0, 60, &two_levels).is_empty());
@@ -275,9 +302,24 @@ mod tests {
         assert!(drive(&mut c, &mut now, &mut total, 26.0, 60).is_empty());
         assert_eq!(c.level(), 3);
         // 100/s at the normal size: down to level 2, then held there.
-        assert_eq!(drive(&mut c, &mut now, &mut total, 20.0, 4), vec![2]);
+        assert_eq!(drive(&mut c, &mut now, &mut total, 20.0, 135), vec![2]);
         assert!(drive(&mut c, &mut now, &mut total, 30.0, 60).is_empty());
         assert_eq!(c.level(), 2);
+    }
+
+    #[test]
+    fn a_dip_shorter_than_the_hold_keeps_the_level() {
+        let mut now = Instant::now();
+        let mut c = GrowthController::new(3, now);
+        let mut total = 0;
+        // 180/s at the normal size (36/s at level 3), then an hour-long
+        // outage at 50/s, recovery, and another hour-long dip: never two
+        // hours below the exit in a row.
+        assert!(drive(&mut c, &mut now, &mut total, 36.0, 30).is_empty());
+        assert!(drive(&mut c, &mut now, &mut total, 10.0, 100).is_empty());
+        assert!(drive(&mut c, &mut now, &mut total, 36.0, 20).is_empty());
+        assert!(drive(&mut c, &mut now, &mut total, 10.0, 100).is_empty());
+        assert_eq!(c.level(), 3);
     }
 
     #[test]

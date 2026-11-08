@@ -64,6 +64,17 @@ Metric `blocknet_pool_monitor_growth_level`. On 2026-10-29 level 1 was active
 at ~59/s normal-size (30 shares/s actual), verifying ~6.6 hashes/s at ~540 ms;
 `BlocknetPoolBeyondGrowthCapacity` now fires above 150/s.
 
+Stepping down (since 2026-11-08): a level is left only after the rate has
+stayed below its exit for two hours without a break; stepping up is still
+immediate. On 2026-11-08 a relay outage cut the share rate for hours while
+~15k miners stayed connected; the 5-minute rate dipped below level 3's exit,
+the pool dropped to level 2 just as the fix went in, and the reconnecting
+miners flooded it at the smaller share size (560 submits/s, ~215k shed in 10
+minutes). Vardiff had also lowered every miner's difficulty during the
+outage, because shares rejected as stale did not count as activity; stale
+rejects now mark the session as active and block downward retargets, like
+unprocessed submits.
+
 Level 3 (owner-approved 2026-11-05, after that alert fired at ~162/s with
 level 2 active): above `growth3_submit_rate` (150/s at the normal size)
 Stratum asks for `growth3_vardiff_target_shares` (2) with the same sample
