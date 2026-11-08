@@ -1,0 +1,30 @@
+# Run from this directory: promtool test rules hashrate-collapse.test.yml
+rule_files:
+- blocknet-pool.rules.yml
+evaluation_interval: 1m
+tests:
+- name: A 25% drop stays quiet; a drop to a fifth alerts after 15 minutes
+  interval: 1m
+  input_series:
+  # 8 hours at 40,000 H/s, 1 hour at 30,000, then 8,000.
+  - series: blocknet_pool_monitor_estimated_hashrate{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 40000x480 30000x60 8000x60
+  alert_rule_test:
+  - eval_time: 9h
+    alertname: BlocknetPoolHashrateCollapsed
+    exp_alerts: []
+  - eval_time: 9h10m
+    alertname: BlocknetPoolHashrateCollapsed
+    exp_alerts: []
+  - eval_time: 9h20m
+    alertname: BlocknetPoolHashrateCollapsed
+    exp_alerts:
+    - exp_labels:
+        alertname: BlocknetPoolHashrateCollapsed
+        severity: critical
+        visibility: private
+        instance: 127.0.0.1:24784
+        job: blocknet_pool_monitor
+      exp_annotations:
+        summary: Pool hashrate fell below 40% of its recent average
+        description: Check share rejections (stale job), the gateway relay delay and Stratum logs; connected miners may be mining without credit.

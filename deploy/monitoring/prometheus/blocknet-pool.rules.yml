@@ -111,6 +111,20 @@ groups:
           summary: The gateway relays miner lines and jobs more than ten seconds late
           description: Most shares are going stale and the pool is losing its hashrate; check the gateway's CPU and event rate.
 
+      # Below 40% of the previous six hours' average: more than a large
+      # miner leaving; usually shares are being rejected or not arriving.
+      - alert: BlocknetPoolHashrateCollapsed
+        expr: |
+          blocknet_pool_monitor_estimated_hashrate
+            < 0.4 * avg_over_time(blocknet_pool_monitor_estimated_hashrate[6h] offset 1h)
+        for: 15m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Pool hashrate fell below 40% of its recent average
+          description: Check share rejections (stale job), the gateway relay delay and Stratum logs; connected miners may be mining without credit.
+
       # Gateways before blocknet_pool_gateway_max_miners existed ran with 16,384.
       - alert: BlocknetPoolMinerConnectionsNearCap
         expr: blocknet_pool_gateway_miners > 0.8 * scalar(blocknet_pool_gateway_max_miners or on() vector(16384))

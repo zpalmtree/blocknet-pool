@@ -65,7 +65,16 @@ def format_alert_lines(alerts: list[dict]) -> str:
     return clamp("\n".join(lines), MAX_EMBED_FIELD_VALUE_LEN)
 
 
-def format_alert(payload: dict) -> dict:
+def critical_mention_user_id() -> str | None:
+    """Discord user pinged when a critical alert fires; unset sends no ping."""
+    for name in ("DISCORD_CRITICAL_MENTION_USER_ID", "DISCORD_CHAIN_DIVERGENCE_MENTION_USER_ID"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value if value.isdigit() else None
+    return None
+
+
+def format_alert(payload: dict, mention_user_id: str | None = None) -> dict:
     status = str(payload.get("status", "unknown")).upper()
     common_labels = payload.get("commonLabels") or {}
     common_annotations = payload.get("commonAnnotations") or {}
@@ -110,10 +119,15 @@ def format_alert(payload: dict) -> dict:
     if external:
         embed["footer"] = {"text": clamp(external, 200)}
 
-    return {
+    message = {
         "allowed_mentions": {"parse": []},
         "embeds": [embed],
     }
+    # Only a critical alert that is firing pings; warnings and resolutions post quietly.
+    if mention_user_id and status == "FIRING" and severity.lower() == "critical":
+        message["content"] = f"<@{mention_user_id}> critical: {clamp(alertname, 200)}"
+        message["allowed_mentions"] = {"parse": [], "users": [mention_user_id]}
+    return message
 
 
 def post_discord(webhook: str, message: dict) -> None:
@@ -159,7 +173,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length)
             payload = json.loads(raw.decode("utf-8"))
-            message = format_alert(payload)
+            message = format_alert(payload, critical_mention_user_id())
             post_discord(webhook, message)
         except Exception as exc:  # noqa: BLE001
             self.log_error("relay failure: %s", exc)
