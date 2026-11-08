@@ -190,9 +190,16 @@ impl Gateway {
             }
             Event::EngineFrame { engine, frame } => self.engine_frame(engine, frame, now),
             Event::EngineClosed { engine } => self.engine_closed(engine, now),
-            Event::Tick => self.tick(now),
+            Event::Tick => {
+                self.tick(now);
+                self.publish_gauges();
+            }
         }
-        self.publish_gauges();
+        // The connection cap reads this; the other gauges walk every miner,
+        // so they are refreshed once per tick rather than per event.
+        self.metrics
+            .miners
+            .store(self.miners.len() as u64, Ordering::Relaxed);
     }
 
     fn miner_connected(
@@ -758,9 +765,6 @@ impl Gateway {
     }
 
     fn publish_gauges(&self) {
-        self.metrics
-            .miners
-            .store(self.miners.len() as u64, Ordering::Relaxed);
         self.metrics.engines.store(
             self.engines.values().filter(|link| !link.retired).count() as u64,
             Ordering::Relaxed,
@@ -1337,6 +1341,20 @@ mod tests {
             &format!(r#"{{"id":{REPLAY_LOGIN_REQUEST_ID},"status":"ok"}}"#),
         );
         assert_eq!(h.metrics.migrations.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn miner_count_updates_per_event_and_engine_gauges_per_tick() {
+        let mut h = Harness::new();
+        let _a = h.engine(1, 100);
+        let _miner = h.miner(7);
+        assert_eq!(h.metrics.miners.load(Ordering::Relaxed), 1);
+        h.handle(Event::MinerClosed { conn: 7 });
+        assert_eq!(h.metrics.miners.load(Ordering::Relaxed), 0);
+        let _waiting = h.miner(8);
+        h.advance(Duration::from_millis(100));
+        assert_eq!(h.metrics.miners_without_engine.load(Ordering::Relaxed), 0);
+        assert_eq!(h.metrics.engines.load(Ordering::Relaxed), 1);
     }
 
     #[test]
