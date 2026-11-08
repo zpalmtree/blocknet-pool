@@ -89,6 +89,28 @@ groups:
           summary: Engine handover is rejecting replayed logins
           description: Miners stay on the old engine and the deploy will stall; check the new engine's login rejections.
 
+      # Queue wait in the gateway's relay loop: jobs and submits arriving this
+      # late make miners' shares stale.
+      - alert: BlocknetPoolGatewayRelayDelayed
+        expr: histogram_quantile(0.9, sum by (le) (rate(blocknet_pool_gateway_latency_millis_bucket{lane=~"miner_line_wait|engine_frame_wait"}[5m]))) > 1000
+        for: 10m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: The gateway relays miner lines and jobs more than a second late
+          description: Check the gateway's CPU and event rate (blocknet_pool_gateway_latency_millis_count) and refused connections per IP.
+
+      - alert: BlocknetPoolGatewayRelayStalled
+        expr: histogram_quantile(0.9, sum by (le) (rate(blocknet_pool_gateway_latency_millis_bucket{lane=~"miner_line_wait|engine_frame_wait"}[5m]))) > 10000
+        for: 3m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: The gateway relays miner lines and jobs more than ten seconds late
+          description: Most shares are going stale and the pool is losing its hashrate; check the gateway's CPU and event rate.
+
       # Gateways before blocknet_pool_gateway_max_miners existed ran with 16,384.
       - alert: BlocknetPoolMinerConnectionsNearCap
         expr: blocknet_pool_gateway_miners > 0.8 * scalar(blocknet_pool_gateway_max_miners or on() vector(16384))
@@ -140,11 +162,12 @@ groups:
           summary: The gateway is using over 70% of its file descriptor limit
           description: At the limit it stops accepting miners; check for half-closed miner sockets and raise LimitNOFILE.
 
-      # TCP sockets beyond the gateway's live miners are mostly connections
-      # the gateway has closed but still holds; the gateway allows 65,535
+      # TCP sockets beyond the gateway's live miners and the refused miners it
+      # holds until their retry delay are mostly connections the gateway has
+      # closed but still holds; the gateway allows 65,535
       # descriptors and stops accepting miners when they run out.
       - alert: BlocknetPoolHeldSocketsHigh
-        expr: node_sockstat_TCP_inuse - scalar(blocknet_pool_gateway_miners) > 20000
+        expr: node_sockstat_TCP_inuse - scalar(blocknet_pool_gateway_miners) - scalar(blocknet_pool_gateway_held_connections or on() vector(0)) > 20000
         for: 30m
         labels:
           severity: warning

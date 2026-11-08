@@ -1,0 +1,49 @@
+# Run from this directory: promtool test rules gateway-relay.test.yml
+rule_files:
+- blocknet-pool.rules.yml
+evaluation_interval: 15s
+tests:
+- name: Relay waits under a second stay quiet; waits of seconds then tens of seconds alert
+  interval: 15s
+  input_series:
+  # 1,000 lines a minute. For 20 minutes all wait under 1 ms; for the next
+  # 20 they wait 2.5-5 s; after that 25-30 s.
+  - series: blocknet_pool_gateway_latency_millis_bucket{lane="miner_line_wait",le="1"}
+    values: 0+250x80 20000x160
+  - series: blocknet_pool_gateway_latency_millis_bucket{lane="miner_line_wait",le="2500"}
+    values: 0+250x80 20000x160
+  - series: blocknet_pool_gateway_latency_millis_bucket{lane="miner_line_wait",le="5000"}
+    values: 0+250x80 20000+250x80 40000x80
+  - series: blocknet_pool_gateway_latency_millis_bucket{lane="miner_line_wait",le="25000"}
+    values: 0+250x80 20000+250x80 40000x80
+  - series: blocknet_pool_gateway_latency_millis_bucket{lane="miner_line_wait",le="30000"}
+    values: 0+250x240
+  - series: blocknet_pool_gateway_latency_millis_bucket{lane="miner_line_wait",le="+Inf"}
+    values: 0+250x240
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: BlocknetPoolGatewayRelayDelayed
+    exp_alerts: []
+  - eval_time: 38m
+    alertname: BlocknetPoolGatewayRelayDelayed
+    exp_alerts:
+    - exp_labels:
+        alertname: BlocknetPoolGatewayRelayDelayed
+        severity: warning
+        visibility: private
+      exp_annotations:
+        summary: The gateway relays miner lines and jobs more than a second late
+        description: Check the gateway's CPU and event rate (blocknet_pool_gateway_latency_millis_count) and refused connections per IP.
+  - eval_time: 38m
+    alertname: BlocknetPoolGatewayRelayStalled
+    exp_alerts: []
+  - eval_time: 55m
+    alertname: BlocknetPoolGatewayRelayStalled
+    exp_alerts:
+    - exp_labels:
+        alertname: BlocknetPoolGatewayRelayStalled
+        severity: critical
+        visibility: private
+      exp_annotations:
+        summary: The gateway relays miner lines and jobs more than ten seconds late
+        description: Most shares are going stale and the pool is losing its hashrate; check the gateway's CPU and event rate.
