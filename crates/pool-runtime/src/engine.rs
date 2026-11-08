@@ -1551,6 +1551,7 @@ impl PoolEngine {
             Ok(v) => v,
             Err(err) => {
                 let err_text = err.to_string();
+                self.note_stale_submit(conn_id, received_at);
                 self.persist_rejected_share_for_error(
                     &session,
                     &job_id,
@@ -3005,6 +3006,22 @@ impl PoolEngine {
             Some(session.difficulty)
         } else {
             None
+        }
+    }
+
+    /// Records a share rejected for a stale job. The miner found it, so the
+    /// session is not idle and vardiff must not lower its difficulty; when
+    /// jobs reach miners late (a slow relay, a lost assignment) every share
+    /// is stale and idle decay would otherwise drive miners to the minimum.
+    /// Like unprocessed submits, it never lowers difficulty.
+    fn note_stale_submit(&self, conn_id: &str, now: Instant) {
+        if !self.cfg().enable_vardiff {
+            return;
+        }
+        let mut sessions = self.sessions.lock();
+        if let Some(session) = sessions.get_mut(conn_id) {
+            session.last_share_at = Some(now);
+            session.last_unprocessed_at = Some(now);
         }
     }
 
@@ -6921,6 +6938,42 @@ mod tests {
         assert!(
             engine.retarget_on_job_if_needed("conn2").expect("conn2") < 100,
             "an idle session without unprocessed submits still decays"
+        );
+    }
+
+    #[test]
+    fn job_tick_holds_difficulty_while_the_sessions_shares_are_stale() {
+        let engine = vardiff_test_engine(fast_vardiff_cfg());
+        for conn in ["conn1", "conn2"] {
+            engine
+                .login(conn, test_miner_address(), conn, 2, submit_hash_cap())
+                .expect("login");
+        }
+        engine
+            .submit("conn1", "job1".to_string(), 400, Some("00".repeat(32)))
+            .expect("share conn1");
+        engine
+            .submit("conn2", "job1".to_string(), 401, Some("00".repeat(32)))
+            .expect("share conn2");
+        std::thread::sleep(Duration::from_millis(2_200));
+        let stale = engine
+            .submit(
+                "conn1",
+                "evicted-job".to_string(),
+                402,
+                Some("00".repeat(32)),
+            )
+            .expect_err("unknown job is stale");
+        assert!(stale.to_string().starts_with("stale job"), "{stale}");
+
+        assert_eq!(
+            engine.retarget_on_job_if_needed("conn1"),
+            Some(100),
+            "a session whose shares come back stale is still hashing"
+        );
+        assert!(
+            engine.retarget_on_job_if_needed("conn2").expect("conn2") < 100,
+            "an idle session still decays"
         );
     }
 
