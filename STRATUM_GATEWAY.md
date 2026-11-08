@@ -26,16 +26,21 @@ miners ──TCP :3333──► blocknet-pool-gateway ──unix socket──►
 
 ## Connection limits
 
-The gateway enforces `gateway_max_miners` and, before a miner reaches an
-engine, `stratum_max_connections_per_ip` (default 2,048, the same key and IP
-grouping the engines use: IPv4 by address, IPv6 by /64). A miner over its
-group's limit gets a `connection_limit` notice and its socket is held open for
-the notice's `retry_after_ms` (15-45 s) before it closes, so a client that
+The gateway enforces `gateway_max_miners` (default 65,536) and, before a miner
+reaches an engine, `stratum_max_connections_per_ip` (default 4,096, the same
+key and IP grouping the engines use: IPv4 by address, IPv6 by /64). The per-IP
+limit only applies once 75% of the total cap is in use; below that one IP
+group, such as a farm behind NAT, may connect any number of miners. Past it, a
+group already at its limit cannot add connections, but its existing ones stay.
+
+A refused miner gets a `connection_limit` notice and its socket is held open
+for the notice's `retry_after_ms` (15-45 s) before it closes, so a client that
 ignores the notice still cannot reconnect faster. Each group holds at most as
 many refused sockets as its limit, and 16,384 in total; beyond that refused
 sockets close at once. TLS miners over the limit are held without a notice.
-The engines keep their own per-IP check as a backstop; they read the key at
-start, so a change needs an engine handover and a gateway restart.
+The engines apply the same rule against `stratum_max_connections` as a
+backstop. Both read the keys at start, so a change needs an engine handover
+and a gateway restart.
 
 ## Frames (gateway ⇄ engine)
 

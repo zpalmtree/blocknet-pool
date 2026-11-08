@@ -199,7 +199,7 @@ impl Default for Config {
             stratum_host: "127.0.0.1".to_string(),
             stratum_port: 3333,
             gateway_socket: String::new(),
-            stratum_max_connections: 32_768,
+            stratum_max_connections: pool_common::protocol::DEFAULT_MAX_CONNECTIONS as i32,
             stratum_max_connections_per_ip: pool_common::protocol::DEFAULT_MAX_CONNECTIONS_PER_IP
                 as i32,
             stratum_refill_rate: 4.0,

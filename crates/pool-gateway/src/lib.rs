@@ -889,8 +889,10 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let metrics = Arc::new(GatewayMetrics::default());
         let (events_tx, mut events_rx) = mpsc::channel(16);
+        // One connection in use is past 75% of a cap of one, so the per-IP
+        // limit applies.
         let limits = MinerLimits {
-            max_miners: 16,
+            max_miners: 1,
             max_per_ip: 1,
         };
         let accept = tokio::spawn(accept_miners(

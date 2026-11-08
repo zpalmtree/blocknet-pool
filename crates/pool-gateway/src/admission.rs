@@ -1,6 +1,10 @@
 //! Per-IP admission for miner sockets, enforced in the accept tasks so a
 //! refused miner never reaches the relay's core loop.
 //!
+//! The per-IP limit applies only once the gateway is past
+//! `PER_IP_LIMIT_ABOVE_PCT` of `max_miners`; below that one IP group (a farm
+//! behind NAT) may connect any number of miners.
+//!
 //! A miner over its IP group's limit receives a `connection_limit` notice and
 //! its socket is held open for the notice's retry delay before it closes, so a
 //! client that ignores the notice still reconnects no faster than that.
@@ -12,7 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pool_common::net::ip_group_key;
-use pool_common::protocol::{connection_limit_line, CONNECTION_LIMIT_RETRY_MS};
+use pool_common::protocol::{
+    connection_limit_line, per_ip_limit_applies, CONNECTION_LIMIT_RETRY_MS,
+};
 use rand::Rng;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
@@ -46,6 +52,7 @@ impl From<usize> for MinerLimits {
 #[derive(Debug, Default)]
 struct State {
     open: HashMap<String, usize>,
+    open_total: usize,
     held: HashMap<String, usize>,
     held_total: usize,
 }
@@ -98,8 +105,11 @@ impl Admission {
         let key = ip_group_key(ip);
         let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
         let open = state.open.get(&key).copied().unwrap_or(0);
-        if open < self.limits.max_per_ip {
+        if open < self.limits.max_per_ip
+            || !per_ip_limit_applies(state.open_total, self.limits.max_miners)
+        {
             state.open.insert(key.clone(), open + 1);
+            state.open_total += 1;
             return Admit::Relay(Slot {
                 admission: Arc::clone(self),
                 key,
@@ -138,6 +148,9 @@ impl Admission {
                 counts.remove(key);
             }
         }
+        if !held {
+            state.open_total = state.open_total.saturating_sub(1);
+        }
         if held {
             state.held_total = state.held_total.saturating_sub(1);
             self.metrics
@@ -175,14 +188,37 @@ pub async fn hold_plain<W: AsyncWrite + Unpin>(mut writer: W, slot: Slot, hold: 
 mod tests {
     use super::*;
 
+    /// With a total cap of one, any open connection puts the gateway past
+    /// the share where per-IP limits apply.
     fn admission(max_per_ip: usize) -> Arc<Admission> {
         Admission::new(
             MinerLimits {
-                max_miners: 100,
+                max_miners: 1,
                 max_per_ip,
             },
             Arc::new(GatewayMetrics::default()),
         )
+    }
+
+    #[test]
+    fn one_group_may_pass_its_limit_while_the_gateway_has_room() {
+        let admission = Admission::new(
+            MinerLimits {
+                max_miners: 100,
+                max_per_ip: 2,
+            },
+            Arc::new(GatewayMetrics::default()),
+        );
+        let farm: IpAddr = "203.0.113.9".parse().unwrap();
+        let slots: Vec<_> = (0..75)
+            .map(|_| match admission.admit(farm) {
+                Admit::Relay(slot) => slot,
+                _ => panic!("below 75% of the cap"),
+            })
+            .collect();
+        assert!(matches!(admission.admit(farm), Admit::Hold(_)));
+        drop(slots);
+        assert!(matches!(admission.admit(farm), Admit::Relay(_)));
     }
 
     #[test]

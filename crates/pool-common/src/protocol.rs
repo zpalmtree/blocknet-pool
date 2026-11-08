@@ -14,8 +14,23 @@ pub const NOTIFY_MINER_BLOCK_FOUND: &str = "miner_block_found";
 /// Sent to a miner refused at a connection cap just before the connection
 /// closes; `retry_after_ms` says how long to wait before reconnecting.
 pub const NOTIFY_CONNECTION_LIMIT: &str = "connection_limit";
+/// Default total miner connections (`stratum_max_connections` on engines,
+/// `gateway_max_miners` on the gateway).
+pub const DEFAULT_MAX_CONNECTIONS: usize = 65_536;
 /// Default `stratum_max_connections_per_ip`, shared by engines and the gateway.
-pub const DEFAULT_MAX_CONNECTIONS_PER_IP: usize = 2048;
+/// It only applies once connections pass `PER_IP_LIMIT_ABOVE_PCT` of the
+/// total cap.
+pub const DEFAULT_MAX_CONNECTIONS_PER_IP: usize = 4_096;
+/// Share of the total connection cap, in percent, above which an IP group at
+/// its per-IP limit cannot add connections. Below it any group may connect up
+/// to the total cap.
+pub const PER_IP_LIMIT_ABOVE_PCT: usize = 75;
+
+/// Whether the per-IP limit applies with `open` of `max_total` connections in
+/// use.
+pub fn per_ip_limit_applies(open: usize, max_total: usize) -> bool {
+    open.saturating_mul(100) >= max_total.saturating_mul(PER_IP_LIMIT_ABOVE_PCT)
+}
 /// The `retry_after_ms` range a `connection_limit` notice picks from.
 pub const CONNECTION_LIMIT_RETRY_MS: std::ops::RangeInclusive<u64> = 15_000..=45_000;
 

@@ -1444,8 +1444,10 @@ impl StratumServer {
             return false;
         }
         let max_per_ip = self.max_conns_per_ip;
+        let under_pressure =
+            pool_common::protocol::per_ip_limit_applies(state.total, self.max_conns);
         let count = state.counts.entry(ip.to_string()).or_default();
-        if *count >= max_per_ip {
+        if *count >= max_per_ip && under_pressure {
             state.rejected_per_ip += 1;
             return false;
         }
@@ -4788,8 +4790,39 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn one_ip_may_pass_its_limit_while_the_pool_has_room() {
+        let mut cfg = stratum_test_cfg();
+        cfg.stratum_max_connections = 100;
+        cfg.stratum_max_connections_per_ip = 2;
+        let (server, jobs) = build_tcp_test_server(cfg).await;
+        let farm = ip_group_key("203.0.113.9".parse().unwrap());
+        for _ in 0..74 {
+            assert!(server.try_track_conn(&farm));
+        }
+        assert!(server.try_track_conn(&farm), "below 75% of the cap");
+        assert!(
+            !server.try_track_conn(&farm),
+            "at 75% the per-IP limit applies"
+        );
+        let other = ip_group_key("198.51.100.4".parse().unwrap());
+        assert!(server.try_track_conn(&other));
+        assert_eq!(server.connection_snapshot().rejected_per_ip_total, 1);
+        tokio::task::spawn_blocking(move || {
+            drop(server);
+            drop(jobs);
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ipv6_connection_cap_is_shared_per_slash_64() {
-        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        // Six of eight connections in use: past the share where the per-IP
+        // limit applies.
+        let mut cfg = stratum_test_cfg();
+        cfg.stratum_max_connections = 8;
+        cfg.stratum_max_connections_per_ip = 6;
+        let (server, jobs) = build_tcp_test_server(cfg).await;
         let host_a = ip_group_key("2001:db8:7:9::1".parse().unwrap());
         let host_b = ip_group_key("2001:db8:7:9:ffff::2".parse().unwrap());
         let other_net = ip_group_key("2001:db8:7:a::1".parse().unwrap());

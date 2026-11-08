@@ -39,14 +39,17 @@ const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
 const WALLET_LOAD_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const WALLET_LOAD_WAIT_POLL: Duration = Duration::from_millis(250);
-const MAX_ACTIVE_ASSIGNMENTS: usize = 65_536;
+/// Live miner assignments kept per allowed Stratum connection, so a job
+/// broadcast to every connection leaves earlier jobs resolvable.
+const ASSIGNMENTS_PER_CONNECTION: usize = 8;
+const MIN_ACTIVE_ASSIGNMENTS: usize = 65_536;
 /// Assignments removed per job-state write-lock pass when retiring or
 /// pruning, so a fanout building under the same lock waits ~1 ms, not the
 /// whole cleanup.
 const ASSIGNMENT_REMOVAL_BATCH: usize = 2_048;
 /// Pool-wide bound on refill assignments (`refill`), so refills cannot push
-/// other miners' jobs out under `MAX_ACTIVE_ASSIGNMENTS`.
-const MAX_REFILL_ASSIGNMENTS: usize = MAX_ACTIVE_ASSIGNMENTS / 4;
+/// other miners' jobs out under the active assignment cap.
+const REFILL_ASSIGNMENT_SHARE: usize = 4;
 const MAX_ASSIGNMENT_AGE: Duration = Duration::from_secs(10 * 60);
 const SSE_RETRY_DELAY_MIN: Duration = Duration::from_millis(100);
 const SSE_RETRY_DELAY_MAX: Duration = Duration::from_secs(10);
@@ -397,6 +400,13 @@ impl RefillError {
 }
 
 impl JobManager {
+    /// Live assignments kept before the oldest are evicted.
+    fn max_active_assignments(&self) -> usize {
+        (self.cfg.stratum_max_connections.max(1) as usize)
+            .saturating_mul(ASSIGNMENTS_PER_CONNECTION)
+            .max(MIN_ACTIVE_ASSIGNMENTS)
+    }
+
     pub fn new(node: Arc<NodeClient>, cfg: Config) -> Arc<Self> {
         let (tx, _) = broadcast::channel::<Job>(64);
         Arc::new_cyclic(|self_ref| Self {
@@ -734,7 +744,7 @@ impl JobManager {
                         now,
                     ));
                 }
-                evict_assignments_over_cap_locked(&mut state);
+                evict_assignments_over_cap_locked(&mut state, self.max_active_assignments());
                 job
             };
             if encoded.as_ref().is_none_or(|(id, _)| *id != job.id) {
@@ -883,7 +893,10 @@ impl JobManager {
             .get(&template_job_id)
             .and_then(|by_connection| by_connection.get(conn_id))
             .map_or(0, Vec::len);
-        if active + refills >= max_live || state.refill_assignment_count >= MAX_REFILL_ASSIGNMENTS {
+        if active + refills >= max_live
+            || state.refill_assignment_count
+                >= self.max_active_assignments() / REFILL_ASSIGNMENT_SHARE
+        {
             return Err(RefillError::LimitReached);
         }
 
@@ -906,7 +919,7 @@ impl JobManager {
                 refill: true,
             },
         );
-        evict_assignments_over_cap_locked(&mut state);
+        evict_assignments_over_cap_locked(&mut state, self.max_active_assignments());
         let job = state.current.as_ref().expect("current job checked above");
         let template = EncodedTemplate::new(job);
         Ok(MinerJob {
@@ -2282,9 +2295,9 @@ fn retain_current_job_locked(state: &mut JobState, job: &Job, now: Instant) {
         });
 }
 
-fn evict_assignments_over_cap_locked(state: &mut JobState) {
+fn evict_assignments_over_cap_locked(state: &mut JobState, cap: usize) {
     let mut cap_evicted = 0usize;
-    while state.assignments.len() > MAX_ACTIVE_ASSIGNMENTS {
+    while state.assignments.len() > cap {
         if let Some(oldest) = state.assignment_order.pop_front() {
             if remove_assignment_locked(state, &oldest) {
                 cap_evicted = cap_evicted.saturating_add(1);
@@ -2297,7 +2310,7 @@ fn evict_assignments_over_cap_locked(state: &mut JobState) {
         tracing::info!(
             cap_evicted,
             active_assignments = state.assignments.len(),
-            cap = MAX_ACTIVE_ASSIGNMENTS,
+            cap,
             "evicted assignments due to active assignment cap"
         );
     }
@@ -4327,7 +4340,8 @@ mod tests {
             .refill_miner_job("conn1", &reissued.job_id, 3)
             .expect("refill after re-issue");
 
-        manager.state.write().refill_assignment_count = MAX_REFILL_ASSIGNMENTS;
+        manager.state.write().refill_assignment_count =
+            manager.max_active_assignments() / REFILL_ASSIGNMENT_SHARE;
         assert_eq!(
             manager.refill_miner_job("conn2", &other.job_id, 256).err(),
             Some(RefillError::LimitReached),
