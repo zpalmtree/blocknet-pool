@@ -509,5 +509,8 @@
   "farmProxyCount": "Koneksi pool terpisah dari akun ini: {0}.",
   "farmProxyBody": "Farm proxy seine berjalan di jaringan Anda sendiri dan menghubungkan setiap rig ke pool melaluinya, jadi pool dan cadangannya cukup diatur di satu tempat. Setiap rig tetap tampil di sini dengan namanya sendiri.",
   "farmProxyAction": "Siapkan farm proxy {0}",
-  "farmProxyDismiss": "Sembunyikan tips ini"
+  "farmProxyDismiss": "Sembunyikan tips ini",
+  "newsGiveawayTitle": "Maaf atas gangguan: giveaway 5.000 $BNT",
+  "newsGiveawayBody": "Hari ini banyak penambang baru bergabung dan pool sempat mengalami gangguan. Sekarang sudah diperbaiki. Sebagai permintaan maaf, 5 penambang masing-masing memenangkan 1.000 $BNT: ikuti @bntpool di X dan balas postingan giveaway dengan alamat $BNT Anda.",
+  "newsGiveawayLink": "Ikut di X"
 }

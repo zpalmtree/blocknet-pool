@@ -509,5 +509,8 @@
   "farmProxyCount": "Connessioni separate al pool da questo account: {0}.",
   "farmProxyBody": "Il proxy per farm di seine gira sulla tua rete e collega ogni rig al pool attraverso di sé, così imposti pool e pool di riserva in un solo posto. Ogni rig continua a comparire qui con il proprio nome.",
   "farmProxyAction": "Configura il proxy per farm {0}",
-  "farmProxyDismiss": "Nascondi questo consiglio"
+  "farmProxyDismiss": "Nascondi questo consiglio",
+  "newsGiveawayTitle": "Scusate per il disservizio: giveaway da 5.000 $BNT",
+  "newsGiveawayBody": "Oggi si sono uniti tanti nuovi miner e il pool ha avuto un disservizio. Ora è risolto. Per scusarci, 5 miner vincono 1.000 $BNT ciascuno: segui @bntpool su X e rispondi al post del giveaway con il tuo indirizzo $BNT.",
+  "newsGiveawayLink": "Partecipa su X"
 }

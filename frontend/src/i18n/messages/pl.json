@@ -509,5 +509,8 @@
   "farmProxyCount": "Osobne połączenia z pulą z tego konta: {0}.",
   "farmProxyBody": "Proxy farmy seine działa w Twojej własnej sieci i łączy przez siebie każdego riga z pulą, więc pulę i pule zapasowe ustawiasz w jednym miejscu. Każdy rig nadal widnieje tutaj pod własną nazwą.",
   "farmProxyAction": "Skonfiguruj proxy farmy {0}",
-  "farmProxyDismiss": "Ukryj tę wskazówkę"
+  "farmProxyDismiss": "Ukryj tę wskazówkę",
+  "newsGiveawayTitle": "Przepraszamy za przerwę: rozdanie 5000 $BNT",
+  "newsGiveawayBody": "Dziś dołączyło wielu nowych górników i pula miała przerwę w działaniu. Już naprawione. W ramach przeprosin 5 górników wygra po 1000 $BNT: obserwuj @bntpool na X i odpowiedz na post z rozdaniem, podając swój adres $BNT.",
+  "newsGiveawayLink": "Weź udział na X"
 }

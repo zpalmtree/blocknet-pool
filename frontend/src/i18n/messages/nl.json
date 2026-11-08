@@ -509,5 +509,8 @@
   "farmProxyCount": "Afzonderlijke poolverbindingen van dit account: {0}.",
   "farmProxyBody": "De farmproxy van seine draait op je eigen netwerk en verbindt elke rig via hem met de pool, zodat je de pool en back-ups op één plek instelt. Elke rig blijft hier onder zijn eigen naam staan.",
   "farmProxyAction": "Farmproxy instellen {0}",
-  "farmProxyDismiss": "Deze tip verbergen"
+  "farmProxyDismiss": "Deze tip verbergen",
+  "newsGiveawayTitle": "Sorry voor de storing: 5.000 $BNT giveaway",
+  "newsGiveawayBody": "Vandaag kwamen er veel nieuwe miners bij en had de pool een storing. Dat is nu opgelost. Als excuus winnen 5 miners elk 1.000 $BNT: volg @bntpool op X en reageer op de giveaway-post met je $BNT-adres.",
+  "newsGiveawayLink": "Doe mee op X"
 }

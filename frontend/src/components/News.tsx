@@ -5,9 +5,15 @@ import { dismissStripNews, isFresh, newsTime, publishedNews, stripNews, type New
 
 const SOLO = <code key="solo" className="mono inline-code" dir="ltr">solo:</code>;
 
+const isExternal = (href: string) => href.startsWith('https://');
+
 function newsHref(href: string): string {
+  if (isExternal(href)) return href;
   return href.startsWith('/blog/') ? localizePath('/blog/') + href.slice('/blog/'.length) : localizePath(href);
 }
+
+/** External news links open in a new tab. */
+const linkTarget = (href: string) => (isExternal(href) ? { target: '_blank', rel: 'noopener noreferrer' } : {});
 
 function newsDate(item: NewsItem, withYear: boolean): string {
   return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', year: withYear ? 'numeric' : undefined, timeZone: 'UTC' })
@@ -28,7 +34,7 @@ export function NewsStrip() {
         <ul className="news-strip-items">
           {items.map((item) => (
             <li key={item.titleKey}>
-              <a className="news-strip-chip" href={newsHref(item.href)}>
+              <a className="news-strip-chip" href={newsHref(item.href)} {...linkTarget(item.href)}>
                 <span className="news-strip-tag">{t('newsNew')}</span>{t(item.titleKey)}<span className="news-strip-arrow" aria-hidden="true">→</span>
               </a>
             </li>
@@ -58,7 +64,7 @@ export function NewsPage() {
               <div className="news-entry">
                 <h2>{t(item.titleKey)}{isFresh(item, now) && <span className="news-chip">{t('newsNew')}</span>}</h2>
                 <p>{body(item)}</p>
-                <a href={newsHref(item.href)}>{t(item.linkKey)}</a>
+                <a href={newsHref(item.href)} {...linkTarget(item.href)}>{t(item.linkKey)}</a>
               </div>
             </li>
           ))}

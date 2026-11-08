@@ -509,5 +509,8 @@
   "farmProxyCount": "此账户与矿池的独立连接数：{0}。",
   "farmProxyBody": "seine 的矿场代理运行在你自己的网络中，所有矿机都通过它连接矿池，因此矿池和备用矿池只需在一处设置。每台矿机仍会以各自的名称显示在这里。",
   "farmProxyAction": "设置矿场代理 {0}",
-  "farmProxyDismiss": "隐藏此提示"
+  "farmProxyDismiss": "隐藏此提示",
+  "newsGiveawayTitle": "停机致歉：赠送 5,000 $BNT",
+  "newsGiveawayBody": "今天大量新矿工加入，矿池出现了一段时间的停机。现已修复。为表歉意，我们将向 5 位矿工各赠送 1,000 $BNT：在 X 上关注 @bntpool，并在活动帖下回复你的 $BNT 地址。",
+  "newsGiveawayLink": "在 X 上参与"
 }

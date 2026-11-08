@@ -1,5 +1,5 @@
 // Pool announcements, newest first. Text lives in the message catalogs under each item's keys;
-// `href` is a pool route (localized by the caller) or a blog path.
+// `href` is a pool route (localized by the caller), a blog path or an external https link.
 export interface NewsItem {
   /** Publication day, `YYYY-MM-DD` (UTC). */
   date: string;
@@ -14,6 +14,8 @@ export interface NewsItem {
 export type Feature = 'settings';
 
 export const NEWS: readonly NewsItem[] = [
+  { date: '2026-11-08', titleKey: 'newsGiveawayTitle', bodyKey: 'newsGiveawayBody', linkKey: 'newsGiveawayLink',
+    href: 'https://x.com/bntpool' },
   { date: '2026-11-04', titleKey: 'newsSettingsTitle', bodyKey: 'newsSettingsBody', linkKey: 'newsSettingsLink',
     href: '/stats#settings', feature: 'settings' },
   { date: '2026-11-04', titleKey: 'newsSoloTitle', bodyKey: 'newsSoloBody', linkKey: 'newsSoloLink',
