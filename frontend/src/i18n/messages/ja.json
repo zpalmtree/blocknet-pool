@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram の接続を解除しました。",
   "alertsEmailLabel": "メール",
   "alertsDiscordFailed": "Discord がテストメッセージを受け付けませんでした。Webhook リンクを確認して、もう一度お試しください。",
-  "alertsNotMining": "このアドレスがプールでマイニングすると、通知を使えるようになります。"
+  "alertsNotMining": "このアドレスがプールでマイニングすると、通知を使えるようになります。",
+  "farmProxyEyebrow": "大規模ファーム向けのヒント",
+  "farmProxyTitle": "ファーム全体を1つのプロキシで接続",
+  "farmProxyCount": "このアカウントからプールへの個別接続数: {0}。",
+  "farmProxyBody": "seine のファームプロキシは自分のネットワーク内で動作し、すべてのリグをプロキシ経由でプールにつなぎます。プールとバックアップの設定は1か所で済みます。各リグはこれまでどおり、それぞれの名前でここに表示されます。",
+  "farmProxyAction": "ファームプロキシを設定 {0}",
+  "farmProxyDismiss": "このヒントを隠す"
 }

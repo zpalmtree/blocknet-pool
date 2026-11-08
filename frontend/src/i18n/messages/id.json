@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram terputus.",
   "alertsEmailLabel": "Email",
   "alertsDiscordFailed": "Discord tidak menerima pesan uji. Periksa tautan webhook dan coba lagi.",
-  "alertsNotMining": "Peringatan tersedia setelah alamat ini menambang di pool."
+  "alertsNotMining": "Peringatan tersedia setelah alamat ini menambang di pool.",
+  "farmProxyEyebrow": "Tips untuk farm besar",
+  "farmProxyTitle": "Hubungkan seluruh farm Anda lewat satu proxy",
+  "farmProxyCount": "Koneksi pool terpisah dari akun ini: {0}.",
+  "farmProxyBody": "Farm proxy seine berjalan di jaringan Anda sendiri dan menghubungkan setiap rig ke pool melaluinya, jadi pool dan cadangannya cukup diatur di satu tempat. Setiap rig tetap tampil di sini dengan namanya sendiri.",
+  "farmProxyAction": "Siapkan farm proxy {0}",
+  "farmProxyDismiss": "Sembunyikan tips ini"
 }

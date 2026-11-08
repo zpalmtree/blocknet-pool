@@ -837,8 +837,18 @@ struct MinerDetailResponse {
     /// Present for exchange memo accounts; never carries the memo.
     #[serde(skip_serializing_if = "Option::is_none")]
     payout_account: Option<PayoutAccountResponse>,
+    /// Present when the account has many direct Stratum connections that a
+    /// farm proxy could combine. Filled per request from the live snapshot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    farm_proxy_hint: Option<FarmProxyHintResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct FarmProxyHintResponse {
+    /// Connections from this account not made through a farm proxy.
+    direct_connections: usize,
 }
 
 #[derive(Clone, Serialize)]
@@ -3010,6 +3020,11 @@ async fn handle_miner(
                 crate::miner_settings::PublicView::Full => {}
             }
             if payload.found {
+                payload.body.farm_proxy_hint = state
+                    .persisted_runtime_snapshot()
+                    .await
+                    .and_then(|snapshot| snapshot.farm_proxy_candidates.get(&address).copied())
+                    .map(|direct_connections| FarmProxyHintResponse { direct_connections });
                 let mut response = Json(payload.body).into_response();
                 // Names differ per viewer when hidden.
                 response
@@ -5717,6 +5732,7 @@ impl ApiState {
                     .shared_exchange_name(&address)
                     .map(str::to_owned),
             }),
+            farm_proxy_hint: None,
             error: (!has_any_activity).then(|| "miner not found".to_string()),
         };
 
@@ -8255,6 +8271,7 @@ mod tests {
             validation: ValidationSnapshot::default(),
             runtime_tasks: BTreeMap::new(),
             latency: Default::default(),
+            farm_proxy_candidates: BTreeMap::new(),
         };
         store
             .set_meta(
@@ -8423,6 +8440,7 @@ mod tests {
             },
             runtime_tasks: BTreeMap::new(),
             latency: Default::default(),
+            farm_proxy_candidates: BTreeMap::new(),
         };
         store
             .set_meta(
@@ -8501,6 +8519,7 @@ mod tests {
             },
             runtime_tasks: BTreeMap::new(),
             latency: Default::default(),
+            farm_proxy_candidates: BTreeMap::new(),
         };
         store
             .set_meta(

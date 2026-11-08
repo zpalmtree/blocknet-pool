@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram getrennt.",
   "alertsEmailLabel": "E-Mail",
   "alertsDiscordFailed": "Discord hat die Testnachricht nicht angenommen. Prüfe den Webhook-Link und versuche es noch einmal.",
-  "alertsNotMining": "Benachrichtigungen sind verfügbar, sobald diese Adresse im Pool gemint hat."
+  "alertsNotMining": "Benachrichtigungen sind verfügbar, sobald diese Adresse im Pool gemint hat.",
+  "farmProxyEyebrow": "Tipp für große Farmen",
+  "farmProxyTitle": "Verbinde deine ganze Farm über einen Proxy",
+  "farmProxyCount": "Getrennte Pool-Verbindungen dieses Kontos: {0}.",
+  "farmProxyBody": "Der Farm-Proxy von seine läuft in deinem eigenen Netzwerk und verbindet jedes Rig über ihn mit dem Pool, sodass du Pool und Ausweich-Pools an einer Stelle festlegst. Jedes Rig erscheint hier weiterhin unter seinem eigenen Namen.",
+  "farmProxyAction": "Farm-Proxy einrichten {0}",
+  "farmProxyDismiss": "Tipp ausblenden"
 }

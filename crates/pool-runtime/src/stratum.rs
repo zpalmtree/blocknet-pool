@@ -32,8 +32,9 @@ use pool_common::gateway::{
 };
 use pool_common::protocol::{
     normalize_worker_name, LoginParams, RefillParams, StratumNotify, StratumRequest,
-    StratumResponse, SubmitParams, CAP_SAME_TEMPLATE_REBIND_V1, METHOD_LOGIN, METHOD_NOTIFICATION,
-    METHOD_REFILL, METHOD_SUBMIT, NOTIFY_MINER_BLOCK_FOUND, NOTIFY_POOL_BLOCK_SOLVED,
+    StratumResponse, SubmitParams, CAP_PROXY_WORKERS_V1, CAP_SAME_TEMPLATE_REBIND_V1, METHOD_LOGIN,
+    METHOD_NOTIFICATION, METHOD_REFILL, METHOD_SUBMIT, NOTIFY_MINER_BLOCK_FOUND,
+    NOTIFY_POOL_BLOCK_SOLVED,
 };
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1725,6 +1726,10 @@ impl StratumServer {
                             let login_worker = params.worker.clone();
                             let login_protocol_version = params.protocol_version;
                             let login_capabilities = params.capabilities.clone();
+                            let login_proxy = params
+                                .capabilities
+                                .iter()
+                                .any(|cap| cap == CAP_PROXY_WORKERS_V1);
                             let login_hint = params.difficulty_hint;
                             let login_memo = params.payout_memo.clone();
                             let login_peer_ip = peer.ip();
@@ -1758,7 +1763,8 @@ impl StratumServer {
 
                                     logged_in =
                                         Some((address.clone(), worker.clone(), difficulty));
-                                    self.stats.add_miner(&conn_id, &address, &worker);
+                                    self.stats
+                                        .add_miner(&conn_id, &address, &worker, login_proxy);
 
                                     let response = StratumResponse {
                                         id: req.id,

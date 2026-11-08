@@ -81,6 +81,10 @@ pub struct PersistedRuntimeSnapshot {
     /// then lane.
     #[serde(default)]
     pub latency: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
+    /// Direct (non-proxy) Stratum connections per account, for accounts with
+    /// enough of them that a farm proxy would help.
+    #[serde(default)]
+    pub farm_proxy_candidates: BTreeMap<String, usize>,
 }
 
 impl PersistedRuntimeSnapshot {
@@ -105,6 +109,7 @@ impl PersistedRuntimeSnapshot {
             validation,
             runtime_tasks,
             latency,
+            farm_proxy_candidates: pool.farm_proxy_candidates,
         }
     }
 }

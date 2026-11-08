@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram bağlantısı kesildi.",
   "alertsEmailLabel": "E-posta",
   "alertsDiscordFailed": "Discord test mesajını kabul etmedi. Webhook bağlantısını kontrol edip yeniden deneyin.",
-  "alertsNotMining": "Uyarılar, bu adres havuzda madencilik yaptıktan sonra kullanılabilir."
+  "alertsNotMining": "Uyarılar, bu adres havuzda madencilik yaptıktan sonra kullanılabilir.",
+  "farmProxyEyebrow": "Büyük çiftlikler için ipucu",
+  "farmProxyTitle": "Tüm çiftliğinizi tek bir proxy üzerinden bağlayın",
+  "farmProxyCount": "Bu hesaptan havuza giden ayrı bağlantılar: {0}.",
+  "farmProxyBody": "seine çiftlik proxy'si kendi ağınızda çalışır ve her rig'i havuza onun üzerinden bağlar; böylece havuzu ve yedek havuzları tek bir yerden ayarlarsınız. Her rig burada yine kendi adıyla görünür.",
+  "farmProxyAction": "Çiftlik proxy'sini kur {0}",
+  "farmProxyDismiss": "Bu ipucunu gizle"
 }

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::{Duration, SystemTime};
 
 use parking_lot::RwLock;
@@ -7,6 +7,11 @@ use serde::Serialize;
 const MAX_RECENT_SHARES: usize = 200_000;
 const HASHRATE_WINDOW: Duration = Duration::from_secs(60 * 60);
 const ACCEPTED_EVENTS_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// Accounts with at least this many connections not made through a farm
+/// proxy are listed for the farm proxy hint on their stats page.
+pub(crate) const FARM_PROXY_HINT_MIN_DIRECT_CONNECTIONS: usize = 25;
+/// Bound on accounts listed for the hint, largest first.
+const FARM_PROXY_HINT_MAX_ACCOUNTS: usize = 512;
 
 #[derive(Debug, Clone)]
 struct ShareRecord {
@@ -18,6 +23,8 @@ struct ShareRecord {
 struct ConnectedWorker {
     address: String,
     worker: String,
+    /// Logged in through a farm proxy (`proxy_workers_v1`).
+    proxy: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +33,9 @@ pub(crate) struct PoolSnapshot {
     pub connected_workers: usize,
     pub estimated_hashrate: f64,
     pub last_share_at: Option<SystemTime>,
+    /// Direct (non-proxy) connections per account, for accounts with at
+    /// least `FARM_PROXY_HINT_MIN_DIRECT_CONNECTIONS`.
+    pub farm_proxy_candidates: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,12 +59,13 @@ pub(crate) struct PoolStats {
 }
 
 impl PoolStats {
-    pub(crate) fn add_miner(&self, conn_id: &str, address: &str, worker: &str) {
+    pub(crate) fn add_miner(&self, conn_id: &str, address: &str, worker: &str, proxy: bool) {
         self.connected_miners.write().insert(
             conn_id.to_string(),
             ConnectedWorker {
                 address: address.to_string(),
                 worker: worker.to_string(),
+                proxy,
             },
         );
     }
@@ -130,11 +141,26 @@ impl PoolStats {
             .map(|entry| (entry.address.as_str(), entry.worker.as_str()))
             .collect::<HashSet<_>>()
             .len();
+        let mut direct = HashMap::<&str, usize>::new();
+        for entry in connected.values().filter(|entry| !entry.proxy) {
+            *direct.entry(entry.address.as_str()).or_default() += 1;
+        }
+        let mut candidates = direct
+            .into_iter()
+            .filter(|(_, count)| *count >= FARM_PROXY_HINT_MIN_DIRECT_CONNECTIONS)
+            .collect::<Vec<_>>();
+        candidates.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        candidates.truncate(FARM_PROXY_HINT_MAX_ACCOUNTS);
+        let farm_proxy_candidates = candidates
+            .into_iter()
+            .map(|(address, count)| (address.to_string(), count))
+            .collect();
         drop(connected);
 
         PoolSnapshot {
             connected_miners,
             connected_workers,
+            farm_proxy_candidates,
             estimated_hashrate: self.estimate_hashrate(),
             last_share_at: self
                 .recent_shares
@@ -147,12 +173,33 @@ impl PoolStats {
 
 #[cfg(test)]
 mod tests {
-    use super::{PoolStats, MAX_RECENT_SHARES};
+    use super::{PoolStats, FARM_PROXY_HINT_MIN_DIRECT_CONNECTIONS, MAX_RECENT_SHARES};
+
+    #[test]
+    fn accounts_with_many_direct_connections_are_farm_proxy_candidates() {
+        let stats = PoolStats::default();
+        for i in 0..FARM_PROXY_HINT_MIN_DIRECT_CONNECTIONS {
+            stats.add_miner(&format!("direct-{i}"), "farm", &format!("rig{i}"), false);
+            stats.add_miner(&format!("proxied-{i}"), "proxied", "farm-1", true);
+        }
+        stats.add_miner("small", "home", "rig1", false);
+        let snapshot = stats.snapshot();
+        assert_eq!(
+            snapshot
+                .farm_proxy_candidates
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![("farm".to_string(), FARM_PROXY_HINT_MIN_DIRECT_CONNECTIONS)]
+        );
+
+        stats.remove_miner("direct-0");
+        assert!(stats.snapshot().farm_proxy_candidates.is_empty());
+    }
 
     #[test]
     fn records_shares_and_connected_counts() {
         let stats = PoolStats::default();
-        stats.add_miner("c1", "addr1", "rig1");
+        stats.add_miner("c1", "addr1", "rig1", false);
         stats.record_accepted_share(10);
         stats.record_accepted_share(20);
 
@@ -165,9 +212,9 @@ mod tests {
     #[test]
     fn connected_counts_track_active_connections() {
         let stats = PoolStats::default();
-        stats.add_miner("c1", "addr1", "rig1");
-        stats.add_miner("c2", "addr1", "rig1");
-        stats.add_miner("c3", "addr2", "rig9");
+        stats.add_miner("c1", "addr1", "rig1", false);
+        stats.add_miner("c2", "addr1", "rig1", false);
+        stats.add_miner("c3", "addr2", "rig9", false);
 
         let snapshot = stats.snapshot();
         assert_eq!(snapshot.connected_miners, 2);
@@ -192,7 +239,7 @@ mod tests {
     #[test]
     fn accepted_share_history_is_count_bounded() {
         let stats = PoolStats::default();
-        stats.add_miner("c1", "addr1", "rig1");
+        stats.add_miner("c1", "addr1", "rig1", false);
 
         for _ in 0..(MAX_RECENT_SHARES + 1_000) {
             stats.record_accepted_share(1);

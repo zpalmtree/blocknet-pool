@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "已中斷 Telegram 連結。",
   "alertsEmailLabel": "電子郵件",
   "alertsDiscordFailed": "Discord 未接受測試訊息。請檢查 Webhook 連結後再試一次。",
-  "alertsNotMining": "此位址在礦池挖過礦後即可使用提醒。"
+  "alertsNotMining": "此位址在礦池挖過礦後即可使用提醒。",
+  "farmProxyEyebrow": "大型礦場小提示",
+  "farmProxyTitle": "透過一個代理連接整個礦場",
+  "farmProxyCount": "此帳戶與礦池的獨立連線數：{0}。",
+  "farmProxyBody": "seine 的礦場代理在你自己的網路中執行，所有礦機都透過它連接礦池，因此礦池與備用礦池只需在一處設定。每台礦機仍會以各自的名稱顯示在這裡。",
+  "farmProxyAction": "設定礦場代理 {0}",
+  "farmProxyDismiss": "隱藏此提示"
 }

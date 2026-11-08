@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram desconectado.",
   "alertsEmailLabel": "Correo",
   "alertsDiscordFailed": "Discord no aceptó el mensaje de prueba. Revisa el enlace del webhook y vuelve a intentarlo.",
-  "alertsNotMining": "Las alertas están disponibles cuando esta dirección haya minado en el pool."
+  "alertsNotMining": "Las alertas están disponibles cuando esta dirección haya minado en el pool.",
+  "farmProxyEyebrow": "Consejo para granjas grandes",
+  "farmProxyTitle": "Conecta toda tu granja a través de un solo proxy",
+  "farmProxyCount": "Conexiones separadas al pool desde esta cuenta: {0}.",
+  "farmProxyBody": "El proxy de granja de seine funciona en tu propia red y conecta cada rig al pool a través de él, así configuras el pool y los respaldos en un solo lugar. Cada rig sigue apareciendo aquí con su propio nombre.",
+  "farmProxyAction": "Configurar el proxy de granja {0}",
+  "farmProxyDismiss": "Ocultar este consejo"
 }

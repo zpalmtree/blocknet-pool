@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "已断开 Telegram。",
   "alertsEmailLabel": "邮箱",
   "alertsDiscordFailed": "Discord 未接受测试消息。请检查 Webhook 链接后重试。",
-  "alertsNotMining": "此地址在矿池挖过矿后即可使用提醒。"
+  "alertsNotMining": "此地址在矿池挖过矿后即可使用提醒。",
+  "farmProxyEyebrow": "大型矿场小贴士",
+  "farmProxyTitle": "通过一个代理连接整个矿场",
+  "farmProxyCount": "此账户与矿池的独立连接数：{0}。",
+  "farmProxyBody": "seine 的矿场代理运行在你自己的网络中，所有矿机都通过它连接矿池，因此矿池和备用矿池只需在一处设置。每台矿机仍会以各自的名称显示在这里。",
+  "farmProxyAction": "设置矿场代理 {0}",
+  "farmProxyDismiss": "隐藏此提示"
 }

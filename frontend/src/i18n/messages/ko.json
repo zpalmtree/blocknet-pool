@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram 연결을 해제했습니다.",
   "alertsEmailLabel": "이메일",
   "alertsDiscordFailed": "Discord가 테스트 메시지를 받지 않았습니다. 웹후크 링크를 확인하고 다시 시도하세요.",
-  "alertsNotMining": "이 주소로 풀에서 채굴한 뒤에 알림을 사용할 수 있습니다."
+  "alertsNotMining": "이 주소로 풀에서 채굴한 뒤에 알림을 사용할 수 있습니다.",
+  "farmProxyEyebrow": "대규모 팜을 위한 팁",
+  "farmProxyTitle": "팜 전체를 프록시 하나로 연결하세요",
+  "farmProxyCount": "이 계정에서 풀로 연결된 개별 연결 수: {0}.",
+  "farmProxyBody": "seine 팜 프록시는 사용자의 네트워크에서 실행되며 모든 리그를 프록시를 통해 풀에 연결하므로, 풀과 백업 풀을 한곳에서 설정할 수 있습니다. 각 리그는 여기에서 계속 자체 이름으로 표시됩니다.",
+  "farmProxyAction": "팜 프록시 설정 {0}",
+  "farmProxyDismiss": "이 팁 숨기기"
 }

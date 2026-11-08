@@ -204,6 +204,8 @@ export interface MinerResponse {
   latest_miner_version: string;
   /** Present for exchange memo accounts; never carries the memo. */
   payout_account?: { exchange: string | null };
+  /** Present when many of the account's rigs connect directly rather than through a farm proxy. */
+  farm_proxy_hint?: { direct_connections: number };
 }
 
 export interface AdminPayoutAccount {

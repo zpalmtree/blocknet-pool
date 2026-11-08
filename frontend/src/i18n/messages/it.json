@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram scollegato.",
   "alertsEmailLabel": "Email",
   "alertsDiscordFailed": "Discord non ha accettato il messaggio di prova. Controlla il link del webhook e riprova.",
-  "alertsNotMining": "Gli avvisi sono disponibili dopo che questo indirizzo ha minato nel pool."
+  "alertsNotMining": "Gli avvisi sono disponibili dopo che questo indirizzo ha minato nel pool.",
+  "farmProxyEyebrow": "Consiglio per le grandi farm",
+  "farmProxyTitle": "Collega tutta la tua farm tramite un solo proxy",
+  "farmProxyCount": "Connessioni separate al pool da questo account: {0}.",
+  "farmProxyBody": "Il proxy per farm di seine gira sulla tua rete e collega ogni rig al pool attraverso di sé, così imposti pool e pool di riserva in un solo posto. Ogni rig continua a comparire qui con il proprio nome.",
+  "farmProxyAction": "Configura il proxy per farm {0}",
+  "farmProxyDismiss": "Nascondi questo consiglio"
 }

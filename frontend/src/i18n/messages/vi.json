@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Đã ngắt kết nối Telegram.",
   "alertsEmailLabel": "Email",
   "alertsDiscordFailed": "Discord không chấp nhận tin nhắn thử. Hãy kiểm tra liên kết webhook rồi thử lại.",
-  "alertsNotMining": "Cảnh báo sẽ dùng được sau khi địa chỉ này đã đào trên pool."
+  "alertsNotMining": "Cảnh báo sẽ dùng được sau khi địa chỉ này đã đào trên pool.",
+  "farmProxyEyebrow": "Mẹo cho các farm lớn",
+  "farmProxyTitle": "Kết nối cả farm qua một proxy duy nhất",
+  "farmProxyCount": "Số kết nối riêng lẻ tới pool từ tài khoản này: {0}.",
+  "farmProxyBody": "Proxy farm của seine chạy trong mạng của bạn và nối mọi rig với pool thông qua nó, nên bạn chỉ cần đặt pool và pool dự phòng ở một nơi. Mỗi rig vẫn hiển thị ở đây với tên riêng của nó.",
+  "farmProxyAction": "Thiết lập proxy farm {0}",
+  "farmProxyDismiss": "Ẩn mẹo này"
 }

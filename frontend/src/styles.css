@@ -1280,6 +1280,20 @@ tr:hover td {
   text-underline-offset: 4px;
 }
 
+.miner-farm-hint__dismiss {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+
+.miner-farm-hint__dismiss:focus-visible,
 .miner-update-banner a:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 4px;

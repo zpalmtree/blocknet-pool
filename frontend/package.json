@@ -22,7 +22,8 @@
     "showcase:solo": "vite --config showcases/solo-mining/vite.config.ts",
     "showcase:front": "vite --config showcases/front-page/vite.config.ts",
     "showcase:start": "vite --config showcases/get-started/vite.config.ts",
-    "showcase:settings": "vite --config showcases/miner-settings/vite.config.ts"
+    "showcase:settings": "vite --config showcases/miner-settings/vite.config.ts",
+    "showcase:farm-proxy": "vite --config showcases/farm-proxy-hint/vite.config.ts"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",

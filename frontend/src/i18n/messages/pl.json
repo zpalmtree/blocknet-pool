@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram odłączony.",
   "alertsEmailLabel": "E-mail",
   "alertsDiscordFailed": "Discord nie przyjął wiadomości testowej. Sprawdź link do webhooka i spróbuj ponownie.",
-  "alertsNotMining": "Powiadomienia będą dostępne, gdy ten adres zacznie kopać w puli."
+  "alertsNotMining": "Powiadomienia będą dostępne, gdy ten adres zacznie kopać w puli.",
+  "farmProxyEyebrow": "Wskazówka dla dużych farm",
+  "farmProxyTitle": "Połącz całą farmę przez jeden proxy",
+  "farmProxyCount": "Osobne połączenia z pulą z tego konta: {0}.",
+  "farmProxyBody": "Proxy farmy seine działa w Twojej własnej sieci i łączy przez siebie każdego riga z pulą, więc pulę i pule zapasowe ustawiasz w jednym miejscu. Każdy rig nadal widnieje tutaj pod własną nazwą.",
+  "farmProxyAction": "Skonfiguruj proxy farmy {0}",
+  "farmProxyDismiss": "Ukryj tę wskazówkę"
 }

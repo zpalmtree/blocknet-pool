@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram desconectado.",
   "alertsEmailLabel": "E-mail",
   "alertsDiscordFailed": "O Discord não aceitou a mensagem de teste. Confira o link do webhook e tente de novo.",
-  "alertsNotMining": "Os alertas ficam disponíveis depois que este endereço minerar no pool."
+  "alertsNotMining": "Os alertas ficam disponíveis depois que este endereço minerar no pool.",
+  "farmProxyEyebrow": "Dica para grandes fazendas",
+  "farmProxyTitle": "Conecte toda a sua fazenda por um único proxy",
+  "farmProxyCount": "Conexões separadas com a pool nesta conta: {0}.",
+  "farmProxyBody": "O proxy de fazenda do seine roda na sua própria rede e liga cada rig à pool por meio dele, então você define a pool e as reservas em um só lugar. Cada rig continua aparecendo aqui com o próprio nome.",
+  "farmProxyAction": "Configurar o proxy de fazenda {0}",
+  "farmProxyDismiss": "Ocultar esta dica"
 }

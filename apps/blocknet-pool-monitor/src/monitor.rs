@@ -3176,6 +3176,7 @@ mod tests {
             validation: ValidationSnapshot::default(),
             runtime_tasks: BTreeMap::new(),
             latency: BTreeMap::new(),
+            farm_proxy_candidates: BTreeMap::new(),
         }
     }
 

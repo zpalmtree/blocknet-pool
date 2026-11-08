@@ -11,6 +11,7 @@ import { PayoutProgress } from '../components/PayoutProgress';
 import { RangeTabs } from '../components/RangeTabs';
 import { MiningType } from '../components/MiningType';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
+import { MinerFarmProxyHint } from '../components/MinerFarmProxyHint';
 import { MinerSettings, SettingsLockIcon } from '../components/MinerSettings';
 import { featureIsNew, markFeatureSeen } from '../lib/news';
 import { knownExchange, validMemo } from '../lib/payout-destination';
@@ -452,6 +453,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
         <h1>{t("m616")}</h1>
       </div>
       <MinerUpdateBanner miner={minerData} />
+      <MinerFarmProxyHint miner={minerData} address={minerAddress} />
       <div className="card stats-lookup">
         <div className="lookup-form">
           <input

@@ -503,5 +503,11 @@
   "alertsTelegramRemoved": "Telegram ontkoppeld.",
   "alertsEmailLabel": "E-mail",
   "alertsDiscordFailed": "Discord accepteerde het testbericht niet. Controleer de webhooklink en probeer het opnieuw.",
-  "alertsNotMining": "Meldingen zijn beschikbaar zodra dit adres in de pool heeft gemined."
+  "alertsNotMining": "Meldingen zijn beschikbaar zodra dit adres in de pool heeft gemined.",
+  "farmProxyEyebrow": "Tip voor grote farms",
+  "farmProxyTitle": "Verbind je hele farm via één proxy",
+  "farmProxyCount": "Afzonderlijke poolverbindingen van dit account: {0}.",
+  "farmProxyBody": "De farmproxy van seine draait op je eigen netwerk en verbindt elke rig via hem met de pool, zodat je de pool en back-ups op één plek instelt. Elke rig blijft hier onder zijn eigen naam staan.",
+  "farmProxyAction": "Farmproxy instellen {0}",
+  "farmProxyDismiss": "Deze tip verbergen"
 }
