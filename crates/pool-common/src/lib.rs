@@ -11,6 +11,8 @@ pub mod latency;
 
 pub mod logging;
 
+pub mod net;
+
 pub mod pow;
 
 pub mod protocol;

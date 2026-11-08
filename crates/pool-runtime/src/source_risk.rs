@@ -30,7 +30,6 @@
 //! cover shares from before the restart.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -53,21 +52,7 @@ const DEGRADED_REVIEW_MAX_SAMPLES: usize = 4;
 /// A review whose audits never reported back is retried after this long.
 const DEGRADED_REVIEW_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
-/// Groups an IP for per-source accounting: IPv4 by full address, IPv6 by /64
-/// (one end-site/host allocation). IPv4-mapped IPv6 addresses are treated as
-/// IPv4.
-pub(crate) fn ip_group_key(ip: IpAddr) -> String {
-    match ip {
-        IpAddr::V4(v4) => v4.to_string(),
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return v4.to_string();
-            }
-            let seg = v6.segments();
-            format!("{:x}:{:x}:{:x}:{:x}::/64", seg[0], seg[1], seg[2], seg[3])
-        }
-    }
-}
+pub(crate) use pool_common::net::ip_group_key;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SourcePolicy {
@@ -1036,6 +1021,7 @@ impl SourceRiskTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::IpAddr;
 
     fn revoked_ids(outcome: &SourceStrike) -> Vec<(String, Vec<i64>)> {
         outcome

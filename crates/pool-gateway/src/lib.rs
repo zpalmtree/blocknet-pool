@@ -2,6 +2,7 @@
 //! Stratum engines over a unix socket, so engines can be replaced without
 //! disconnecting miners (STRATUM_GATEWAY.md).
 
+pub mod admission;
 mod core;
 pub mod tls;
 
@@ -20,6 +21,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWrite
 use tokio::net::{TcpListener, TcpStream, UnixListener};
 use tokio::sync::{mpsc, oneshot};
 
+pub use crate::admission::MinerLimits;
+use crate::admission::{Admission, Admit, Slot};
 pub use crate::core::{Event, Gateway, MinerOut, Timings};
 pub use crate::tls::TlsCerts;
 
@@ -58,6 +61,12 @@ pub struct GatewayMetrics {
     pub forced_reconnects: AtomicU64,
     /// The miner connection cap (`gateway_max_miners`).
     pub max_miners: AtomicU64,
+    /// The per-IP-group limit (`stratum_max_connections_per_ip`).
+    pub max_miners_per_ip: AtomicU64,
+    /// Miners refused because their IP group was at its limit.
+    pub rejected_per_ip: AtomicU64,
+    /// Refused sockets currently held open until their retry delay passes.
+    pub held_connections: AtomicU64,
     /// Miners connected over TLS, included in `miners`.
     pub tls_miners: AtomicU64,
     pub tls_handshake_failures: AtomicU64,
@@ -153,6 +162,18 @@ impl GatewayMetrics {
                 &self.forced_reconnects,
             ),
             ("blocknet_pool_gateway_max_miners", &self.max_miners),
+            (
+                "blocknet_pool_gateway_max_miners_per_ip",
+                &self.max_miners_per_ip,
+            ),
+            (
+                "blocknet_pool_gateway_rejected_per_ip_total",
+                &self.rejected_per_ip,
+            ),
+            (
+                "blocknet_pool_gateway_held_connections",
+                &self.held_connections,
+            ),
             ("blocknet_pool_gateway_tls_miners", &self.tls_miners),
             (
                 "blocknet_pool_gateway_tls_handshake_failures_total",
@@ -226,27 +247,25 @@ pub struct TlsListener {
 pub async fn run(
     listeners: GatewayListeners,
     timings: Timings,
-    max_miners: usize,
+    limits: impl Into<MinerLimits>,
     metrics: Arc<GatewayMetrics>,
 ) -> Result<()> {
-    run_with_tls(listeners, None, timings, max_miners, metrics).await
+    run_with_tls(listeners, None, timings, limits, metrics).await
 }
 
 /// [`run`], also accepting TLS miners on `tls`. They share the relay,
-/// connection cap and metrics with plain miners.
+/// connection limits and metrics with plain miners.
 pub async fn run_with_tls(
     listeners: GatewayListeners,
     tls: Option<TlsListener>,
     timings: Timings,
-    max_miners: usize,
+    limits: impl Into<MinerLimits>,
     metrics: Arc<GatewayMetrics>,
 ) -> Result<()> {
     let (events_tx, mut events_rx) = mpsc::channel::<TimedEvent>(EVENT_QUEUE);
     let tick = timings.tick;
     let mut gateway = Gateway::new(timings, Arc::clone(&metrics));
-    metrics
-        .max_miners
-        .store(max_miners as u64, Ordering::Relaxed);
+    let admission = Admission::new(limits.into(), Arc::clone(&metrics));
 
     // Connection IDs are unique across both miner listeners.
     let conns = Arc::new(AtomicU64::new(1));
@@ -255,7 +274,7 @@ pub async fn run_with_tls(
         None,
         Arc::clone(&conns),
         events_tx.clone(),
-        max_miners,
+        Arc::clone(&admission),
         Arc::clone(&metrics),
     ));
     let tls_tasks = tls.map(|tls| {
@@ -265,7 +284,7 @@ pub async fn run_with_tls(
             Some(tls.certs),
             conns,
             events_tx.clone(),
-            max_miners,
+            admission,
             Arc::clone(&metrics),
         ));
         (watch, accept)
@@ -315,9 +334,10 @@ async fn accept_miners(
     tls: Option<Arc<TlsCerts>>,
     conns: Arc<AtomicU64>,
     events: mpsc::Sender<TimedEvent>,
-    max_miners: usize,
+    admission: Arc<Admission>,
     metrics: Arc<GatewayMetrics>,
 ) -> Result<()> {
+    let max_miners = admission.limits().max_miners;
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -331,6 +351,23 @@ async fn accept_miners(
             metrics.rejected_connections.fetch_add(1, Ordering::Relaxed);
             continue;
         }
+        let slot = match admission.admit(peer.ip()) {
+            Admit::Relay(slot) => slot,
+            Admit::Hold(slot) => {
+                let hold = Slot::hold_for();
+                if tls.is_some() {
+                    // No notice before a TLS handshake; the socket is only held.
+                    tokio::spawn(async move {
+                        tokio::time::sleep(hold).await;
+                        drop((stream, slot));
+                    });
+                } else {
+                    tokio::spawn(admission::hold_plain(stream, slot, hold));
+                }
+                continue;
+            }
+            Admit::Refuse => continue,
+        };
         configure_miner_socket(&stream);
         let conn = conns.fetch_add(1, Ordering::Relaxed);
         let Some(certs) = &tls else {
@@ -339,7 +376,10 @@ async fn accept_miners(
             else {
                 return Ok(());
             };
-            tokio::spawn(read);
+            tokio::spawn(async move {
+                read.await;
+                drop(slot);
+            });
             continue;
         };
         if events.is_closed() {
@@ -349,6 +389,7 @@ async fn accept_miners(
         let events = events.clone();
         let metrics = Arc::clone(&metrics);
         tokio::spawn(async move {
+            let _slot = slot;
             let stream =
                 match tokio::time::timeout(TLS_HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
                     Ok(Ok(stream)) => stream,
@@ -741,7 +782,7 @@ mod tests {
             Some(Arc::new(TlsCerts::load(&cert_path, &key_path).unwrap())),
             Arc::new(AtomicU64::new(1)),
             events_tx,
-            16,
+            Admission::new(16.into(), Arc::new(GatewayMetrics::default())),
             Arc::clone(&metrics),
         ));
 
@@ -787,7 +828,7 @@ mod tests {
             Some(Arc::clone(&certs)),
             Arc::new(AtomicU64::new(1)),
             events_tx,
-            16,
+            Admission::new(16.into(), Arc::new(GatewayMetrics::default())),
             Arc::new(GatewayMetrics::default()),
         ));
         let drain = tokio::spawn(async move { while events_rx.recv().await.is_some() {} });
@@ -843,6 +884,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn miners_over_the_per_ip_limit_get_the_notice_without_reaching_the_relay() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let metrics = Arc::new(GatewayMetrics::default());
+        let (events_tx, mut events_rx) = mpsc::channel(16);
+        let limits = MinerLimits {
+            max_miners: 16,
+            max_per_ip: 1,
+        };
+        let accept = tokio::spawn(accept_miners(
+            listener,
+            None,
+            Arc::new(AtomicU64::new(1)),
+            events_tx,
+            Admission::new(limits, Arc::clone(&metrics)),
+            Arc::clone(&metrics),
+        ));
+        let _first = tokio::net::TcpStream::connect(addr).await.unwrap();
+        // Holding the relay's sender keeps the first miner connected.
+        let _first_tx = match events_rx.recv().await.unwrap().event {
+            Event::MinerConnected { tx, .. } => tx,
+            other => panic!("unexpected event {other:?}"),
+        };
+
+        let second = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let mut lines = BufReader::new(second).lines();
+        let notice = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
+            .await
+            .expect("notice sent")
+            .unwrap()
+            .unwrap();
+        let notice: serde_json::Value = serde_json::from_str(&notice).unwrap();
+        assert_eq!(notice["params"]["kind"], "connection_limit");
+        assert_eq!(metrics.rejected_per_ip.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.held_connections.load(Ordering::Relaxed), 1);
+        assert!(
+            events_rx.try_recv().is_err(),
+            "the held miner reached the relay"
+        );
+        accept.abort();
+    }
+
+    #[tokio::test]
     async fn closing_a_miner_releases_its_socket_while_the_peer_stays_open() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -852,7 +936,7 @@ mod tests {
             None,
             Arc::new(AtomicU64::new(1)),
             events_tx,
-            16,
+            Admission::new(16.into(), Arc::new(GatewayMetrics::default())),
             Arc::new(GatewayMetrics::default()),
         ));
         let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();

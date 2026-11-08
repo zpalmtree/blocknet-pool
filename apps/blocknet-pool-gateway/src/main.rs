@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use pool_common::{cli::parse_config_path, logging::init_logging};
-use pool_gateway::{GatewayListeners, GatewayMetrics, Timings, TlsCerts, TlsListener};
+use pool_gateway::{GatewayListeners, GatewayMetrics, MinerLimits, Timings, TlsCerts, TlsListener};
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixListener, UnixStream};
@@ -20,6 +20,8 @@ struct GatewaySettings {
     gateway_socket: String,
     gateway_metrics_addr: String,
     gateway_max_miners: usize,
+    /// Shared with the engines: miners relayed at once from one IP group.
+    stratum_max_connections_per_ip: usize,
     /// `stratum+ssl` port on `stratum_host`; 0 disables TLS.
     gateway_tls_port: u16,
     /// PEM certificate chain and private key for the TLS port, reloaded
@@ -36,6 +38,7 @@ impl Default for GatewaySettings {
             gateway_socket: String::new(),
             gateway_metrics_addr: "127.0.0.1:24786".to_string(),
             gateway_max_miners: 32_768,
+            stratum_max_connections_per_ip: pool_common::protocol::DEFAULT_MAX_CONNECTIONS_PER_IP,
             gateway_tls_port: 0,
             gateway_tls_cert: String::new(),
             gateway_tls_key: String::new(),
@@ -79,7 +82,10 @@ async fn main() -> Result<()> {
             GatewayListeners { miners, engines },
             tls,
             Timings::default(),
-            settings.gateway_max_miners,
+            MinerLimits {
+                max_miners: settings.gateway_max_miners,
+                max_per_ip: settings.stratum_max_connections_per_ip.max(1),
+            },
             metrics,
         ) => result,
         _ = terminate.recv() => {

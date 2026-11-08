@@ -1162,6 +1162,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "pool-common",
+ "rand 0.8.5",
  "rcgen",
  "serde_json",
  "socket2",

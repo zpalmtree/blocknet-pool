@@ -14,6 +14,24 @@ pub const NOTIFY_MINER_BLOCK_FOUND: &str = "miner_block_found";
 /// Sent to a miner refused at a connection cap just before the connection
 /// closes; `retry_after_ms` says how long to wait before reconnecting.
 pub const NOTIFY_CONNECTION_LIMIT: &str = "connection_limit";
+/// Default `stratum_max_connections_per_ip`, shared by engines and the gateway.
+pub const DEFAULT_MAX_CONNECTIONS_PER_IP: usize = 2048;
+/// The `retry_after_ms` range a `connection_limit` notice picks from.
+pub const CONNECTION_LIMIT_RETRY_MS: std::ops::RangeInclusive<u64> = 15_000..=45_000;
+
+/// The `connection_limit` notice asking a refused miner to wait
+/// `retry_after_ms` before reconnecting.
+pub fn connection_limit_line(retry_after_ms: u64) -> String {
+    serde_json::to_string(&StratumNotify {
+        method: METHOD_NOTIFICATION.to_string(),
+        params: serde_json::json!({
+            "kind": NOTIFY_CONNECTION_LIMIT,
+            "message": "pool connection limit reached; reconnecting shortly",
+            "retry_after_ms": retry_after_ms,
+        }),
+    })
+    .expect("notification serializes")
+}
 
 pub const STRATUM_PROTOCOL_VERSION_CURRENT: u32 = 2;
 /// Longest encoded address accepted anywhere. Faraday post-quantum addresses

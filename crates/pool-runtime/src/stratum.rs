@@ -33,14 +33,12 @@ use pool_common::gateway::{
 use pool_common::protocol::{
     normalize_worker_name, LoginParams, RefillParams, StratumNotify, StratumRequest,
     StratumResponse, SubmitParams, CAP_SAME_TEMPLATE_REBIND_V1, METHOD_LOGIN, METHOD_NOTIFICATION,
-    METHOD_REFILL, METHOD_SUBMIT, NOTIFY_CONNECTION_LIMIT, NOTIFY_MINER_BLOCK_FOUND,
-    NOTIFY_POOL_BLOCK_SOLVED,
+    METHOD_REFILL, METHOD_SUBMIT, NOTIFY_MINER_BLOCK_FOUND, NOTIFY_POOL_BLOCK_SOLVED,
 };
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 /// Range of the reconnect delay suggested to miners refused at a connection
 /// cap, spread so refused miners do not all come back at once.
-const CONNECTION_LIMIT_RETRY_MS: std::ops::RangeInclusive<u64> = 15_000..=45_000;
 const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
 const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
 const INBOUND_QUEUE_CAPACITY: usize = 256;
@@ -2839,16 +2837,9 @@ where
 
 /// The notification sent to a miner refused at a connection cap.
 fn connection_limit_line() -> String {
-    let retry_after_ms = rand::thread_rng().gen_range(CONNECTION_LIMIT_RETRY_MS);
-    serde_json::to_string(&StratumNotify {
-        method: METHOD_NOTIFICATION.to_string(),
-        params: serde_json::json!({
-            "kind": NOTIFY_CONNECTION_LIMIT,
-            "message": "pool connection limit reached; reconnecting shortly",
-            "retry_after_ms": retry_after_ms,
-        }),
-    })
-    .expect("notification serializes")
+    pool_common::protocol::connection_limit_line(
+        rand::thread_rng().gen_range(pool_common::protocol::CONNECTION_LIMIT_RETRY_MS),
+    )
 }
 
 fn is_pool_block_solved(notification: &StratumNotify) -> bool {
@@ -4765,7 +4756,10 @@ mod tests {
             pool_common::protocol::NOTIFY_CONNECTION_LIMIT
         );
         let retry = notice["params"]["retry_after_ms"].as_u64().unwrap();
-        assert!(super::CONNECTION_LIMIT_RETRY_MS.contains(&retry), "{retry}");
+        assert!(
+            pool_common::protocol::CONNECTION_LIMIT_RETRY_MS.contains(&retry),
+            "{retry}"
+        );
         let mut rest = String::new();
         let read = tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut rest))
             .await
