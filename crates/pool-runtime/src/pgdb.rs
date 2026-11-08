@@ -1593,722 +1593,7 @@ impl PostgresStore {
     ) -> Result<Arc<Self>> {
         let pool_size = pool_size.max(1) as usize;
         let mut conn = Self::connect_client(url, schema, "primary")?;
-        conn.batch_execute(
-            r#"
--- New databases partition shares by week (see share_partitions.rs). A plain
--- table from before partitioning is left alone here and converted by
--- scripts/partition_shares.sh. The share indexes below keep the same names in
--- both layouts, so their IF NOT EXISTS is a no-op on either; on a partitioned
--- table a new one would build on every partition under a SHARE lock.
-DO $shares$
-BEGIN
-    IF to_regclass('shares') IS NULL THEN
-        CREATE TABLE shares (
-            id BIGSERIAL,
-            job_id TEXT NOT NULL,
-            miner TEXT NOT NULL,
-            worker TEXT NOT NULL,
-            difficulty BIGINT NOT NULL,
-            nonce BIGINT NOT NULL,
-            status TEXT NOT NULL,
-            was_sampled BOOLEAN NOT NULL,
-            block_hash TEXT,
-            claimed_hash TEXT,
-            miner_version TEXT,
-            backend TEXT,
-            reject_reason TEXT,
-            created_at BIGINT NOT NULL,
-            PRIMARY KEY (id, created_at)
-        ) PARTITION BY RANGE (created_at);
-        CREATE TABLE shares_default PARTITION OF shares DEFAULT;
-    END IF;
-END
-$shares$;
-CREATE INDEX IF NOT EXISTS idx_shares_created_at ON shares(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_shares_miner_status_created ON shares(miner, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_shares_job_nonce ON shares(job_id, nonce);
-CREATE INDEX IF NOT EXISTS idx_shares_block_hash_created_at ON shares(block_hash, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS share_job_replays (
-    job_id TEXT PRIMARY KEY,
-    header_base BYTEA NOT NULL,
-    network_target BYTEA NOT NULL,
-    created_at BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_share_job_replays_created_at
-    ON share_job_replays(created_at DESC);
-
-CREATE TABLE IF NOT EXISTS blocks (
-    height BIGINT PRIMARY KEY,
-    hash TEXT NOT NULL,
-    difficulty BIGINT NOT NULL,
-    finder TEXT NOT NULL,
-    finder_worker TEXT NOT NULL,
-    reward BIGINT NOT NULL,
-    timestamp BIGINT NOT NULL,
-    confirmed BOOLEAN NOT NULL,
-    orphaned BOOLEAN NOT NULL,
-    paid_out BOOLEAN NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON blocks(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_blocks_finder ON blocks(finder);
-CREATE INDEX IF NOT EXISTS idx_blocks_finder_height ON blocks(finder, height DESC);
-CREATE INDEX IF NOT EXISTS idx_blocks_unconfirmed ON blocks(confirmed, orphaned, height ASC);
-CREATE INDEX IF NOT EXISTS idx_blocks_hash ON blocks(hash);
-CREATE INDEX IF NOT EXISTS idx_blocks_timestamp_height ON blocks(timestamp DESC, height DESC);
-
-CREATE TABLE IF NOT EXISTS payout_destinations (
-    account_id TEXT PRIMARY KEY,
-    address TEXT NOT NULL,
-    memo TEXT NOT NULL CHECK (octet_length(memo) BETWEEN 1 AND 124),
-    UNIQUE (address, memo)
-);
-
-CREATE TABLE IF NOT EXISTS balances (
-    address TEXT PRIMARY KEY,
-    pending BIGINT NOT NULL,
-    paid BIGINT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS payouts (
-    id BIGSERIAL PRIMARY KEY,
-    address TEXT NOT NULL,
-    amount BIGINT NOT NULL,
-    fee BIGINT NOT NULL DEFAULT 0,
-    tx_hash TEXT NOT NULL,
-    timestamp BIGINT NOT NULL,
-    reverted_at BIGINT,
-    revert_reason TEXT,
-    reversible BOOLEAN NOT NULL DEFAULT FALSE
-);
-CREATE INDEX IF NOT EXISTS idx_payouts_timestamp ON payouts(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_payouts_address_timestamp ON payouts(address, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_payouts_tx_hash ON payouts(tx_hash);
-
-CREATE TABLE IF NOT EXISTS meta (
-    key TEXT PRIMARY KEY,
-    value BYTEA NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS seen_shares (
-    job_id TEXT NOT NULL,
-    nonce BIGINT NOT NULL,
-    expires_at BIGINT NOT NULL,
-    PRIMARY KEY (job_id, nonce)
-);
-CREATE INDEX IF NOT EXISTS idx_seen_shares_expiry ON seen_shares(expires_at);
-
-CREATE TABLE IF NOT EXISTS pending_payouts (
-    address TEXT PRIMARY KEY,
-    amount BIGINT NOT NULL,
-    initiated_at BIGINT NOT NULL,
-    send_started_at BIGINT,
-    tx_hash TEXT,
-    fee BIGINT,
-    sent_at BIGINT
-);
-
--- Outbox of broadcast payouts for the hosted wallet service
--- (showcases/hosted-wallet/m1/contracts.md §2). Written in the same
--- transaction that records a payout's txid; one row per (tx, recipient).
--- A hint is discovery only: the wallet service verifies it on chain.
-CREATE TABLE IF NOT EXISTS wallet_payout_hints (
-    seq BIGSERIAL PRIMARY KEY,
-    payout_id TEXT NOT NULL,
-    tx_hash TEXT NOT NULL,
-    address TEXT NOT NULL,
-    amount BIGINT NOT NULL,
-    created_at_ms BIGINT NOT NULL,
-    UNIQUE (tx_hash, address)
-);
-
-CREATE TABLE IF NOT EXISTS manual_payout_offsets (
-    address TEXT PRIMARY KEY,
-    amount BIGINT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS pool_fee_events (
-    id BIGSERIAL PRIMARY KEY,
-    block_height BIGINT NOT NULL UNIQUE,
-    amount BIGINT NOT NULL,
-    fee_address TEXT NOT NULL,
-    timestamp BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_pool_fee_events_timestamp ON pool_fee_events(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_pool_fee_events_fee_address ON pool_fee_events(fee_address);
-
-CREATE TABLE IF NOT EXISTS pool_fee_balance_credits (
-    block_height BIGINT PRIMARY KEY,
-    fee_address TEXT NOT NULL,
-    amount BIGINT NOT NULL,
-    paid_amount BIGINT NOT NULL DEFAULT 0,
-    timestamp BIGINT NOT NULL,
-    credited_at BIGINT NOT NULL,
-    reversible BOOLEAN NOT NULL DEFAULT FALSE
-);
-CREATE INDEX IF NOT EXISTS idx_pool_fee_balance_credits_fee_address
-    ON pool_fee_balance_credits(fee_address);
-
-CREATE TABLE IF NOT EXISTS block_credit_events (
-    id BIGSERIAL PRIMARY KEY,
-    block_height BIGINT NOT NULL,
-    address TEXT NOT NULL,
-    amount BIGINT NOT NULL,
-    paid_amount BIGINT NOT NULL DEFAULT 0,
-    reversible BOOLEAN NOT NULL DEFAULT FALSE,
-    UNIQUE (block_height, address)
-);
-CREATE INDEX IF NOT EXISTS idx_block_credit_events_block_height
-    ON block_credit_events(block_height, amount DESC, address ASC);
-CREATE INDEX IF NOT EXISTS idx_block_credit_events_address
-    ON block_credit_events(address, block_height DESC);
-
-CREATE TABLE IF NOT EXISTS payout_credit_allocations (
-    payout_id BIGINT NOT NULL REFERENCES payouts(id) ON DELETE CASCADE,
-    source_kind TEXT NOT NULL,
-    block_height BIGINT NOT NULL,
-    block_hash TEXT,
-    address TEXT NOT NULL,
-    amount BIGINT NOT NULL,
-    PRIMARY KEY (payout_id, source_kind, block_height, address)
-);
-CREATE INDEX IF NOT EXISTS idx_payout_credit_allocations_payout_id
-    ON payout_credit_allocations(payout_id);
-CREATE INDEX IF NOT EXISTS idx_payout_credit_allocations_source
-    ON payout_credit_allocations(source_kind, block_height, address);
-
-CREATE TABLE IF NOT EXISTS archived_blocks (
-    height BIGINT NOT NULL,
-    hash TEXT NOT NULL,
-    difficulty BIGINT NOT NULL,
-    finder TEXT NOT NULL,
-    finder_worker TEXT NOT NULL,
-    reward BIGINT NOT NULL,
-    timestamp BIGINT NOT NULL,
-    confirmed BOOLEAN NOT NULL,
-    orphaned BOOLEAN NOT NULL,
-    paid_out BOOLEAN NOT NULL,
-    effort_pct DOUBLE PRECISION,
-    archived_at BIGINT NOT NULL,
-    PRIMARY KEY (height, hash)
-);
-CREATE INDEX IF NOT EXISTS idx_archived_blocks_height
-    ON archived_blocks(height DESC, archived_at DESC);
-
-CREATE TABLE IF NOT EXISTS archived_pool_fee_events (
-    block_height BIGINT NOT NULL,
-    block_hash TEXT NOT NULL,
-    amount BIGINT NOT NULL,
-    fee_address TEXT NOT NULL,
-    timestamp BIGINT NOT NULL,
-    archived_at BIGINT NOT NULL,
-    PRIMARY KEY (block_height, block_hash)
-);
-CREATE INDEX IF NOT EXISTS idx_archived_pool_fee_events_fee_address
-    ON archived_pool_fee_events(fee_address, block_height DESC);
-
-CREATE TABLE IF NOT EXISTS archived_pool_fee_balance_credits (
-    block_height BIGINT NOT NULL,
-    block_hash TEXT NOT NULL,
-    fee_address TEXT NOT NULL,
-    amount BIGINT NOT NULL,
-    paid_amount BIGINT NOT NULL DEFAULT 0,
-    timestamp BIGINT NOT NULL,
-    credited_at BIGINT NOT NULL,
-    reversible BOOLEAN NOT NULL DEFAULT FALSE,
-    archived_at BIGINT NOT NULL,
-    PRIMARY KEY (block_height, block_hash)
-);
-CREATE INDEX IF NOT EXISTS idx_archived_pool_fee_balance_credits_fee_address
-    ON archived_pool_fee_balance_credits(fee_address, block_height DESC);
-
-CREATE TABLE IF NOT EXISTS archived_block_credit_events (
-    block_height BIGINT NOT NULL,
-    block_hash TEXT NOT NULL,
-    address TEXT NOT NULL,
-    amount BIGINT NOT NULL,
-    paid_amount BIGINT NOT NULL DEFAULT 0,
-    reversible BOOLEAN NOT NULL DEFAULT FALSE,
-    archived_at BIGINT NOT NULL,
-    PRIMARY KEY (block_height, block_hash, address)
-);
-CREATE INDEX IF NOT EXISTS idx_archived_block_credit_events_height
-    ON archived_block_credit_events(block_height DESC, amount DESC, address ASC);
-CREATE INDEX IF NOT EXISTS idx_archived_block_credit_events_address
-    ON archived_block_credit_events(address, block_height DESC);
-
-CREATE TABLE IF NOT EXISTS address_risk (
-    address TEXT PRIMARY KEY,
-    strikes BIGINT NOT NULL,
-    strike_window_until BIGINT,
-    last_reason TEXT,
-    last_event_at BIGINT,
-    quarantined_until BIGINT,
-    force_verify_until BIGINT
-);
-
-CREATE TABLE IF NOT EXISTS vardiff_hints (
-    address TEXT NOT NULL,
-    worker TEXT NOT NULL,
-    difficulty BIGINT NOT NULL,
-    updated_at BIGINT NOT NULL,
-    PRIMARY KEY (address, worker)
-);
-CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated_at DESC);
-
--- Settings a miner changes from My Stats; see miner_settings.rs. A row
--- exists once someone has set a password for the account.
-CREATE TABLE IF NOT EXISTS miner_settings (
-    account TEXT PRIMARY KEY,
-    password_hash TEXT,
-    owner_ip_group TEXT NOT NULL,
-    claimed_at BIGINT NOT NULL,
-    changed_at BIGINT NOT NULL,
-    taken_back_at BIGINT,
-    min_payout BIGINT CHECK (min_payout IS NULL OR min_payout > 0),
-    default_solo BOOLEAN NOT NULL DEFAULT FALSE,
-    hide_workers BOOLEAN NOT NULL DEFAULT FALSE
-);
-
--- Browsers with My Stats settings unlocked, by session token hash and
--- account. owner_stamp ends a session once the password or owner changes.
-CREATE TABLE IF NOT EXISTS miner_settings_sessions (
-    token_hash TEXT NOT NULL,
-    account TEXT NOT NULL,
-    owner_stamp TEXT NOT NULL,
-    last_used BIGINT NOT NULL,
-    PRIMARY KEY (token_hash, account)
-);
-CREATE INDEX IF NOT EXISTS idx_miner_settings_sessions_last_used
-    ON miner_settings_sessions(last_used);
-
--- Accepted share difficulty per account, IP group and hour, which decides
--- settings take-backs.
-CREATE TABLE IF NOT EXISTS miner_source_work (
-    account TEXT NOT NULL,
-    ip_group TEXT NOT NULL,
-    hour BIGINT NOT NULL,
-    work BIGINT NOT NULL,
-    PRIMARY KEY (account, ip_group, hour)
-);
-CREATE INDEX IF NOT EXISTS idx_miner_source_work_hour ON miner_source_work(hour);
-
--- Alert emails set on My Stats (see miner_settings.rs). Nothing but the
--- confirmation email is sent until confirmed_at is set.
-CREATE TABLE IF NOT EXISTS miner_alerts (
-    account TEXT PRIMARY KEY,
-    email TEXT NOT NULL,
-    lang TEXT NOT NULL DEFAULT 'en',
-    confirmed_at BIGINT,
-    confirm_token_hash TEXT,
-    confirm_sent_at BIGINT NOT NULL,
-    unsubscribe_token TEXT NOT NULL UNIQUE,
-    offline_minutes INTEGER NOT NULL DEFAULT 30,
-    notify_payouts BOOLEAN NOT NULL DEFAULT TRUE,
-    notify_solo_blocks BOOLEAN NOT NULL DEFAULT FALSE,
-    payout_cursor BIGINT NOT NULL DEFAULT 0,
-    block_cursor BIGINT NOT NULL DEFAULT 0,
-    day BIGINT NOT NULL DEFAULT 0,
-    sent_today INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_miner_alerts_confirm_token ON miner_alerts(confirm_token_hash)
-    WHERE confirm_token_hash IS NOT NULL;
-
--- Rigs a "stopped mining" email was sent for, until they mine again.
-CREATE TABLE IF NOT EXISTS miner_alert_offline (
-    account TEXT NOT NULL,
-    worker TEXT NOT NULL,
-    since BIGINT NOT NULL,
-    PRIMARY KEY (account, worker)
-);
-
--- Rigs a "hashrate dropped" alert was sent for, until they recover.
-CREATE TABLE IF NOT EXISTS miner_alert_slow (
-    account TEXT NOT NULL,
-    worker TEXT NOT NULL,
-    since BIGINT NOT NULL,
-    PRIMARY KEY (account, worker)
-);
-
-CREATE TABLE IF NOT EXISTS stat_snapshots (
-    id BIGSERIAL PRIMARY KEY,
-    timestamp BIGINT NOT NULL,
-    hashrate DOUBLE PRECISION NOT NULL,
-    miners INTEGER NOT NULL,
-    workers INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timestamp DESC);
-
-CREATE TABLE IF NOT EXISTS monitor_heartbeats (
-    id BIGSERIAL PRIMARY KEY,
-    sampled_at BIGINT NOT NULL,
-    source TEXT NOT NULL,
-    synthetic BOOLEAN NOT NULL DEFAULT FALSE,
-    api_up BOOLEAN,
-    stratum_up BOOLEAN,
-    db_up BOOLEAN NOT NULL,
-    daemon_up BOOLEAN,
-    public_http_up BOOLEAN,
-    daemon_syncing BOOLEAN,
-    chain_height BIGINT,
-    template_age_seconds BIGINT,
-    last_refresh_millis BIGINT,
-    stratum_snapshot_age_seconds BIGINT,
-    connected_miners BIGINT,
-    connected_workers BIGINT,
-    estimated_hashrate DOUBLE PRECISION,
-    wallet_up BOOLEAN,
-    last_accepted_share_at BIGINT,
-    last_accepted_share_age_seconds BIGINT,
-    payout_pending_count BIGINT,
-    payout_pending_amount BIGINT,
-    oldest_pending_payout_at BIGINT,
-    oldest_pending_payout_age_seconds BIGINT,
-    oldest_pending_send_started_at BIGINT,
-    oldest_pending_send_age_seconds BIGINT,
-    validation_candidate_queue_depth BIGINT,
-    validation_regular_queue_depth BIGINT,
-    summary_state TEXT NOT NULL,
-    details_json TEXT,
-    UNIQUE (source, sampled_at)
-);
-CREATE INDEX IF NOT EXISTS idx_monitor_heartbeats_sampled_at
-    ON monitor_heartbeats(sampled_at DESC);
-CREATE INDEX IF NOT EXISTS idx_monitor_heartbeats_source_sampled_at
-    ON monitor_heartbeats(source, sampled_at DESC);
-
-CREATE TABLE IF NOT EXISTS monitor_incidents (
-    id BIGSERIAL PRIMARY KEY,
-    dedupe_key TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    severity TEXT NOT NULL,
-    visibility TEXT NOT NULL,
-    source TEXT NOT NULL,
-    summary TEXT NOT NULL,
-    detail TEXT,
-    started_at BIGINT NOT NULL,
-    updated_at BIGINT NOT NULL,
-    ended_at BIGINT
-);
-CREATE INDEX IF NOT EXISTS idx_monitor_incidents_started_at
-    ON monitor_incidents(started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_monitor_incidents_visibility_started_at
-    ON monitor_incidents(visibility, started_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_incidents_open_dedupe
-    ON monitor_incidents(dedupe_key)
-    WHERE ended_at IS NULL;
-
-CREATE TABLE IF NOT EXISTS validation_address_states (
-    address TEXT PRIMARY KEY,
-    total_shares BIGINT NOT NULL,
-    sampled_shares BIGINT NOT NULL,
-    invalid_samples BIGINT NOT NULL,
-    risk_sampled_shares BIGINT NOT NULL DEFAULT 0,
-    risk_invalid_samples BIGINT NOT NULL DEFAULT 0,
-    forced_started_at BIGINT,
-    forced_until BIGINT,
-    forced_sampled_shares BIGINT NOT NULL DEFAULT 0,
-    forced_invalid_samples BIGINT NOT NULL DEFAULT 0,
-    resume_forced_at BIGINT,
-    hold_cause TEXT,
-    last_seen_at BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_validation_address_states_last_seen
-    ON validation_address_states(last_seen_at DESC);
-CREATE INDEX IF NOT EXISTS idx_validation_address_states_forced_until
-    ON validation_address_states(forced_until DESC);
-
-CREATE TABLE IF NOT EXISTS validation_clear_events (
-    id BIGSERIAL PRIMARY KEY,
-    address TEXT NOT NULL,
-    cleared_at BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_validation_clear_events_cleared_at
-    ON validation_clear_events(cleared_at DESC);
-
-CREATE TABLE IF NOT EXISTS validation_provisionals (
-    id BIGSERIAL PRIMARY KEY,
-    address TEXT NOT NULL,
-    share_id BIGINT,
-    created_at BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_validation_provisionals_created_at
-    ON validation_provisionals(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_validation_provisionals_address_created_at
-    ON validation_provisionals(address, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS share_daily_summaries (
-    day_start BIGINT PRIMARY KEY,
-    accepted_count BIGINT NOT NULL,
-    rejected_count BIGINT NOT NULL,
-    accepted_difficulty BIGINT NOT NULL,
-    unique_miners BIGINT NOT NULL,
-    unique_workers BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_share_daily_summaries_day_start
-    ON share_daily_summaries(day_start DESC);
-
-CREATE TABLE IF NOT EXISTS share_rejection_reason_daily_summaries (
-    day_start BIGINT NOT NULL,
-    reason TEXT NOT NULL,
-    rejected_count BIGINT NOT NULL,
-    PRIMARY KEY (day_start, reason)
-);
-CREATE INDEX IF NOT EXISTS idx_share_rejection_reason_daily_summaries_day_start
-    ON share_rejection_reason_daily_summaries(day_start DESC);
-
-CREATE TABLE IF NOT EXISTS payout_daily_summaries (
-    day_start BIGINT PRIMARY KEY,
-    payout_count BIGINT NOT NULL,
-    total_amount BIGINT NOT NULL,
-    total_fee BIGINT NOT NULL,
-    unique_recipients BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
-    ON payout_daily_summaries(day_start DESC);
-"#,
-        )
-        .context("init postgres schema")?;
-        conn.batch_execute(
-            "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS fee BIGINT NOT NULL DEFAULT 0",
-        )
-        .context("ensure payouts.fee column")?;
-        conn.batch_execute(
-            "ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS send_started_at BIGINT",
-        )
-        .context("ensure pending_payouts.send_started_at column")?;
-        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS tx_hash TEXT")
-            .context("ensure pending_payouts.tx_hash column")?;
-        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS fee BIGINT")
-            .context("ensure pending_payouts.fee column")?;
-        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS sent_at BIGINT")
-            .context("ensure pending_payouts.sent_at column")?;
-        conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
-            .context("ensure payouts.batch_id column")?;
-        conn.batch_execute(
-            "ALTER TABLE miner_settings ADD COLUMN IF NOT EXISTS private_stats BOOLEAN NOT NULL DEFAULT FALSE;
-             ALTER TABLE miner_settings ADD COLUMN IF NOT EXISTS start_difficulty BIGINT
-                 CHECK (start_difficulty IS NULL OR start_difficulty > 0);
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS hashrate_drop_minutes INTEGER NOT NULL DEFAULT 0;
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS notify_updates BOOLEAN NOT NULL DEFAULT FALSE;
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS weekly_summary BOOLEAN NOT NULL DEFAULT FALSE;
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS discord_webhook TEXT;
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_chat_id BIGINT;
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_name TEXT;
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_link_hash TEXT;
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_link_at BIGINT;
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS update_notified TEXT NOT NULL DEFAULT '';
-             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS summary_week BIGINT NOT NULL DEFAULT 0;
-             CREATE INDEX IF NOT EXISTS idx_miner_alerts_telegram_link ON miner_alerts(telegram_link_hash)
-                 WHERE telegram_link_hash IS NOT NULL;
-             CREATE INDEX IF NOT EXISTS idx_miner_alerts_telegram_chat ON miner_alerts(telegram_chat_id)
-                 WHERE telegram_chat_id IS NOT NULL;",
-        )
-        .context("ensure miner settings round 2 columns")?;
-        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
-            .context("ensure pending_payouts.batch_id column")?;
-        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS send_daemon TEXT")
-            .context("ensure pending_payouts.send_daemon column")?;
-        conn.batch_execute(
-            "UPDATE payouts SET batch_id = CONCAT('legacy:', (timestamp / 300)::text)
-             WHERE COALESCE(BTRIM(batch_id), '') = '';
-             UPDATE pending_payouts SET batch_id = CONCAT('legacy:', (COALESCE(sent_at, send_started_at, initiated_at) / 300)::text)
-             WHERE tx_hash IS NOT NULL AND BTRIM(tx_hash) <> ''
-               AND COALESCE(BTRIM(batch_id), '') = ''
-               AND COALESCE(sent_at, send_started_at, initiated_at) IS NOT NULL",
-        )
-        .context("backfill legacy payout batch ids")?;
-        conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_payouts_batch_id
-             ON payouts(batch_id)",
-        )
-        .context("ensure payouts.batch_id index")?;
-        conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_pending_payouts_batch_id
-             ON pending_payouts(batch_id)",
-        )
-        .context("ensure pending_payouts.batch_id index")?;
-        conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS reverted_at BIGINT")
-            .context("ensure payouts.reverted_at column")?;
-        conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS revert_reason TEXT")
-            .context("ensure payouts.revert_reason column")?;
-        conn.batch_execute(
-            "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
-        )
-        .context("ensure payouts.reversible column")?;
-        // Existing databases must first apply scripts/index_read_latency.sql
-        // concurrently. These declarations also provision empty test/new pools.
-        conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_payouts_visible_batch_timestamp
-             ON payouts(batch_id, timestamp DESC) WHERE reverted_at IS NULL;
-             CREATE INDEX IF NOT EXISTS idx_shares_accepted_time_difficulty
-             ON shares(created_at) INCLUDE (difficulty)
-             WHERE status IN ('verified', 'provisional')",
-        )
-        .context("ensure API read indexes")?;
-        // Checked first so a restart does not queue an exclusive lock on the
-        // hot shares table once the column exists.
-        conn.batch_execute(
-            "DO $solo$ BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = current_schema()
-                      AND table_name = 'shares' AND column_name = 'solo'
-                ) THEN
-                    ALTER TABLE shares ADD COLUMN solo BOOLEAN NOT NULL DEFAULT FALSE;
-                END IF;
-             END $solo$;
-             ALTER TABLE blocks ADD COLUMN IF NOT EXISTS solo BOOLEAN NOT NULL DEFAULT FALSE;
-             ALTER TABLE archived_blocks ADD COLUMN IF NOT EXISTS solo BOOLEAN NOT NULL DEFAULT FALSE",
-        )
-        .context("ensure solo mining columns")?;
-        conn.batch_execute(include_str!("../sql/share_read_counts.sql"))
-            .context("ensure exact miner share read counts")?;
-        conn.batch_execute(include_str!("../sql/share_read_minutes.sql"))
-            .context("ensure exact minute share read summaries")?;
-        conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_shares_worker_window
-             ON shares(created_at) INCLUDE (miner,worker,status,difficulty)",
-        )
-        .context("ensure share preview boundary index")?;
-        // Install concurrently with scripts/index_remaining_read_windows.sql first.
-        conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_block_credit_unpaid
-             ON block_credit_events(block_height,address) INCLUDE(amount,paid_amount)
-             WHERE amount > paid_amount;
-             CREATE INDEX IF NOT EXISTS idx_pool_fee_credit_unpaid
-             ON pool_fee_balance_credits(block_height,fee_address) INCLUDE(amount,paid_amount)
-             WHERE amount > paid_amount",
-        )
-        .context("ensure unpaid balance source indexes")?;
-        conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
-            .context("ensure shares.reject_reason column")?;
-        // Apply scripts/index_share_rejections.sql concurrently before deploying
-        // to an existing production database to avoid a startup index build.
-        conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_shares_rejected_created_reason
-             ON shares(created_at DESC) INCLUDE (reject_reason)
-             WHERE status NOT IN ('verified', 'provisional')",
-        )
-        .context("ensure shares rejection analytics index")?;
-        conn.batch_execute(
-            "UPDATE shares SET reject_reason = 'legacy / unknown'
-             WHERE status NOT IN ('verified','provisional')
-               AND COALESCE(BTRIM(reject_reason), '') = ''",
-        )
-        .context("backfill legacy share rejection reasons")?;
-        conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS claimed_hash TEXT")
-            .context("ensure shares.claimed_hash column")?;
-        conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS miner_version TEXT")
-            .context("ensure shares.miner_version column")?;
-        conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS backend TEXT")
-            .context("ensure shares.backend column")?;
-        // Apply scripts/index_worker_reads.sql concurrently before upgrading an
-        // existing database. Keep worker history reads out of the share heap.
-        conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_shares_miner_read_window
-             ON shares(miner, created_at DESC)
-             INCLUDE (worker, status, difficulty, miner_version, backend)",
-        )
-        .context("ensure covering miner read index")?;
-        conn.batch_execute(
-            "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS effort_pct DOUBLE PRECISION",
-        )
-        .context("ensure blocks.effort_pct column")?;
-        conn.batch_execute(
-            "ALTER TABLE address_risk ADD COLUMN IF NOT EXISTS strike_window_until BIGINT",
-        )
-        .context("ensure address_risk.strike_window_until column")?;
-        conn.batch_execute(
-            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS risk_sampled_shares BIGINT NOT NULL DEFAULT 0",
-        )
-        .context("ensure validation_address_states.risk_sampled_shares column")?;
-        conn.batch_execute(
-            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS risk_invalid_samples BIGINT NOT NULL DEFAULT 0",
-        )
-        .context("ensure validation_address_states.risk_invalid_samples column")?;
-        conn.batch_execute(
-            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_started_at BIGINT",
-        )
-        .context("ensure validation_address_states.forced_started_at column")?;
-        conn.batch_execute(
-            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_sampled_shares BIGINT NOT NULL DEFAULT 0",
-        )
-        .context("ensure validation_address_states.forced_sampled_shares column")?;
-        conn.batch_execute(
-            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_invalid_samples BIGINT NOT NULL DEFAULT 0",
-        )
-        .context("ensure validation_address_states.forced_invalid_samples column")?;
-        conn.batch_execute(
-            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS resume_forced_at BIGINT",
-        )
-        .context("ensure validation_address_states.resume_forced_at column")?;
-        conn.batch_execute(
-            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS hold_cause TEXT",
-        )
-        .context("ensure validation_address_states.hold_cause column")?;
-        conn.batch_execute(
-            "ALTER TABLE validation_provisionals ADD COLUMN IF NOT EXISTS share_id BIGINT",
-        )
-        .context("ensure validation_provisionals.share_id column")?;
-        conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_validation_provisionals_share_id
-             ON validation_provisionals(share_id)",
-        )
-        .context("ensure validation_provisionals.share_id index")?;
-        conn.batch_execute(
-            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS wallet_up BOOLEAN",
-        )
-        .context("ensure monitor_heartbeats.wallet_up column")?;
-        conn.batch_execute(
-            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS last_accepted_share_at BIGINT",
-        )
-        .context("ensure monitor_heartbeats.last_accepted_share_at column")?;
-        conn.batch_execute(
-            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS last_accepted_share_age_seconds BIGINT",
-        )
-        .context("ensure monitor_heartbeats.last_accepted_share_age_seconds column")?;
-        conn.batch_execute(
-            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_payout_at BIGINT",
-        )
-        .context("ensure monitor_heartbeats.oldest_pending_payout_at column")?;
-        conn.batch_execute(
-            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_payout_age_seconds BIGINT",
-        )
-        .context("ensure monitor_heartbeats.oldest_pending_payout_age_seconds column")?;
-        conn.batch_execute(
-            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_send_started_at BIGINT",
-        )
-        .context("ensure monitor_heartbeats.oldest_pending_send_started_at column")?;
-        conn.batch_execute(
-            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_send_age_seconds BIGINT",
-        )
-        .context("ensure monitor_heartbeats.oldest_pending_send_age_seconds column")?;
-        conn.batch_execute(
-            "ALTER TABLE block_credit_events ADD COLUMN IF NOT EXISTS paid_amount BIGINT NOT NULL DEFAULT 0",
-        )
-        .context("ensure block_credit_events.paid_amount column")?;
-        conn.batch_execute(
-            "ALTER TABLE block_credit_events ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
-        )
-        .context("ensure block_credit_events.reversible column")?;
-        conn.batch_execute(
-            "ALTER TABLE pool_fee_balance_credits ADD COLUMN IF NOT EXISTS paid_amount BIGINT NOT NULL DEFAULT 0",
-        )
-        .context("ensure pool_fee_balance_credits.paid_amount column")?;
-        conn.batch_execute(
-            "ALTER TABLE pool_fee_balance_credits ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
-        )
-        .context("ensure pool_fee_balance_credits.reversible column")?;
-        conn.batch_execute(
-            "ALTER TABLE payout_credit_allocations ADD COLUMN IF NOT EXISTS block_hash TEXT",
-        )
-        .context("ensure payout_credit_allocations.block_hash column")?;
-        conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_payout_credit_allocations_source_hash
-             ON payout_credit_allocations(source_kind, block_height, block_hash, address)",
-        )
-        .context("ensure payout_credit_allocations source_hash index")?;
+        apply_schema_with_retry(&mut conn)?;
         // Best effort: the DEFAULT partition takes shares until the Stratum
         // maintenance task retries.
         match share_partitions::maintain(&mut conn, now_unix()) {
@@ -8115,6 +7400,771 @@ fn merge_optional_later(
     }
 }
 
+/// Lock wait allowed to each schema statement at startup. It is shorter
+/// than Postgres's default `deadlock_timeout` (1 s), so when the schema
+/// setup and a running engine's writes wait on each other, the setup gives
+/// up first and the running engine's transaction proceeds.
+const SCHEMA_LOCK_TIMEOUT: &str = "500ms";
+const SCHEMA_SETUP_ATTEMPTS: u32 = 20;
+const SCHEMA_SETUP_RETRY_MAX: Duration = Duration::from_secs(5);
+
+/// Runs the idempotent schema setup, retrying when a statement times out on
+/// a table lock or is chosen as a deadlock victim.
+fn apply_schema_with_retry(conn: &mut Client) -> Result<()> {
+    conn.batch_execute(&format!("SET lock_timeout = '{SCHEMA_LOCK_TIMEOUT}'"))
+        .context("set schema setup lock timeout")?;
+    let mut attempt = 1;
+    let result = loop {
+        match apply_schema(conn) {
+            Ok(()) => break Ok(()),
+            Err(err) if attempt < SCHEMA_SETUP_ATTEMPTS && is_lock_conflict(&err) => {
+                let delay =
+                    Duration::from_millis(250 * u64::from(attempt)).min(SCHEMA_SETUP_RETRY_MAX);
+                warn!(
+                    attempt,
+                    error = %format!("{err:#}"),
+                    "schema setup waited on a table lock in use; retrying"
+                );
+                std::thread::sleep(delay);
+                attempt += 1;
+            }
+            Err(err) => break Err(err),
+        }
+    };
+    conn.batch_execute("RESET lock_timeout")
+        .context("reset schema setup lock timeout")?;
+    result
+}
+
+/// A lock wait that timed out (`55P03`) or was broken as a deadlock (`40P01`).
+fn is_lock_conflict(err: &anyhow::Error) -> bool {
+    err.chain()
+        .filter_map(|cause| cause.downcast_ref::<postgres::Error>())
+        .filter_map(postgres::Error::code)
+        .any(|code| {
+            *code == postgres::error::SqlState::LOCK_NOT_AVAILABLE
+                || *code == postgres::error::SqlState::T_R_DEADLOCK_DETECTED
+        })
+}
+
+/// Creates or updates every table, column and index. Each statement is
+/// idempotent, so a partly applied run is safe to repeat.
+fn apply_schema(conn: &mut Client) -> Result<()> {
+    conn.batch_execute(
+            r#"
+-- New databases partition shares by week (see share_partitions.rs). A plain
+-- table from before partitioning is left alone here and converted by
+-- scripts/partition_shares.sh. The share indexes below keep the same names in
+-- both layouts, so their IF NOT EXISTS is a no-op on either; on a partitioned
+-- table a new one would build on every partition under a SHARE lock.
+DO $shares$
+BEGIN
+    IF to_regclass('shares') IS NULL THEN
+        CREATE TABLE shares (
+            id BIGSERIAL,
+            job_id TEXT NOT NULL,
+            miner TEXT NOT NULL,
+            worker TEXT NOT NULL,
+            difficulty BIGINT NOT NULL,
+            nonce BIGINT NOT NULL,
+            status TEXT NOT NULL,
+            was_sampled BOOLEAN NOT NULL,
+            block_hash TEXT,
+            claimed_hash TEXT,
+            miner_version TEXT,
+            backend TEXT,
+            reject_reason TEXT,
+            created_at BIGINT NOT NULL,
+            PRIMARY KEY (id, created_at)
+        ) PARTITION BY RANGE (created_at);
+        CREATE TABLE shares_default PARTITION OF shares DEFAULT;
+    END IF;
+END
+$shares$;
+CREATE INDEX IF NOT EXISTS idx_shares_created_at ON shares(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shares_miner_status_created ON shares(miner, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shares_job_nonce ON shares(job_id, nonce);
+CREATE INDEX IF NOT EXISTS idx_shares_block_hash_created_at ON shares(block_hash, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS share_job_replays (
+    job_id TEXT PRIMARY KEY,
+    header_base BYTEA NOT NULL,
+    network_target BYTEA NOT NULL,
+    created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_share_job_replays_created_at
+    ON share_job_replays(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS blocks (
+    height BIGINT PRIMARY KEY,
+    hash TEXT NOT NULL,
+    difficulty BIGINT NOT NULL,
+    finder TEXT NOT NULL,
+    finder_worker TEXT NOT NULL,
+    reward BIGINT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    confirmed BOOLEAN NOT NULL,
+    orphaned BOOLEAN NOT NULL,
+    paid_out BOOLEAN NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON blocks(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_blocks_finder ON blocks(finder);
+CREATE INDEX IF NOT EXISTS idx_blocks_finder_height ON blocks(finder, height DESC);
+CREATE INDEX IF NOT EXISTS idx_blocks_unconfirmed ON blocks(confirmed, orphaned, height ASC);
+CREATE INDEX IF NOT EXISTS idx_blocks_hash ON blocks(hash);
+CREATE INDEX IF NOT EXISTS idx_blocks_timestamp_height ON blocks(timestamp DESC, height DESC);
+
+CREATE TABLE IF NOT EXISTS payout_destinations (
+    account_id TEXT PRIMARY KEY,
+    address TEXT NOT NULL,
+    memo TEXT NOT NULL CHECK (octet_length(memo) BETWEEN 1 AND 124),
+    UNIQUE (address, memo)
+);
+
+CREATE TABLE IF NOT EXISTS balances (
+    address TEXT PRIMARY KEY,
+    pending BIGINT NOT NULL,
+    paid BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS payouts (
+    id BIGSERIAL PRIMARY KEY,
+    address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    fee BIGINT NOT NULL DEFAULT 0,
+    tx_hash TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    reverted_at BIGINT,
+    revert_reason TEXT,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_payouts_timestamp ON payouts(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_payouts_address_timestamp ON payouts(address, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_payouts_tx_hash ON payouts(tx_hash);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value BYTEA NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS seen_shares (
+    job_id TEXT NOT NULL,
+    nonce BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    PRIMARY KEY (job_id, nonce)
+);
+CREATE INDEX IF NOT EXISTS idx_seen_shares_expiry ON seen_shares(expires_at);
+
+CREATE TABLE IF NOT EXISTS pending_payouts (
+    address TEXT PRIMARY KEY,
+    amount BIGINT NOT NULL,
+    initiated_at BIGINT NOT NULL,
+    send_started_at BIGINT,
+    tx_hash TEXT,
+    fee BIGINT,
+    sent_at BIGINT
+);
+
+-- Outbox of broadcast payouts for the hosted wallet service
+-- (showcases/hosted-wallet/m1/contracts.md §2). Written in the same
+-- transaction that records a payout's txid; one row per (tx, recipient).
+-- A hint is discovery only: the wallet service verifies it on chain.
+CREATE TABLE IF NOT EXISTS wallet_payout_hints (
+    seq BIGSERIAL PRIMARY KEY,
+    payout_id TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    created_at_ms BIGINT NOT NULL,
+    UNIQUE (tx_hash, address)
+);
+
+CREATE TABLE IF NOT EXISTS manual_payout_offsets (
+    address TEXT PRIMARY KEY,
+    amount BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pool_fee_events (
+    id BIGSERIAL PRIMARY KEY,
+    block_height BIGINT NOT NULL UNIQUE,
+    amount BIGINT NOT NULL,
+    fee_address TEXT NOT NULL,
+    timestamp BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pool_fee_events_timestamp ON pool_fee_events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_pool_fee_events_fee_address ON pool_fee_events(fee_address);
+
+CREATE TABLE IF NOT EXISTS pool_fee_balance_credits (
+    block_height BIGINT PRIMARY KEY,
+    fee_address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    paid_amount BIGINT NOT NULL DEFAULT 0,
+    timestamp BIGINT NOT NULL,
+    credited_at BIGINT NOT NULL,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_pool_fee_balance_credits_fee_address
+    ON pool_fee_balance_credits(fee_address);
+
+CREATE TABLE IF NOT EXISTS block_credit_events (
+    id BIGSERIAL PRIMARY KEY,
+    block_height BIGINT NOT NULL,
+    address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    paid_amount BIGINT NOT NULL DEFAULT 0,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE (block_height, address)
+);
+CREATE INDEX IF NOT EXISTS idx_block_credit_events_block_height
+    ON block_credit_events(block_height, amount DESC, address ASC);
+CREATE INDEX IF NOT EXISTS idx_block_credit_events_address
+    ON block_credit_events(address, block_height DESC);
+
+CREATE TABLE IF NOT EXISTS payout_credit_allocations (
+    payout_id BIGINT NOT NULL REFERENCES payouts(id) ON DELETE CASCADE,
+    source_kind TEXT NOT NULL,
+    block_height BIGINT NOT NULL,
+    block_hash TEXT,
+    address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    PRIMARY KEY (payout_id, source_kind, block_height, address)
+);
+CREATE INDEX IF NOT EXISTS idx_payout_credit_allocations_payout_id
+    ON payout_credit_allocations(payout_id);
+CREATE INDEX IF NOT EXISTS idx_payout_credit_allocations_source
+    ON payout_credit_allocations(source_kind, block_height, address);
+
+CREATE TABLE IF NOT EXISTS archived_blocks (
+    height BIGINT NOT NULL,
+    hash TEXT NOT NULL,
+    difficulty BIGINT NOT NULL,
+    finder TEXT NOT NULL,
+    finder_worker TEXT NOT NULL,
+    reward BIGINT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    confirmed BOOLEAN NOT NULL,
+    orphaned BOOLEAN NOT NULL,
+    paid_out BOOLEAN NOT NULL,
+    effort_pct DOUBLE PRECISION,
+    archived_at BIGINT NOT NULL,
+    PRIMARY KEY (height, hash)
+);
+CREATE INDEX IF NOT EXISTS idx_archived_blocks_height
+    ON archived_blocks(height DESC, archived_at DESC);
+
+CREATE TABLE IF NOT EXISTS archived_pool_fee_events (
+    block_height BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    fee_address TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    archived_at BIGINT NOT NULL,
+    PRIMARY KEY (block_height, block_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_archived_pool_fee_events_fee_address
+    ON archived_pool_fee_events(fee_address, block_height DESC);
+
+CREATE TABLE IF NOT EXISTS archived_pool_fee_balance_credits (
+    block_height BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    fee_address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    paid_amount BIGINT NOT NULL DEFAULT 0,
+    timestamp BIGINT NOT NULL,
+    credited_at BIGINT NOT NULL,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE,
+    archived_at BIGINT NOT NULL,
+    PRIMARY KEY (block_height, block_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_archived_pool_fee_balance_credits_fee_address
+    ON archived_pool_fee_balance_credits(fee_address, block_height DESC);
+
+CREATE TABLE IF NOT EXISTS archived_block_credit_events (
+    block_height BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    paid_amount BIGINT NOT NULL DEFAULT 0,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE,
+    archived_at BIGINT NOT NULL,
+    PRIMARY KEY (block_height, block_hash, address)
+);
+CREATE INDEX IF NOT EXISTS idx_archived_block_credit_events_height
+    ON archived_block_credit_events(block_height DESC, amount DESC, address ASC);
+CREATE INDEX IF NOT EXISTS idx_archived_block_credit_events_address
+    ON archived_block_credit_events(address, block_height DESC);
+
+CREATE TABLE IF NOT EXISTS address_risk (
+    address TEXT PRIMARY KEY,
+    strikes BIGINT NOT NULL,
+    strike_window_until BIGINT,
+    last_reason TEXT,
+    last_event_at BIGINT,
+    quarantined_until BIGINT,
+    force_verify_until BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS vardiff_hints (
+    address TEXT NOT NULL,
+    worker TEXT NOT NULL,
+    difficulty BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (address, worker)
+);
+CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated_at DESC);
+
+-- Settings a miner changes from My Stats; see miner_settings.rs. A row
+-- exists once someone has set a password for the account.
+CREATE TABLE IF NOT EXISTS miner_settings (
+    account TEXT PRIMARY KEY,
+    password_hash TEXT,
+    owner_ip_group TEXT NOT NULL,
+    claimed_at BIGINT NOT NULL,
+    changed_at BIGINT NOT NULL,
+    taken_back_at BIGINT,
+    min_payout BIGINT CHECK (min_payout IS NULL OR min_payout > 0),
+    default_solo BOOLEAN NOT NULL DEFAULT FALSE,
+    hide_workers BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+-- Browsers with My Stats settings unlocked, by session token hash and
+-- account. owner_stamp ends a session once the password or owner changes.
+CREATE TABLE IF NOT EXISTS miner_settings_sessions (
+    token_hash TEXT NOT NULL,
+    account TEXT NOT NULL,
+    owner_stamp TEXT NOT NULL,
+    last_used BIGINT NOT NULL,
+    PRIMARY KEY (token_hash, account)
+);
+CREATE INDEX IF NOT EXISTS idx_miner_settings_sessions_last_used
+    ON miner_settings_sessions(last_used);
+
+-- Accepted share difficulty per account, IP group and hour, which decides
+-- settings take-backs.
+CREATE TABLE IF NOT EXISTS miner_source_work (
+    account TEXT NOT NULL,
+    ip_group TEXT NOT NULL,
+    hour BIGINT NOT NULL,
+    work BIGINT NOT NULL,
+    PRIMARY KEY (account, ip_group, hour)
+);
+CREATE INDEX IF NOT EXISTS idx_miner_source_work_hour ON miner_source_work(hour);
+
+-- Alert emails set on My Stats (see miner_settings.rs). Nothing but the
+-- confirmation email is sent until confirmed_at is set.
+CREATE TABLE IF NOT EXISTS miner_alerts (
+    account TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    lang TEXT NOT NULL DEFAULT 'en',
+    confirmed_at BIGINT,
+    confirm_token_hash TEXT,
+    confirm_sent_at BIGINT NOT NULL,
+    unsubscribe_token TEXT NOT NULL UNIQUE,
+    offline_minutes INTEGER NOT NULL DEFAULT 30,
+    notify_payouts BOOLEAN NOT NULL DEFAULT TRUE,
+    notify_solo_blocks BOOLEAN NOT NULL DEFAULT FALSE,
+    payout_cursor BIGINT NOT NULL DEFAULT 0,
+    block_cursor BIGINT NOT NULL DEFAULT 0,
+    day BIGINT NOT NULL DEFAULT 0,
+    sent_today INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_miner_alerts_confirm_token ON miner_alerts(confirm_token_hash)
+    WHERE confirm_token_hash IS NOT NULL;
+
+-- Rigs a "stopped mining" email was sent for, until they mine again.
+CREATE TABLE IF NOT EXISTS miner_alert_offline (
+    account TEXT NOT NULL,
+    worker TEXT NOT NULL,
+    since BIGINT NOT NULL,
+    PRIMARY KEY (account, worker)
+);
+
+-- Rigs a "hashrate dropped" alert was sent for, until they recover.
+CREATE TABLE IF NOT EXISTS miner_alert_slow (
+    account TEXT NOT NULL,
+    worker TEXT NOT NULL,
+    since BIGINT NOT NULL,
+    PRIMARY KEY (account, worker)
+);
+
+CREATE TABLE IF NOT EXISTS stat_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    timestamp BIGINT NOT NULL,
+    hashrate DOUBLE PRECISION NOT NULL,
+    miners INTEGER NOT NULL,
+    workers INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS monitor_heartbeats (
+    id BIGSERIAL PRIMARY KEY,
+    sampled_at BIGINT NOT NULL,
+    source TEXT NOT NULL,
+    synthetic BOOLEAN NOT NULL DEFAULT FALSE,
+    api_up BOOLEAN,
+    stratum_up BOOLEAN,
+    db_up BOOLEAN NOT NULL,
+    daemon_up BOOLEAN,
+    public_http_up BOOLEAN,
+    daemon_syncing BOOLEAN,
+    chain_height BIGINT,
+    template_age_seconds BIGINT,
+    last_refresh_millis BIGINT,
+    stratum_snapshot_age_seconds BIGINT,
+    connected_miners BIGINT,
+    connected_workers BIGINT,
+    estimated_hashrate DOUBLE PRECISION,
+    wallet_up BOOLEAN,
+    last_accepted_share_at BIGINT,
+    last_accepted_share_age_seconds BIGINT,
+    payout_pending_count BIGINT,
+    payout_pending_amount BIGINT,
+    oldest_pending_payout_at BIGINT,
+    oldest_pending_payout_age_seconds BIGINT,
+    oldest_pending_send_started_at BIGINT,
+    oldest_pending_send_age_seconds BIGINT,
+    validation_candidate_queue_depth BIGINT,
+    validation_regular_queue_depth BIGINT,
+    summary_state TEXT NOT NULL,
+    details_json TEXT,
+    UNIQUE (source, sampled_at)
+);
+CREATE INDEX IF NOT EXISTS idx_monitor_heartbeats_sampled_at
+    ON monitor_heartbeats(sampled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_monitor_heartbeats_source_sampled_at
+    ON monitor_heartbeats(source, sampled_at DESC);
+
+CREATE TABLE IF NOT EXISTS monitor_incidents (
+    id BIGSERIAL PRIMARY KEY,
+    dedupe_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    visibility TEXT NOT NULL,
+    source TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    detail TEXT,
+    started_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    ended_at BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_monitor_incidents_started_at
+    ON monitor_incidents(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_monitor_incidents_visibility_started_at
+    ON monitor_incidents(visibility, started_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_incidents_open_dedupe
+    ON monitor_incidents(dedupe_key)
+    WHERE ended_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS validation_address_states (
+    address TEXT PRIMARY KEY,
+    total_shares BIGINT NOT NULL,
+    sampled_shares BIGINT NOT NULL,
+    invalid_samples BIGINT NOT NULL,
+    risk_sampled_shares BIGINT NOT NULL DEFAULT 0,
+    risk_invalid_samples BIGINT NOT NULL DEFAULT 0,
+    forced_started_at BIGINT,
+    forced_until BIGINT,
+    forced_sampled_shares BIGINT NOT NULL DEFAULT 0,
+    forced_invalid_samples BIGINT NOT NULL DEFAULT 0,
+    resume_forced_at BIGINT,
+    hold_cause TEXT,
+    last_seen_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_validation_address_states_last_seen
+    ON validation_address_states(last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_validation_address_states_forced_until
+    ON validation_address_states(forced_until DESC);
+
+CREATE TABLE IF NOT EXISTS validation_clear_events (
+    id BIGSERIAL PRIMARY KEY,
+    address TEXT NOT NULL,
+    cleared_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_validation_clear_events_cleared_at
+    ON validation_clear_events(cleared_at DESC);
+
+CREATE TABLE IF NOT EXISTS validation_provisionals (
+    id BIGSERIAL PRIMARY KEY,
+    address TEXT NOT NULL,
+    share_id BIGINT,
+    created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_validation_provisionals_created_at
+    ON validation_provisionals(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_validation_provisionals_address_created_at
+    ON validation_provisionals(address, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS share_daily_summaries (
+    day_start BIGINT PRIMARY KEY,
+    accepted_count BIGINT NOT NULL,
+    rejected_count BIGINT NOT NULL,
+    accepted_difficulty BIGINT NOT NULL,
+    unique_miners BIGINT NOT NULL,
+    unique_workers BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_share_daily_summaries_day_start
+    ON share_daily_summaries(day_start DESC);
+
+CREATE TABLE IF NOT EXISTS share_rejection_reason_daily_summaries (
+    day_start BIGINT NOT NULL,
+    reason TEXT NOT NULL,
+    rejected_count BIGINT NOT NULL,
+    PRIMARY KEY (day_start, reason)
+);
+CREATE INDEX IF NOT EXISTS idx_share_rejection_reason_daily_summaries_day_start
+    ON share_rejection_reason_daily_summaries(day_start DESC);
+
+CREATE TABLE IF NOT EXISTS payout_daily_summaries (
+    day_start BIGINT PRIMARY KEY,
+    payout_count BIGINT NOT NULL,
+    total_amount BIGINT NOT NULL,
+    total_fee BIGINT NOT NULL,
+    unique_recipients BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
+    ON payout_daily_summaries(day_start DESC);
+"#,
+        )
+        .context("init postgres schema")?;
+    conn.batch_execute(
+        "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS fee BIGINT NOT NULL DEFAULT 0",
+    )
+    .context("ensure payouts.fee column")?;
+    conn.batch_execute(
+        "ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS send_started_at BIGINT",
+    )
+    .context("ensure pending_payouts.send_started_at column")?;
+    conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS tx_hash TEXT")
+        .context("ensure pending_payouts.tx_hash column")?;
+    conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS fee BIGINT")
+        .context("ensure pending_payouts.fee column")?;
+    conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS sent_at BIGINT")
+        .context("ensure pending_payouts.sent_at column")?;
+    conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
+        .context("ensure payouts.batch_id column")?;
+    conn.batch_execute(
+            "ALTER TABLE miner_settings ADD COLUMN IF NOT EXISTS private_stats BOOLEAN NOT NULL DEFAULT FALSE;
+             ALTER TABLE miner_settings ADD COLUMN IF NOT EXISTS start_difficulty BIGINT
+                 CHECK (start_difficulty IS NULL OR start_difficulty > 0);
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS hashrate_drop_minutes INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS notify_updates BOOLEAN NOT NULL DEFAULT FALSE;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS weekly_summary BOOLEAN NOT NULL DEFAULT FALSE;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS discord_webhook TEXT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_chat_id BIGINT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_name TEXT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_link_hash TEXT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS telegram_link_at BIGINT;
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS update_notified TEXT NOT NULL DEFAULT '';
+             ALTER TABLE miner_alerts ADD COLUMN IF NOT EXISTS summary_week BIGINT NOT NULL DEFAULT 0;
+             CREATE INDEX IF NOT EXISTS idx_miner_alerts_telegram_link ON miner_alerts(telegram_link_hash)
+                 WHERE telegram_link_hash IS NOT NULL;
+             CREATE INDEX IF NOT EXISTS idx_miner_alerts_telegram_chat ON miner_alerts(telegram_chat_id)
+                 WHERE telegram_chat_id IS NOT NULL;",
+        )
+        .context("ensure miner settings round 2 columns")?;
+    conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
+        .context("ensure pending_payouts.batch_id column")?;
+    conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS send_daemon TEXT")
+        .context("ensure pending_payouts.send_daemon column")?;
+    conn.batch_execute(
+            "UPDATE payouts SET batch_id = CONCAT('legacy:', (timestamp / 300)::text)
+             WHERE COALESCE(BTRIM(batch_id), '') = '';
+             UPDATE pending_payouts SET batch_id = CONCAT('legacy:', (COALESCE(sent_at, send_started_at, initiated_at) / 300)::text)
+             WHERE tx_hash IS NOT NULL AND BTRIM(tx_hash) <> ''
+               AND COALESCE(BTRIM(batch_id), '') = ''
+               AND COALESCE(sent_at, send_started_at, initiated_at) IS NOT NULL",
+        )
+        .context("backfill legacy payout batch ids")?;
+    conn.batch_execute(
+        "CREATE INDEX IF NOT EXISTS idx_payouts_batch_id
+             ON payouts(batch_id)",
+    )
+    .context("ensure payouts.batch_id index")?;
+    conn.batch_execute(
+        "CREATE INDEX IF NOT EXISTS idx_pending_payouts_batch_id
+             ON pending_payouts(batch_id)",
+    )
+    .context("ensure pending_payouts.batch_id index")?;
+    conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS reverted_at BIGINT")
+        .context("ensure payouts.reverted_at column")?;
+    conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS revert_reason TEXT")
+        .context("ensure payouts.revert_reason column")?;
+    conn.batch_execute(
+        "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
+    )
+    .context("ensure payouts.reversible column")?;
+    // Existing databases must first apply scripts/index_read_latency.sql
+    // concurrently. These declarations also provision empty test/new pools.
+    conn.batch_execute(
+        "CREATE INDEX IF NOT EXISTS idx_payouts_visible_batch_timestamp
+             ON payouts(batch_id, timestamp DESC) WHERE reverted_at IS NULL;
+             CREATE INDEX IF NOT EXISTS idx_shares_accepted_time_difficulty
+             ON shares(created_at) INCLUDE (difficulty)
+             WHERE status IN ('verified', 'provisional')",
+    )
+    .context("ensure API read indexes")?;
+    // Checked first so a restart does not queue an exclusive lock on the
+    // hot shares table once the column exists.
+    conn.batch_execute(
+            "DO $solo$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'shares' AND column_name = 'solo'
+                ) THEN
+                    ALTER TABLE shares ADD COLUMN solo BOOLEAN NOT NULL DEFAULT FALSE;
+                END IF;
+             END $solo$;
+             ALTER TABLE blocks ADD COLUMN IF NOT EXISTS solo BOOLEAN NOT NULL DEFAULT FALSE;
+             ALTER TABLE archived_blocks ADD COLUMN IF NOT EXISTS solo BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .context("ensure solo mining columns")?;
+    conn.batch_execute(include_str!("../sql/share_read_counts.sql"))
+        .context("ensure exact miner share read counts")?;
+    conn.batch_execute(include_str!("../sql/share_read_minutes.sql"))
+        .context("ensure exact minute share read summaries")?;
+    conn.batch_execute(
+        "CREATE INDEX IF NOT EXISTS idx_shares_worker_window
+             ON shares(created_at) INCLUDE (miner,worker,status,difficulty)",
+    )
+    .context("ensure share preview boundary index")?;
+    // Install concurrently with scripts/index_remaining_read_windows.sql first.
+    conn.batch_execute(
+        "CREATE INDEX IF NOT EXISTS idx_block_credit_unpaid
+             ON block_credit_events(block_height,address) INCLUDE(amount,paid_amount)
+             WHERE amount > paid_amount;
+             CREATE INDEX IF NOT EXISTS idx_pool_fee_credit_unpaid
+             ON pool_fee_balance_credits(block_height,fee_address) INCLUDE(amount,paid_amount)
+             WHERE amount > paid_amount",
+    )
+    .context("ensure unpaid balance source indexes")?;
+    conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
+        .context("ensure shares.reject_reason column")?;
+    // Apply scripts/index_share_rejections.sql concurrently before deploying
+    // to an existing production database to avoid a startup index build.
+    conn.batch_execute(
+        "CREATE INDEX IF NOT EXISTS idx_shares_rejected_created_reason
+             ON shares(created_at DESC) INCLUDE (reject_reason)
+             WHERE status NOT IN ('verified', 'provisional')",
+    )
+    .context("ensure shares rejection analytics index")?;
+    conn.batch_execute(
+        "UPDATE shares SET reject_reason = 'legacy / unknown'
+             WHERE status NOT IN ('verified','provisional')
+               AND COALESCE(BTRIM(reject_reason), '') = ''",
+    )
+    .context("backfill legacy share rejection reasons")?;
+    conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS claimed_hash TEXT")
+        .context("ensure shares.claimed_hash column")?;
+    conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS miner_version TEXT")
+        .context("ensure shares.miner_version column")?;
+    conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS backend TEXT")
+        .context("ensure shares.backend column")?;
+    // Apply scripts/index_worker_reads.sql concurrently before upgrading an
+    // existing database. Keep worker history reads out of the share heap.
+    conn.batch_execute(
+        "CREATE INDEX IF NOT EXISTS idx_shares_miner_read_window
+             ON shares(miner, created_at DESC)
+             INCLUDE (worker, status, difficulty, miner_version, backend)",
+    )
+    .context("ensure covering miner read index")?;
+    conn.batch_execute("ALTER TABLE blocks ADD COLUMN IF NOT EXISTS effort_pct DOUBLE PRECISION")
+        .context("ensure blocks.effort_pct column")?;
+    conn.batch_execute(
+        "ALTER TABLE address_risk ADD COLUMN IF NOT EXISTS strike_window_until BIGINT",
+    )
+    .context("ensure address_risk.strike_window_until column")?;
+    conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS risk_sampled_shares BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure validation_address_states.risk_sampled_shares column")?;
+    conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS risk_invalid_samples BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure validation_address_states.risk_invalid_samples column")?;
+    conn.batch_execute(
+        "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_started_at BIGINT",
+    )
+    .context("ensure validation_address_states.forced_started_at column")?;
+    conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_sampled_shares BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure validation_address_states.forced_sampled_shares column")?;
+    conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_invalid_samples BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure validation_address_states.forced_invalid_samples column")?;
+    conn.batch_execute(
+        "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS resume_forced_at BIGINT",
+    )
+    .context("ensure validation_address_states.resume_forced_at column")?;
+    conn.batch_execute(
+        "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS hold_cause TEXT",
+    )
+    .context("ensure validation_address_states.hold_cause column")?;
+    conn.batch_execute(
+        "ALTER TABLE validation_provisionals ADD COLUMN IF NOT EXISTS share_id BIGINT",
+    )
+    .context("ensure validation_provisionals.share_id column")?;
+    conn.batch_execute(
+        "CREATE INDEX IF NOT EXISTS idx_validation_provisionals_share_id
+             ON validation_provisionals(share_id)",
+    )
+    .context("ensure validation_provisionals.share_id index")?;
+    conn.batch_execute("ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS wallet_up BOOLEAN")
+        .context("ensure monitor_heartbeats.wallet_up column")?;
+    conn.batch_execute(
+        "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS last_accepted_share_at BIGINT",
+    )
+    .context("ensure monitor_heartbeats.last_accepted_share_at column")?;
+    conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS last_accepted_share_age_seconds BIGINT",
+        )
+        .context("ensure monitor_heartbeats.last_accepted_share_age_seconds column")?;
+    conn.batch_execute(
+        "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_payout_at BIGINT",
+    )
+    .context("ensure monitor_heartbeats.oldest_pending_payout_at column")?;
+    conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_payout_age_seconds BIGINT",
+        )
+        .context("ensure monitor_heartbeats.oldest_pending_payout_age_seconds column")?;
+    conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_send_started_at BIGINT",
+        )
+        .context("ensure monitor_heartbeats.oldest_pending_send_started_at column")?;
+    conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_send_age_seconds BIGINT",
+        )
+        .context("ensure monitor_heartbeats.oldest_pending_send_age_seconds column")?;
+    conn.batch_execute(
+            "ALTER TABLE block_credit_events ADD COLUMN IF NOT EXISTS paid_amount BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure block_credit_events.paid_amount column")?;
+    conn.batch_execute(
+            "ALTER TABLE block_credit_events ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .context("ensure block_credit_events.reversible column")?;
+    conn.batch_execute(
+            "ALTER TABLE pool_fee_balance_credits ADD COLUMN IF NOT EXISTS paid_amount BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure pool_fee_balance_credits.paid_amount column")?;
+    conn.batch_execute(
+            "ALTER TABLE pool_fee_balance_credits ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .context("ensure pool_fee_balance_credits.reversible column")?;
+    conn.batch_execute(
+        "ALTER TABLE payout_credit_allocations ADD COLUMN IF NOT EXISTS block_hash TEXT",
+    )
+    .context("ensure payout_credit_allocations.block_hash column")?;
+    conn.batch_execute(
+        "CREATE INDEX IF NOT EXISTS idx_payout_credit_allocations_source_hash
+             ON payout_credit_allocations(source_kind, block_height, block_hash, address)",
+    )
+    .context("ensure payout_credit_allocations source_hash index")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -8123,6 +8173,68 @@ mod tests {
 
     fn unique_suffix() -> String {
         format!("{}-{}", std::process::id(), rand::random::<u64>())
+    }
+
+    #[test]
+    fn schema_setup_does_not_hold_up_share_writers_postgres() {
+        let Ok(url) = std::env::var(POSTGRES_TEST_URL_ENV) else {
+            return;
+        };
+        let url = url.trim().to_string();
+        if url.is_empty() {
+            return;
+        }
+        let schema = format!(
+            "blocknet_pool_pgdb_lock_test_{}",
+            unique_suffix().replace('-', "_")
+        );
+        let mut admin = Client::connect(&url, NoTls).expect("connect postgres admin client");
+        admin
+            .batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {schema}"))
+            .expect("create isolated test schema");
+        drop(PostgresStore::connect_with_schema(&url, 1, Some(&schema)).expect("first setup"));
+
+        // A running engine mid-insert holds ROW EXCLUSIVE on shares, so the
+        // setup's CREATE INDEX IF NOT EXISTS (SHARE) has to wait.
+        let mut first_writer = Client::connect(&url, NoTls).expect("connect writer");
+        first_writer
+            .batch_execute(&format!(
+                "SET search_path TO {schema}; BEGIN; LOCK TABLE shares IN ROW EXCLUSIVE MODE"
+            ))
+            .expect("hold share writer lock");
+        let setup_url = url.clone();
+        let setup_schema = schema.clone();
+        let setup = std::thread::spawn(move || {
+            PostgresStore::connect_with_schema(&setup_url, 1, Some(&setup_schema)).map(drop)
+        });
+        std::thread::sleep(Duration::from_millis(150));
+
+        // Another insert queues behind the setup's lock request. It must get
+        // through once that request times out, not when the first writer ends.
+        let mut second_writer = Client::connect(&url, NoTls).expect("connect second writer");
+        let started = Instant::now();
+        second_writer
+            .batch_execute(&format!(
+                "SET search_path TO {schema}; BEGIN; LOCK TABLE shares IN ROW EXCLUSIVE MODE; COMMIT"
+            ))
+            .expect("second writer locks shares");
+        let waited = started.elapsed();
+        std::thread::sleep(Duration::from_millis(1_500).saturating_sub(waited));
+        first_writer
+            .batch_execute("COMMIT")
+            .expect("release writer lock");
+
+        setup
+            .join()
+            .unwrap()
+            .expect("setup retries until the lock is free");
+        assert!(
+            waited < Duration::from_millis(1_000),
+            "second writer waited {waited:?}"
+        );
+        admin
+            .batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+            .expect("drop test schema");
     }
 
     fn test_store() -> Option<Arc<PostgresStore>> {
