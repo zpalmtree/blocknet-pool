@@ -160,9 +160,8 @@ and retries on the next poll. Keys remain on the pool host.
 3. Open TCP port 3443 and deploy a TLS-capable gateway during an explicitly
    approved restart window. A gateway restart disconnects miners once. Engine
    handovers alone do not load gateway listener settings. The deploy script's
-   `--restart-gateway` path currently restarts only when the gateway binary hash
-   changes; an already-uploaded binary or configuration-only activation needs
-   an explicitly scheduled gateway restart as well.
+   `--restart-gateway` always restarts the gateway, so it also applies an
+   already-uploaded binary or a configuration-only change.
 4. Check `openssl s_client -connect bntpool.com:3443 -servername bntpool.com
    -verify_hostname bntpool.com -verify_return_error </dev/null` from outside the
    host, then verify a released Seine client logs in, receives jobs, submits shares

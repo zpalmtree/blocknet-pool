@@ -593,14 +593,14 @@ else
 fi
 
 if [[ "${gateway_mode}" == "1" ]]; then
-  if [[ "${deploy_stratum}" == "1" && "${before_gateway_hash}" != "${after_gateway_hash}" ]]; then
-    if [[ "${restart_gateway}" == "1" ]]; then
-      echo "==> restarting ${gateway_service} (disconnects every miner once)"
-      ssh "${host}" "set -euo pipefail; sudo systemctl restart '${gateway_service}'"
-      wait_remote_service_active "${gateway_service}"
-    else
-      echo "==> note: the gateway binary changed; it keeps running the previous build until a deploy with --restart-gateway"
-    fi
+  # --restart-gateway always restarts: an earlier deploy may already have
+  # replaced the binary on disk while the gateway kept running the old one.
+  if [[ "${deploy_stratum}" == "1" && "${restart_gateway}" == "1" ]]; then
+    echo "==> restarting ${gateway_service} (disconnects every miner once)"
+    ssh "${host}" "set -euo pipefail; sudo systemctl restart '${gateway_service}'"
+    wait_remote_service_active "${gateway_service}"
+  elif [[ "${deploy_stratum}" == "1" && "${before_gateway_hash}" != "${after_gateway_hash}" ]]; then
+    echo "==> note: the gateway binary changed; it keeps running the previous build until a deploy with --restart-gateway"
   fi
   if [[ "${restart_stratum}" == "1" ]]; then
     stratum_service="$(handover_stratum_engine)"
