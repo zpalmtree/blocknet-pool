@@ -963,7 +963,9 @@ mod tests {
 
 #[cfg(not(feature = "loadtest-pow"))]
 fn share_hasher(retained_arenas: usize) -> Arc<dyn PowHasher> {
-    Arc::new(pool_common::pow::ConsensusPowHasher::with_arena_limit(retained_arenas))
+    Arc::new(pool_common::pow::ConsensusPowHasher::with_arena_limit(
+        retained_arenas,
+    ))
 }
 
 /// Load-test builds only (`--features loadtest-pow`): every share proof
