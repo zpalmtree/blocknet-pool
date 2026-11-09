@@ -43,9 +43,9 @@ const WALLET_LOAD_WAIT_POLL: Duration = Duration::from_millis(250);
 /// broadcast to every connection leaves earlier jobs resolvable.
 const ASSIGNMENTS_PER_CONNECTION: usize = 8;
 const MIN_ACTIVE_ASSIGNMENTS: usize = 65_536;
-/// Assignments removed per job-state write-lock pass when retiring or
-/// pruning, so a fanout building under the same lock waits ~1 ms, not the
-/// whole cleanup.
+/// Assignments removed per shard write-lock pass when retiring or pruning,
+/// so job builds and submits on that shard wait ~1 ms, not the whole
+/// cleanup.
 const ASSIGNMENT_REMOVAL_BATCH: usize = 2_048;
 /// Pool-wide bound on refill assignments (`refill`), so refills cannot push
 /// other miners' jobs out under the active assignment cap.
@@ -1480,8 +1480,8 @@ impl JobManager {
         self.nonce_counter
             .store(random_nonce_slot(), Ordering::Relaxed);
 
-        // Publish before housekeeping. Every connection builds its next
-        // assignment from `state.current` under this lock, so trimming and
+        // Publish before housekeeping. Job builds read `state.current` under
+        // this lock (shared), so trimming and
         // pruning (tens of thousands of assignments, up to ~150 ms) must not
         // sit between a new tip and the miners' jobs. New assignments only
         // reference the current job, which both steps keep.
@@ -1499,8 +1499,8 @@ impl JobManager {
     }
 
     /// Keeps recent jobs bounded. Retiring jobs is cheap; their assignments
-    /// and the expired ones go in short batched lock passes so the job
-    /// fanout, which builds under the same lock, is not held up.
+    /// and the expired ones go in short per-shard batches so job builds and
+    /// submits on a shard are not held up.
     fn retire_old_templates(&self) {
         // Only the current job gets new assignments and trimming keeps it,
         // so none appear for the removed jobs after this.
@@ -2377,9 +2377,9 @@ fn template_content_expired(created_at: Instant, now: Instant) -> bool {
     now.saturating_duration_since(created_at) >= MAX_TEMPLATE_CONTENT_AGE
 }
 
-/// Connections per job-state write-lock acquisition when building a
-/// template's jobs in bulk; small enough that submits waiting on the lock
-/// are not held for long.
+/// Connections per job-state read-lock pass when building a template's jobs
+/// in bulk; each shard's write lock is held only for the chunk's connections
+/// in that shard.
 const MINER_JOB_BUILD_CHUNK: usize = 256;
 
 /// One connection's job request for `JobManager::build_miner_jobs`.
