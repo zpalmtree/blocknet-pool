@@ -7,6 +7,10 @@ edition.workspace = true
 name = "blocknet-pool-stratum"
 path = "src/main.rs"
 
+[features]
+# Load tests only (scripts/conn_loadtest.sh). Never for a real pool.
+loadtest-pow = ["pool-runtime/loadtest-pow"]
+
 [dependencies]
 anyhow.workspace = true
 tokio.workspace = true

@@ -3,6 +3,10 @@ name = "pool-runtime"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# Load tests only: skips share proof hashing. Never for a real pool.
+loadtest-pow = []
+
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true

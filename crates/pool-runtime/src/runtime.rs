@@ -18,7 +18,7 @@ use crate::store::PoolStore;
 use crate::stratum::StratumServer;
 use crate::telemetry::NamedTimedOperationTracker;
 use crate::validation::{ValidationEngine, ValidationStateStore, CANDIDATE_VALIDATION_WORKERS};
-use pool_common::pow::ConsensusPowHasher;
+use pool_common::pow::PowHasher;
 use pool_common::protocol::{address_network, validate_miner_address, AddressNetwork};
 
 const HASHRATE_WARMUP_WINDOW: Duration = Duration::from_secs(5 * 60);
@@ -96,7 +96,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     let validation = tokio::task::spawn_blocking(move || {
         Arc::new(ValidationEngine::new_with_state_store(
             validation_cfg,
-            Arc::new(ConsensusPowHasher::with_arena_limit(retained_arenas)),
+            share_hasher(retained_arenas),
             validation_store,
         ))
     })
@@ -960,3 +960,32 @@ mod tests {
         assert!(validate_pool_fee_destination_config(&cfg).is_ok());
     }
 }
+
+#[cfg(not(feature = "loadtest-pow"))]
+fn share_hasher(retained_arenas: usize) -> Arc<dyn PowHasher> {
+    Arc::new(pool_common::pow::ConsensusPowHasher::with_arena_limit(retained_arenas))
+}
+
+/// Load-test builds only (`--features loadtest-pow`): every share proof
+/// hashes to [`LOADTEST_SHARE_HASH`], so synthetic miners pass verification
+/// without the Argon2id work. Never enable this feature for a real pool.
+#[cfg(feature = "loadtest-pow")]
+fn share_hasher(_retained_arenas: usize) -> Arc<dyn PowHasher> {
+    struct LoadTestHasher;
+    impl PowHasher for LoadTestHasher {
+        fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+            Ok(LOADTEST_SHARE_HASH)
+        }
+    }
+    tracing::warn!("load-test build: share proofs are not checked");
+    Arc::new(LoadTestHasher)
+}
+
+/// Above `scripts/mock_daemon.py`'s network target (never a block) and below
+/// any share target.
+#[cfg(feature = "loadtest-pow")]
+const LOADTEST_SHARE_HASH: [u8; 32] = {
+    let mut hash = [0u8; 32];
+    hash[31] = 2;
+    hash
+};

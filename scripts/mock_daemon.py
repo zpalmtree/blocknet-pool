@@ -29,6 +29,11 @@ def parse_args() -> argparse.Namespace:
         default=15.0,
         help="Seconds between simulated blocks (0 keeps one static template).",
     )
+    parser.add_argument(
+        "--wallet-address",
+        default="",
+        help="Address served by /api/wallet/address (the pool's reward address).",
+    )
     return parser.parse_args()
 
 
@@ -59,7 +64,7 @@ class Chain:
         }
 
 
-def make_handler(chain: Chain):
+def make_handler(chain: Chain, wallet_address: str = ""):
     class Handler(BaseHTTPRequestHandler):
         server_version = "mock-daemon/1.0"
 
@@ -87,6 +92,8 @@ def make_handler(chain: Chain):
                         "syncing": False,
                     },
                 )
+            if path == "/api/wallet/address" and wallet_address:
+                return self._send_json(200, {"address": wallet_address, "view_only": False})
             if path == "/api/mining/blocktemplate":
                 return self._send_json(200, chain.template())
             if path.startswith("/api/block/"):
@@ -118,7 +125,7 @@ def make_handler(chain: Chain):
 def main() -> int:
     args = parse_args()
     chain = Chain(args.block_secs)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(chain))
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(chain, args.wallet_address))
     server.daemon_threads = True
     server.serve_forever()
     return 0
