@@ -126,5 +126,8 @@ for s in $(seq 0 $((shards - 1))); do
   shard_pids+=($!)
 done
 for pid in "${shard_pids[@]}"; do wait "$pid"; done
+# The engine's own job-fanout and submit histograms, before the next step resets the schema.
+psql "$postgres_url" -At -c "select convert_from(value, 'UTF8') from meta where key = 'live_runtime_snapshot_v1'" \
+  >"$out/runtime_snapshot.json" 2>/dev/null || true
 python3 "$SCRIPT_DIR/pool_conn_load.py" --merge "$out"/shard-*.json >"$out/summary.json"
 cat "$out/summary.json"
