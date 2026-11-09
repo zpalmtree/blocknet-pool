@@ -914,6 +914,37 @@ async fn resolve_expected_address_network(
     }
 }
 
+#[cfg(not(feature = "loadtest-pow"))]
+fn share_hasher(retained_arenas: usize) -> Arc<dyn PowHasher> {
+    Arc::new(pool_common::pow::ConsensusPowHasher::with_arena_limit(
+        retained_arenas,
+    ))
+}
+
+/// Load-test builds only (`--features loadtest-pow`): every share proof
+/// hashes to [`LOADTEST_SHARE_HASH`], so synthetic miners pass verification
+/// without the Argon2id work. Never enable this feature for a real pool.
+#[cfg(feature = "loadtest-pow")]
+fn share_hasher(_retained_arenas: usize) -> Arc<dyn PowHasher> {
+    struct LoadTestHasher;
+    impl PowHasher for LoadTestHasher {
+        fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+            Ok(LOADTEST_SHARE_HASH)
+        }
+    }
+    tracing::warn!("load-test build: share proofs are not checked");
+    Arc::new(LoadTestHasher)
+}
+
+/// Above `scripts/mock_daemon.py`'s network target (never a block) and below
+/// any share target.
+#[cfg(feature = "loadtest-pow")]
+const LOADTEST_SHARE_HASH: [u8; 32] = {
+    let mut hash = [0u8; 32];
+    hash[31] = 2;
+    hash
+};
+
 #[cfg(test)]
 mod tests {
     use super::validate_pool_fee_destination_config;
@@ -960,34 +991,3 @@ mod tests {
         assert!(validate_pool_fee_destination_config(&cfg).is_ok());
     }
 }
-
-#[cfg(not(feature = "loadtest-pow"))]
-fn share_hasher(retained_arenas: usize) -> Arc<dyn PowHasher> {
-    Arc::new(pool_common::pow::ConsensusPowHasher::with_arena_limit(
-        retained_arenas,
-    ))
-}
-
-/// Load-test builds only (`--features loadtest-pow`): every share proof
-/// hashes to [`LOADTEST_SHARE_HASH`], so synthetic miners pass verification
-/// without the Argon2id work. Never enable this feature for a real pool.
-#[cfg(feature = "loadtest-pow")]
-fn share_hasher(_retained_arenas: usize) -> Arc<dyn PowHasher> {
-    struct LoadTestHasher;
-    impl PowHasher for LoadTestHasher {
-        fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
-            Ok(LOADTEST_SHARE_HASH)
-        }
-    }
-    tracing::warn!("load-test build: share proofs are not checked");
-    Arc::new(LoadTestHasher)
-}
-
-/// Above `scripts/mock_daemon.py`'s network target (never a block) and below
-/// any share target.
-#[cfg(feature = "loadtest-pow")]
-const LOADTEST_SHARE_HASH: [u8; 32] = {
-    let mut hash = [0u8; 32];
-    hash[31] = 2;
-    hash
-};
