@@ -17,7 +17,7 @@ use crate::config::{Config, CANDIDATE_SUBMIT_QUEUE_SIZE};
 use crate::dev_fee::is_seine_dev_fee_address;
 use crate::engine::Job;
 use crate::engine::{
-    canonical_share_reject_reason, is_retryable_reject_reason, PoolEngine, SubmitAck,
+    canonical_share_reject_reason, is_retryable_reject_reason, JobTick, PoolEngine, SubmitAck,
     SubmitMetadata, SubmitQueueRoute,
 };
 use crate::jobs::{AssignmentRangeMode, JobManager, MinerJob, MinerJobRequest};
@@ -1165,18 +1165,19 @@ impl StratumServer {
         let mut requests = Vec::with_capacity(chunk.len());
         let mut targets = Vec::with_capacity(chunk.len());
         let mut hints = Vec::new();
-        for (conn_id, conn) in chunk {
-            if let Some(message) = self.engine.faraday_upgrade_required(conn_id) {
-                // Its next login gets the same message as an error.
-                conn.kick(message.to_string());
-                continue;
-            }
+        let conn_ids: Vec<&str> = chunk.iter().map(|(conn_id, _)| conn_id.as_str()).collect();
+        let ticks = self.engine.job_tick(&conn_ids);
+        for ((conn_id, conn), tick) in chunk.iter().zip(ticks) {
             let current = conn.difficulty.load(Ordering::Relaxed);
             // In memory only; hints are persisted after the jobs go out.
-            let (next, hint) = self
-                .engine
-                .retarget_on_job(conn_id)
-                .unwrap_or((current, None));
+            let (next, hint) = match tick {
+                JobTick::UpgradeRequired(message) => {
+                    // Its next login gets the same message as an error.
+                    conn.kick(message.to_string());
+                    continue;
+                }
+                JobTick::Retarget(retarget) => retarget.unwrap_or((current, None)),
+            };
             hints.extend(hint);
             if next != current {
                 conn.difficulty.store(next, Ordering::Relaxed);

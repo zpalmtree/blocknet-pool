@@ -623,6 +623,17 @@ impl Drop for EarlyBlockSubmit<'_> {
     }
 }
 
+/// What a job tick does with one connection (`Engine::job_tick`).
+#[derive(Debug)]
+pub(crate) enum JobTick {
+    /// Close the connection with this message: it cannot mine the current
+    /// job.
+    UpgradeRequired(&'static str),
+    /// The connection's next difficulty and a vardiff hint when one is due;
+    /// `None` when it has no session.
+    Retarget(Option<(u64, Option<VardiffHint>)>),
+}
+
 /// A connection's difficulty to persist so a reconnect resumes near it.
 #[derive(Debug, Clone)]
 pub(crate) struct VardiffHint {
@@ -2817,27 +2828,61 @@ impl PoolEngine {
 
     /// The in-memory half of a job-tick retarget: the connection's next
     /// difficulty, plus a vardiff hint when one is due. It never touches the
-    /// store, so a job can be sent before the hint is persisted.
+    /// store, so a job can be sent before the hint is persisted. The job
+    /// fanout uses `job_tick`.
+    #[cfg(test)]
     pub(crate) fn retarget_on_job(&self, conn_id: &str) -> Option<(u64, Option<VardiffHint>)> {
+        let cfg = self.cfg();
         let era = self.difficulty_era();
-        if !self.cfg().enable_vardiff {
+        let mut sessions = self.sessions.lock();
+        let session = sessions.get_mut(conn_id)?;
+        Some(self.retarget_session_on_job(&cfg, &era, session, Instant::now()))
+    }
+
+    /// A job tick for a chunk of connections under one sessions lock: each
+    /// one either cannot mine the current job (`faraday_upgrade_required`)
+    /// or is retargeted as `retarget_on_job` does.
+    pub(crate) fn job_tick(&self, conn_ids: &[&str]) -> Vec<JobTick> {
+        let cfg = self.cfg();
+        let era = self.difficulty_era();
+        let now = Instant::now();
+        let mut sessions = self.sessions.lock();
+        conn_ids
+            .iter()
+            .map(|conn_id| {
+                let session = sessions.get_mut(*conn_id);
+                if era.faraday
+                    && !session
+                        .as_ref()
+                        .is_some_and(|session| session.capabilities.contains(CAP_POW_BLAKE2B_V1))
+                {
+                    return JobTick::UpgradeRequired(FARADAY_UPGRADE_MESSAGE);
+                }
+                JobTick::Retarget(
+                    session.map(|session| self.retarget_session_on_job(&cfg, &era, session, now)),
+                )
+            })
+            .collect()
+    }
+
+    fn retarget_session_on_job(
+        &self,
+        cfg: &Config,
+        era: &DifficultyEra,
+        session: &mut MinerSession,
+        now: Instant,
+    ) -> (u64, Option<VardiffHint>) {
+        if !cfg.enable_vardiff {
             if era.faraday {
-                let mut sessions = self.sessions.lock();
-                let session = sessions.get_mut(conn_id)?;
-                admit_faraday_session(&era, session);
-                return Some((session.difficulty, None));
+                admit_faraday_session(era, session);
             }
-            return self
-                .session_difficulty(conn_id)
-                .map(|difficulty| (difficulty, None));
+            return (session.difficulty, None);
         }
 
         let mut hint_to_write: Option<VardiffHint> = None;
-        let mut sessions = self.sessions.lock();
-        let session = sessions.get_mut(conn_id)?;
         let (min_diff, max_diff) = (era.min, era.max);
         if era.faraday {
-            admit_faraday_session(&era, session);
+            admit_faraday_session(era, session);
         } else {
             session.difficulty = session.difficulty.clamp(min_diff, max_diff);
         }
@@ -2845,9 +2890,8 @@ impl PoolEngine {
         // Keep dev-fee sessions on submit-only retargeting so their long idle
         // periods do not collapse difficulty between the brief fee windows.
         if !is_seine_dev_fee_address(&session.address) {
-            let now = Instant::now();
-            let target_interval = vardiff_target_interval_seconds(&self.cfg());
-            let tolerance = self.cfg().vardiff_tolerance.clamp(0.01, 0.95);
+            let target_interval = vardiff_target_interval_seconds(cfg);
+            let tolerance = cfg.vardiff_tolerance.clamp(0.01, 0.95);
             // Idle is measured from the last share of any kind, including one
             // the pool was too busy to process: that miner is not idle.
             if let Some(last) = session.last_share_at {
@@ -2863,12 +2907,11 @@ impl PoolEngine {
                     if next_diff != session.difficulty
                         && vardiff_change_is_material(session.difficulty, next_diff)
                     {
-                        let retarget_interval =
-                            vardiff_retarget_interval_for_direction(&self.cfg(), false);
+                        let retarget_interval = vardiff_retarget_interval_for_direction(cfg, false);
                         let can_retarget = session
                             .last_difficulty_adjustment
                             .is_none_or(|last| now.duration_since(last) >= retarget_interval);
-                        if can_retarget && self.vardiff_downward_blocked(session, now) {
+                        if can_retarget && self.vardiff_downward_blocked(cfg, session, now) {
                             self.admission.note_vardiff_downward_held();
                         } else if can_retarget {
                             let miner = compact_address(&session.address);
@@ -2900,7 +2943,7 @@ impl PoolEngine {
             }
         }
 
-        Some((session.difficulty, hint_to_write))
+        (session.difficulty, hint_to_write)
     }
 
     /// Persists a vardiff hint from `retarget_on_job`. Blocking store call.
@@ -3029,14 +3072,11 @@ impl PoolEngine {
     /// regular submit lane was saturated recently, or this session's own
     /// submits were recently answered unprocessed. Either way the missing
     /// accepted shares say nothing about the miner's hashrate.
-    fn vardiff_downward_blocked(&self, session: &MinerSession, now: Instant) -> bool {
+    fn vardiff_downward_blocked(&self, cfg: &Config, session: &MinerSession, now: Instant) -> bool {
         if self.admission.pressure_active(now) {
             return true;
         }
-        let window = self
-            .cfg()
-            .vardiff_window_duration()
-            .max(Duration::from_secs(30));
+        let window = cfg.vardiff_window_duration().max(Duration::from_secs(30));
         session
             .last_unprocessed_at
             .is_some_and(|at| now.saturating_duration_since(at) < window)
@@ -3162,7 +3202,7 @@ impl PoolEngine {
             if unprocessed {
                 return false;
             }
-            if self.vardiff_downward_blocked(session, now) {
+            if self.vardiff_downward_blocked(&self.cfg(), session, now) {
                 self.admission.note_vardiff_downward_held();
                 return false;
             }
@@ -6644,6 +6684,48 @@ mod tests {
             Arc::new(InMemoryNode::default()),
         );
         (engine, store, jobs)
+    }
+
+    #[test]
+    fn job_tick_matches_the_per_connection_upgrade_check_and_retarget() {
+        let (engine, _, jobs) = faraday_vardiff_engine(cfg(), faraday::FARADAY_HEIGHT - 1);
+        engine
+            .login("old", test_miner_address(), "old", 2, submit_hash_cap())
+            .expect("pre-fork login without BLAKE2b");
+        engine
+            .login("new", test_miner_address(), "new", 2, blake2b_miner_caps())
+            .expect("pre-fork login with BLAKE2b");
+        let summarize = |ticks: Vec<JobTick>| -> Vec<Option<Option<u64>>> {
+            ticks
+                .into_iter()
+                .map(|tick| match tick {
+                    JobTick::UpgradeRequired(message) => {
+                        assert_eq!(message, FARADAY_UPGRADE_MESSAGE);
+                        None
+                    }
+                    JobTick::Retarget(retarget) => Some(retarget.map(|(difficulty, _)| difficulty)),
+                })
+                .collect()
+        };
+        let ids = ["old", "new", "missing"];
+        let before = summarize(engine.job_tick(&ids));
+        assert_eq!(
+            before,
+            ids.iter()
+                .map(|id| Some(engine.session_difficulty(id)))
+                .collect::<Vec<_>>()
+        );
+
+        jobs.set_current_height(faraday::FARADAY_HEIGHT);
+        let after = summarize(engine.job_tick(&ids));
+        for (id, tick) in ids.iter().zip(&after) {
+            assert_eq!(
+                tick.is_none(),
+                engine.faraday_upgrade_required(id).is_some(),
+                "{id}"
+            );
+        }
+        assert_eq!(after[1], Some(engine.session_difficulty("new")));
     }
 
     #[test]
