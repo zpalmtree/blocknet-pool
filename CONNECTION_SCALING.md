@@ -46,25 +46,66 @@ reached every connection; one share in ~234,000 was rejected (stale).
 
 - **Nothing breaks up to 100k connections on one host.** Logins, job delivery
   and share acceptance all hold; memory is ~37 KB per connection.
-- **Job fanout is serialized by the job-state write lock.** Writing to the
-  gateway takes ~0.2 ms; nearly all the time is `build_miner_jobs`, whose 16
-  threads each install 256 assignments under `JobManager.state.write()`, so
-  installs run one at a time at ~3-5 µs each (rising with table size:
-  3.0 µs at 30k, 4.8 µs at 100k).
+- **Job fanout was serialized by the job-state write lock.** Writing to the
+  gateway takes ~0.2 ms; nearly all the time was `build_miner_jobs`, whose 16
+  threads each installed 256 assignments under `JobManager.state.write()`, so
+  installs ran one at a time at ~3-5 µs each (rising with table size). Fixed
+  below by sharding the assignments.
 - **The cost of slow fanout is small.** With blocks minutes apart, even 1 s
-  of fanout wastes ~0.25% of hashing on the previous job. The visible effect
-  is submit acks waiting behind the lock during each fanout (p99 7 ms at 15k,
-  384 ms at 100k). Miners lose nothing from a slow ack.
+  of fanout wastes ~0.25% of hashing on the previous job.
+- **The client-side columns are bounded by the load generator.** Each Python
+  shard reads ~5,500 connections; during a fanout it reads that many job
+  lines before the next share reply, so "Last connection gets job" and
+  "Submit ack p99" mostly measure the generator. The engine's own histograms
+  (below) are the pool's numbers. An earlier version of this file attributed
+  the client ack tail to the lock; the engine-side ack p99 at 100k was
+  ≤250 ms, not the 384 ms measured by the client.
 - **The gateway is not close to a limit** (21% of a core at 100k after the
-  per-event gauge fix, 91086d2).
+  per-event gauge fix, 91086d2; ≤0.6 ms queue wait).
+
+## Sharded assignments (2026-11-08, later the same day)
+
+Assignments and their indexes moved out of the job-state lock into 64
+shards keyed by connection (assignment IDs carry their shard); job builds
+take the job-state read lock and one shard's write lock at a time. Then the
+fanout's per-connection vardiff step was batched under one sessions lock
+per chunk (`Engine::job_tick`). Same host type and method; evidence in
+`perf-results/2026-11-08/conn-loadtest-sharded/`.
+
+Engine-side, from the runtime snapshot histograms (means; p99 is the
+histogram bucket bound):
+
+| Connections | Build | Template→written mean | Build per 256-conn chunk | Retarget per chunk | Engine submit ack p99 |
+|---|---|---|---|---|---|
+| 30,000 | single lock | 91 ms | 17.2 ms | 2.2 ms | ≤10 ms |
+| 30,000 | sharded | 62 ms | 1.6 ms | 6.1 ms | ≤10 ms |
+| 65,000 | single lock | 252 ms | 28.0 ms | 1.5 ms | ≤100 ms |
+| 65,000 | sharded | 114 ms | 2.4 ms | 6.5 ms | ≤25 ms |
+| 65,000 | sharded + batched retarget | 109 ms | 2.9 ms | 1.1 ms | ≤25 ms |
+| 100,000 | single lock | 480 ms | 35.9 ms | 1.2 ms | ≤250 ms |
+| 100,000 | sharded | 174 ms | 2.8 ms | 6.2 ms | ≤25 ms |
+| 100,000 | sharded + batched retarget | 167 ms | 3.6 ms | 1.2 ms | ≤50 ms |
+
+Every step: all connections logged in and received every job, no shares
+rejected, no disconnects. Gateway and engine CPU and memory were unchanged.
+
+- Fanout is 2-3x faster at 65k-100k and no longer grows with lock
+  contention; submit acks no longer queue behind it (engine ack p99 ≤25-50 ms
+  at 100k, from ≤250 ms).
+- With the lock gone, the per-connection sessions-lock retarget showed up
+  (6 ms per chunk); batching it cut that to ~1 ms, a small end-to-end gain.
+  The rest of each chunk is building and queueing the job lines, which
+  already runs in parallel.
+- In-process, `fanout_bench` (jobs.rs, ignored) shows the same: at 100k
+  connections and 16 threads, a submit lookup during fanout waited 4-7 ms
+  (p50) and up to 300 ms before, 3 µs (p50) and ~1-2 ms (p99) after.
 
 ## Next levers, if needed
 
-1. Build assignments outside the write lock (generate IDs, ranges and targets
-   per chunk without the lock, then insert the batch under it), or shard the
-   assignment table by connection, so fanout uses the 16 threads it already
-   has. This should cut fanout and the ack tail several-fold.
-2. Raise `stratum_max_connections` / `gateway_max_miners` past 65,536 only
-   with (1) in place; the ack tail grows faster than linearly.
-3. Several engines behind the gateway would split the lock entirely, but the
-   numbers above say it is not needed below ~100k connections.
+1. Raise `stratum_max_connections` / `gateway_max_miners` past 65,536 if
+   real growth calls for it; one host handled 100k with fanout under 0.2 s
+   mean in the engine.
+2. Several engines behind the gateway would split the remaining per-engine
+   work, but the numbers above say it is not needed below ~100k connections.
+3. A better load generator (compiled, or more processes) is needed before
+   client-side delivery numbers mean much above ~30k connections.
