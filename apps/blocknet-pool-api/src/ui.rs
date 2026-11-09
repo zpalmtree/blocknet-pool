@@ -371,8 +371,16 @@ frame-ancestors 'none'";
 /// Defense-in-depth headers on every response (HTML, assets, and JSON).
 /// Values a handler already set are left alone.
 pub(crate) async fn apply_security_headers(req: Request, next: Next) -> Response {
+    let api_request = is_api_request_path(req.uri().path());
     let mut response = next.run(req).await;
     let headers = response.headers_mut();
+    if api_request {
+        // Crawlers may fetch the public JSON while rendering the pages, but the
+        // JSON itself never belongs in a search index.
+        headers
+            .entry(HeaderName::from_static("x-robots-tag"))
+            .or_insert(HeaderValue::from_static("noindex"));
+    }
     for (name, value) in [
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::REFERRER_POLICY, "strict-origin-when-cross-origin"),
@@ -407,6 +415,29 @@ const SITEMAP_PATHS: &[&str] = &[
     "/checkpoints",
 ];
 
+/// Read-only JSON the public pages load in the browser. Crawlers render those
+/// pages with JavaScript, so these stay fetchable while the rest of the API is
+/// kept out of robots. Each entry is a path prefix.
+const CRAWLABLE_API_PATHS: &[&str] = &[
+    "/api/info",
+    "/api/checkpoints",
+    "/api/stats",
+    "/api/luck",
+    "/api/blocks",
+    "/api/payouts/recent",
+];
+
+pub(crate) fn robots_txt(base_url: &str) -> String {
+    let mut out = String::from("User-agent: *\nAllow: /\n");
+    for path in CRAWLABLE_API_PATHS {
+        out.push_str(&format!("Allow: {path}\n"));
+    }
+    out.push_str(&format!(
+        "Disallow: /api/\n\nSitemap: {base_url}/sitemap.xml\n"
+    ));
+    out
+}
+
 pub(crate) async fn handle_robots_txt(State(state): State<ApiState>) -> impl IntoResponse {
     let base_url = state.public_base_url();
     (
@@ -414,7 +445,7 @@ pub(crate) async fn handle_robots_txt(State(state): State<ApiState>) -> impl Int
             (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
             (header::CACHE_CONTROL, "public, max-age=3600"),
         ],
-        format!("User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: {base_url}/sitemap.xml\n"),
+        robots_txt(&base_url),
     )
 }
 
@@ -954,6 +985,44 @@ mod tests {
             )
             .unwrap();
         assert_eq!(framed.headers()[header::X_FRAME_OPTIONS], "SAMEORIGIN");
+        assert!(framed.headers().get("x-robots-tag").is_none());
+        let api = runtime
+            .block_on(
+                Router::new()
+                    .route("/api/stats", get(|| async { "{}" }))
+                    .layer(axum::middleware::from_fn(apply_security_headers))
+                    .oneshot(
+                        Request::builder()
+                            .uri("/api/stats?x=1")
+                            .body(Body::empty())
+                            .unwrap(),
+                    ),
+            )
+            .unwrap();
+        assert_eq!(api.headers()["x-robots-tag"], "noindex");
+    }
+
+    #[test]
+    fn robots_allow_the_json_public_pages_render_with_and_block_the_rest() {
+        let robots = robots_txt("https://bntpool.com");
+        assert!(robots.starts_with("User-agent: *\nAllow: /\n"));
+        assert!(robots.contains("\nDisallow: /api/\n"));
+        assert!(robots.ends_with("\nSitemap: https://bntpool.com/sitemap.xml\n"));
+        for path in CRAWLABLE_API_PATHS {
+            assert!(path.starts_with("/api/"), "{path}");
+            assert!(robots.contains(&format!("\nAllow: {path}\n")), "{path}");
+        }
+        for private in [
+            "/api/admin",
+            "/api/miner",
+            "/api/miner-settings",
+            "/api/alerts",
+        ] {
+            assert!(
+                !CRAWLABLE_API_PATHS.iter().any(|p| private.starts_with(p)),
+                "{private} must stay disallowed"
+            );
+        }
     }
 
     #[test]
