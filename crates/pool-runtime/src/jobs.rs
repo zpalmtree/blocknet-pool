@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast;
@@ -50,6 +50,10 @@ const ASSIGNMENT_REMOVAL_BATCH: usize = 2_048;
 /// Pool-wide bound on refill assignments (`refill`), so refills cannot push
 /// other miners' jobs out under the active assignment cap.
 const REFILL_ASSIGNMENT_SHARE: usize = 4;
+/// Assignment table shards (a power of two, at most 256). All of a
+/// connection's assignments live in the shard its ID hashes to, so job
+/// builds for different connections run in parallel.
+const ASSIGNMENT_SHARDS: usize = 64;
 const MAX_ASSIGNMENT_AGE: Duration = Duration::from_secs(10 * 60);
 const SSE_RETRY_DELAY_MIN: Duration = Duration::from_millis(100);
 const SSE_RETRY_DELAY_MAX: Duration = Duration::from_secs(10);
@@ -170,6 +174,11 @@ pub struct JobManager {
     self_ref: std::sync::Weak<JobManager>,
 
     state: RwLock<JobState>,
+    /// Miner assignments, sharded by connection (`shard_for_conn`). Lock
+    /// order: `state` before a shard, and at most one shard at a time.
+    assignment_shards: Box<[RwLock<AssignmentTable>]>,
+    /// Refill assignments held across all shards.
+    refill_assignments: Arc<AtomicUsize>,
     /// Height of `state.current` (0 before the first job), readable without
     /// the state lock from vardiff paths that hold the engine's session lock.
     current_height: AtomicU64,
@@ -197,6 +206,12 @@ struct JobState {
     jobs: HashMap<String, Job>,
     job_meta: HashMap<String, JobTemplateMeta>,
     order: VecDeque<String>,
+    last_assignment_prune: Option<Instant>,
+}
+
+/// One shard of the miner assignments and their indexes.
+#[derive(Debug, Default)]
+struct AssignmentTable {
     assignments: HashMap<String, MinerAssignment>,
     assignment_order: VecDeque<String>,
     active_assignments_by_template: HashMap<String, HashMap<String, String>>,
@@ -204,10 +219,9 @@ struct JobState {
     /// They stay valid beside the connection's active assignment and are
     /// superseded with it.
     refill_assignments_by_template: HashMap<String, HashMap<String, Vec<String>>>,
-    /// Refill assignments held in `assignments`, superseded or not.
-    refill_assignment_count: usize,
+    /// Refill assignments held in every shard, superseded or not (shared).
+    refill_assignment_count: Arc<AtomicUsize>,
     assignment_ids_by_template: HashMap<String, HashSet<String>>,
-    last_assignment_prune: Option<Instant>,
 }
 
 #[derive(Debug, Default)]
@@ -407,13 +421,79 @@ impl JobManager {
             .max(MIN_ACTIVE_ASSIGNMENTS)
     }
 
+    /// Live assignments one shard keeps before its oldest are evicted.
+    fn shard_assignment_cap(&self) -> usize {
+        self.max_active_assignments()
+            .div_ceil(self.assignment_shards.len())
+    }
+
+    fn shard_for_conn(&self, conn_id: &str) -> usize {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        conn_id.hash(&mut hasher);
+        hasher.finish() as usize & (self.assignment_shards.len() - 1)
+    }
+
+    /// The shard named by an assignment ID's first byte (see
+    /// `generate_assignment_id`); shard 0 for IDs this pool did not issue.
+    fn shard_for_id(&self, assignment_id: &str) -> usize {
+        assignment_id
+            .get(..2)
+            .and_then(|prefix| u8::from_str_radix(prefix, 16).ok())
+            .map_or(0, |byte| byte as usize & (self.assignment_shards.len() - 1))
+    }
+
+    fn table_for_id(&self, assignment_id: &str) -> &RwLock<AssignmentTable> {
+        &self.assignment_shards[self.shard_for_id(assignment_id)]
+    }
+
+    /// Assignments held in every shard.
+    fn assignment_count(&self) -> usize {
+        self.assignment_shards
+            .iter()
+            .map(|table| table.read().assignments.len())
+            .sum()
+    }
+
+    /// A job-state read guard whose current job `jobs` and `job_meta` hold,
+    /// or `None` without a current job. Building under it keeps a template
+    /// transition, which takes the write lock, from retiring the job while
+    /// its assignments are inserted.
+    fn state_for_build(&self) -> Option<RwLockReadGuard<'_, JobState>> {
+        let state = self.state.read();
+        let job = state.current.as_ref()?;
+        if state.jobs.contains_key(&job.id) && state.job_meta.contains_key(&job.id) {
+            return Some(state);
+        }
+        drop(state);
+        {
+            let mut state = self.state.write();
+            if let Some(job) = state.current.clone() {
+                retain_current_job_locked(&mut state, &job, Instant::now());
+            }
+        }
+        let state = self.state.read();
+        state.current.as_ref()?;
+        Some(state)
+    }
+
     pub fn new(node: Arc<NodeClient>, cfg: Config) -> Arc<Self> {
         let (tx, _) = broadcast::channel::<Job>(64);
+        let refill_assignments = Arc::new(AtomicUsize::new(0));
         Arc::new_cyclic(|self_ref| Self {
             self_ref: self_ref.clone(),
             node,
             cfg,
             state: RwLock::new(JobState::default()),
+            assignment_shards: (0..ASSIGNMENT_SHARDS)
+                .map(|_| {
+                    RwLock::new(AssignmentTable {
+                        refill_assignment_count: Arc::clone(&refill_assignments),
+                        ..AssignmentTable::default()
+                    })
+                })
+                .collect(),
+            refill_assignments,
             current_height: AtomicU64::new(0),
             nonce_counter: AtomicU64::new(random_nonce_slot()),
             refresh: RefreshCoordinator::default(),
@@ -713,39 +793,48 @@ impl JobManager {
     }
 
     /// Builds one job per request against the current template, as
-    /// `build_miner_job_with_range_mode` does for one. The job-state write
-    /// lock is taken once per chunk of requests rather than once per
-    /// connection, and the template's hex fields are encoded once, so a
-    /// template broadcast to thousands of connections stays cheap.
+    /// `build_miner_job_with_range_mode` does for one. Each chunk of
+    /// requests is installed under the job-state read lock, one assignment
+    /// shard at a time, so concurrent chunks and submit lookups only wait on
+    /// each other within a shard; the template's hex fields are encoded once.
     pub(crate) fn build_miner_jobs(&self, requests: &[MinerJobRequest]) -> Vec<Option<MinerJob>> {
         let stale_submit_grace = self.cfg.stale_submit_grace_duration();
+        let shard_cap = self.shard_assignment_cap();
         let mut built: Vec<Option<MinerJob>> = Vec::with_capacity(requests.len());
         let mut encoded: Option<(String, EncodedTemplate)> = None;
         let mut targets: HashMap<u64, String> = HashMap::new();
         for chunk in requests.chunks(MINER_JOB_BUILD_CHUNK) {
-            let mut installed = Vec::with_capacity(chunk.len());
+            let mut by_shard: Vec<(usize, usize)> = chunk
+                .iter()
+                .enumerate()
+                .map(|(idx, request)| (self.shard_for_conn(&request.conn_id), idx))
+                .collect();
+            by_shard.sort_unstable();
+            let mut installed: Vec<Option<InstalledAssignment>> =
+                std::iter::repeat_with(|| None).take(chunk.len()).collect();
             let job = {
-                let mut state = self.state.write();
-                // Select the current job under the same write lock used to install the
-                // assignments. This linearizes assignment creation with template transitions so
-                // a transition cannot prune first and then have stale work inserted behind it.
-                let Some(job) = state.current.clone() else {
+                let Some(state) = self.state_for_build() else {
                     built.extend(chunk.iter().map(|_| None));
                     continue;
                 };
+                let job = state.current.as_ref().expect("state_for_build has a job");
                 let now = Instant::now();
-                retain_current_job_locked(&mut state, &job, now);
-                for request in chunk {
-                    installed.push(self.install_assignment_locked(
-                        &mut state,
-                        &job,
-                        request,
-                        stale_submit_grace,
-                        now,
-                    ));
+                for run in by_shard.chunk_by(|a, b| a.0 == b.0) {
+                    let shard = run[0].0;
+                    let mut table = self.assignment_shards[shard].write();
+                    for &(_, idx) in run {
+                        installed[idx] = self.install_assignment_locked(
+                            &mut table,
+                            shard,
+                            job,
+                            &chunk[idx],
+                            stale_submit_grace,
+                            now,
+                        );
+                    }
+                    evict_assignments_over_cap_locked(&mut table, shard_cap);
                 }
-                evict_assignments_over_cap_locked(&mut state, self.max_active_assignments());
-                job
+                job.clone()
             };
             if encoded.as_ref().is_none_or(|(id, _)| *id != job.id) {
                 encoded = Some((job.id.clone(), EncodedTemplate::new(&job)));
@@ -776,11 +865,12 @@ impl JobManager {
         built
     }
 
-    /// Installs one connection's assignment for `job` (the current job) and
-    /// supersedes the connection's previous assignment for it.
+    /// Installs one connection's assignment for `job` (the current job) in
+    /// its shard and supersedes the connection's previous assignment for it.
     fn install_assignment_locked(
         &self,
-        state: &mut JobState,
+        state: &mut AssignmentTable,
+        shard: usize,
         job: &Job,
         request: &MinerJobRequest,
         stale_submit_grace: Duration,
@@ -791,7 +881,7 @@ impl JobManager {
             return None;
         }
         let share_difficulty = request.share_difficulty.max(1);
-        let assignment_id = generate_job_id();
+        let assignment_id = generate_assignment_id(shard);
         let active_assignment_id = state
             .active_assignments_by_template
             .get(&job.id)
@@ -864,10 +954,12 @@ impl JobManager {
         max_live: usize,
     ) -> Result<MinerJob, RefillError> {
         let stale_submit_grace = self.cfg.stale_submit_grace_duration();
-        let mut state = self.state.write();
-        let Some(job) = state.current.as_ref() else {
+        let job_state = self.state.read();
+        let Some(job) = job_state.current.as_ref() else {
             return Err(RefillError::StaleJob);
         };
+        let shard = self.shard_for_conn(conn_id);
+        let mut state = self.assignment_shards[shard].write();
         let Some(source) = state.assignments.get(job_id) else {
             return Err(RefillError::StaleJob);
         };
@@ -894,7 +986,7 @@ impl JobManager {
             .and_then(|by_connection| by_connection.get(conn_id))
             .map_or(0, Vec::len);
         if active + refills >= max_live
-            || state.refill_assignment_count
+            || self.refill_assignments.load(Ordering::Relaxed)
                 >= self.max_active_assignments() / REFILL_ASSIGNMENT_SHARE
         {
             return Err(RefillError::LimitReached);
@@ -902,7 +994,7 @@ impl JobManager {
 
         let now = Instant::now();
         let (nonce_start, nonce_end) = self.allocate_nonce_range(height);
-        let assignment_id = generate_job_id();
+        let assignment_id = generate_assignment_id(shard);
         insert_assignment_locked(
             &mut state,
             assignment_id.clone(),
@@ -919,8 +1011,8 @@ impl JobManager {
                 refill: true,
             },
         );
-        evict_assignments_over_cap_locked(&mut state, self.max_active_assignments());
-        let job = state.current.as_ref().expect("current job checked above");
+        evict_assignments_over_cap_locked(&mut state, self.shard_assignment_cap());
+        drop(state);
         let template = EncodedTemplate::new(job);
         Ok(MinerJob {
             job_id: assignment_id,
@@ -1065,7 +1157,7 @@ impl JobManager {
         if removed > 0 {
             tracing::debug!(
                 assignments_removed = removed,
-                active_assignments = self.state.read().assignments.len(),
+                active_assignments = self.assignment_count(),
                 "pruned expired miner assignments"
             );
         }
@@ -1343,13 +1435,8 @@ impl JobManager {
                             .then(|| now + TEMPLATE_LIVENESS_PROBE_INTERVAL);
                     }
                 }
-                maybe_prune_assignments_locked(
-                    &mut state,
-                    now,
-                    false,
-                    self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
-                    self.cfg.stale_submit_grace_duration(),
-                );
+                drop(state);
+                self.prune_assignments_batched(false);
                 return;
             }
         }
@@ -1408,20 +1495,30 @@ impl JobManager {
             self.attach_template_block_in_background(job_id, template_id);
         }
 
-        // Keep recent jobs bounded. Retiring jobs is cheap; their assignments
-        // and the expired ones go in short batched lock passes so the job
-        // fanout, which builds under the same lock, is not held up.
-        let (removed_jobs, retired_assignments) = {
-            let mut state = self.state.write();
-            let removed_jobs = trim_recent_jobs_locked(&mut state);
-            let retired: Vec<String> = removed_jobs
-                .iter()
-                .filter_map(|template_id| state.assignment_ids_by_template.get(template_id))
-                .flat_map(|ids| ids.iter().cloned())
-                .collect();
-            (removed_jobs, retired)
-        };
-        let assignments_removed = self.remove_assignments_batched(&retired_assignments);
+        self.retire_old_templates();
+    }
+
+    /// Keeps recent jobs bounded. Retiring jobs is cheap; their assignments
+    /// and the expired ones go in short batched lock passes so the job
+    /// fanout, which builds under the same lock, is not held up.
+    fn retire_old_templates(&self) {
+        // Only the current job gets new assignments and trimming keeps it,
+        // so none appear for the removed jobs after this.
+        let removed_jobs = trim_recent_jobs_locked(&mut self.state.write());
+        let mut assignments_removed = 0;
+        if !removed_jobs.is_empty() {
+            for table in self.assignment_shards.iter() {
+                let retired: Vec<String> = {
+                    let table = table.read();
+                    removed_jobs
+                        .iter()
+                        .filter_map(|template_id| table.assignment_ids_by_template.get(template_id))
+                        .flat_map(|ids| ids.iter().cloned())
+                        .collect()
+                };
+                assignments_removed += remove_assignments_batched_in(table, &retired);
+            }
+        }
         if assignments_removed > 0 {
             tracing::info!(
                 removed_templates = removed_jobs.len(),
@@ -1466,14 +1563,26 @@ impl JobManager {
         }
     }
 
-    /// Removes expired assignments: found under a read lock, removed in
-    /// short write-lock batches. Returns how many were removed.
+    /// Removes expired assignments: found under each shard's read lock,
+    /// removed in short write-lock batches. Returns how many were removed.
     fn prune_assignments_batched(&self, force: bool) -> usize {
-        let now = Instant::now();
-        let max_age = self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE);
-        let stale_grace = self.cfg.stale_submit_grace_duration();
-        let expired = {
-            let state = self.state.read();
+        self.prune_assignments_at(
+            Instant::now(),
+            force,
+            self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
+            self.cfg.stale_submit_grace_duration(),
+        )
+    }
+
+    fn prune_assignments_at(
+        &self,
+        now: Instant,
+        force: bool,
+        max_age: Duration,
+        stale_grace: Duration,
+    ) -> usize {
+        let templates = {
+            let mut state = self.state.write();
             if !force
                 && state.last_assignment_prune.is_some_and(|last| {
                     now.saturating_duration_since(last) < ASSIGNMENT_PRUNE_INTERVAL
@@ -1481,16 +1590,34 @@ impl JobManager {
             {
                 return 0;
             }
-            collect_expired_assignments(&state, now, max_age, stale_grace)
+            state.last_assignment_prune = Some(now);
+            TemplateView::of(&state)
         };
-        self.state.write().last_assignment_prune = Some(now);
-        self.remove_assignments_batched(&expired)
+        self.assignment_shards
+            .iter()
+            .map(|table| {
+                let expired = collect_expired_assignments_for(
+                    &templates,
+                    &table.read(),
+                    now,
+                    max_age,
+                    stale_grace,
+                );
+                remove_assignments_batched_in(table, &expired)
+            })
+            .sum()
     }
 
+    #[cfg(test)]
     fn remove_assignments_batched(&self, assignment_ids: &[String]) -> usize {
-        assignment_ids
-            .chunks(ASSIGNMENT_REMOVAL_BATCH)
-            .map(|batch| remove_assignment_batch_locked(&mut self.state.write(), batch))
+        let mut by_shard: Vec<Vec<String>> = vec![Vec::new(); self.assignment_shards.len()];
+        for assignment_id in assignment_ids {
+            by_shard[self.shard_for_id(assignment_id)].push(assignment_id.clone());
+        }
+        self.assignment_shards
+            .iter()
+            .zip(by_shard)
+            .map(|(table, ids)| remove_assignments_batched_in(table, &ids))
             .sum()
     }
 
@@ -1789,13 +1916,14 @@ impl JobRepository for JobManager {
         submitted_at: Instant,
     ) -> std::result::Result<SubmitJobBinding, SubmitJobResolveError> {
         let state = self.state.read();
-        let assignment = match state.assignments.get(submitted_job_id) {
+        let table = self.table_for_id(submitted_job_id).read();
+        let assignment = match table.assignments.get(submitted_job_id) {
             Some(assignment) => assignment,
             None => {
                 tracing::info!(
                     submitted_job_id,
-                    active_assignments = state.assignments.len(),
-                    assignment_order_len = state.assignment_order.len(),
+                    shard_assignments = table.assignments.len(),
+                    shard_assignment_order_len = table.assignment_order.len(),
                     tracked_templates = state.jobs.len(),
                     current_template_job_id = state
                         .current
@@ -1953,6 +2081,16 @@ fn prev_hash_bytes(values: &[u64]) -> Option<[u8; 32]> {
 
 fn generate_job_id() -> String {
     let bytes: [u8; 8] = rand::random();
+    hex::encode(bytes)
+}
+
+/// A random assignment ID whose first byte's low bits name `shard`, so a
+/// submit finds its assignment's shard from the ID alone.
+fn generate_assignment_id(shard: usize) -> String {
+    const _: () = assert!(ASSIGNMENT_SHARDS.is_power_of_two() && ASSIGNMENT_SHARDS <= 256);
+    let mut bytes: [u8; 8] = rand::random();
+    let mask = (ASSIGNMENT_SHARDS - 1) as u8;
+    bytes[0] = (bytes[0] & !mask) | (shard as u8 & mask);
     hex::encode(bytes)
 }
 
@@ -2295,7 +2433,7 @@ fn retain_current_job_locked(state: &mut JobState, job: &Job, now: Instant) {
         });
 }
 
-fn evict_assignments_over_cap_locked(state: &mut JobState, cap: usize) {
+fn evict_assignments_over_cap_locked(state: &mut AssignmentTable, cap: usize) {
     let mut cap_evicted = 0usize;
     while state.assignments.len() > cap {
         if let Some(oldest) = state.assignment_order.pop_front() {
@@ -2309,20 +2447,22 @@ fn evict_assignments_over_cap_locked(state: &mut JobState, cap: usize) {
     if cap_evicted > 0 {
         tracing::info!(
             cap_evicted,
-            active_assignments = state.assignments.len(),
-            cap,
+            shard_assignments = state.assignments.len(),
+            shard_cap = cap,
             "evicted assignments due to active assignment cap"
         );
     }
 }
 
 fn insert_assignment_locked(
-    state: &mut JobState,
+    state: &mut AssignmentTable,
     assignment_id: String,
     assignment: MinerAssignment,
 ) {
     if assignment.refill {
-        state.refill_assignment_count += 1;
+        state
+            .refill_assignment_count
+            .fetch_add(1, Ordering::Relaxed);
         if assignment.superseded_at.is_none() {
             state
                 .refill_assignments_by_template
@@ -2352,7 +2492,7 @@ fn insert_assignment_locked(
 /// Supersedes the refill assignments `conn_id` holds for `template_job_id`,
 /// as its active assignment is when the connection gets a new job for it.
 fn supersede_refills_locked(
-    state: &mut JobState,
+    state: &mut AssignmentTable,
     template_job_id: &str,
     conn_id: &str,
     now: Instant,
@@ -2377,11 +2517,13 @@ fn supersede_refills_locked(
 }
 
 fn remove_refill_index_locked(
-    state: &mut JobState,
+    state: &mut AssignmentTable,
     assignment_id: &str,
     assignment: &MinerAssignment,
 ) {
-    state.refill_assignment_count = state.refill_assignment_count.saturating_sub(1);
+    state
+        .refill_assignment_count
+        .fetch_sub(1, Ordering::Relaxed);
     let Some(by_connection) = state
         .refill_assignments_by_template
         .get_mut(&assignment.template_job_id)
@@ -2401,7 +2543,7 @@ fn remove_refill_index_locked(
     }
 }
 
-fn remove_assignment_locked(state: &mut JobState, assignment_id: &str) -> bool {
+fn remove_assignment_locked(state: &mut AssignmentTable, assignment_id: &str) -> bool {
     let Some(assignment) = state.assignments.remove(assignment_id) else {
         return false;
     };
@@ -2447,7 +2589,7 @@ fn remove_assignment_locked(state: &mut JobState, assignment_id: &str) -> bool {
 }
 
 #[cfg(test)]
-fn remove_assignments_for_templates_locked(state: &mut JobState, template_ids: &[String]) {
+fn remove_assignments_for_templates_locked(state: &mut AssignmentTable, template_ids: &[String]) {
     let mut removed_assignment_ids = HashSet::new();
     for template_id in template_ids {
         if let Some(assignment_ids) = state.assignment_ids_by_template.remove(template_id) {
@@ -2457,7 +2599,9 @@ fn remove_assignments_for_templates_locked(state: &mut JobState, template_ids: &
                     .remove(&assignment_id)
                     .is_some_and(|assignment| assignment.refill)
                 {
-                    state.refill_assignment_count = state.refill_assignment_count.saturating_sub(1);
+                    state
+                        .refill_assignment_count
+                        .fetch_sub(1, Ordering::Relaxed);
                 }
                 removed_assignment_ids.insert(assignment_id);
             }
@@ -2472,93 +2616,76 @@ fn remove_assignments_for_templates_locked(state: &mut JobState, template_ids: &
     }
 }
 
-fn maybe_prune_assignments_locked(
-    state: &mut JobState,
-    now: Instant,
-    force: bool,
-    max_age: Duration,
-    stale_grace: Duration,
-) -> usize {
-    if !force
-        && state
-            .last_assignment_prune
-            .is_some_and(|last| now.saturating_duration_since(last) < ASSIGNMENT_PRUNE_INTERVAL)
-    {
-        return 0;
-    }
-    state.last_assignment_prune = Some(now);
-    let current_template_job_id = state.current.as_ref().map(|current| current.id.clone());
-    prune_expired_assignments_locked(
-        state,
-        now,
-        max_age,
-        stale_grace,
-        current_template_job_id.as_deref(),
-    )
+/// What pruning reads from the job state, copied so the assignment shards
+/// are scanned without holding the job-state lock.
+#[derive(Debug, Default)]
+struct TemplateView {
+    current: Option<String>,
+    /// Retained jobs other than the current one at its chain position.
+    same_position: HashSet<String>,
+    stale_since: HashMap<String, Instant>,
 }
 
+impl TemplateView {
+    fn of(state: &JobState) -> Self {
+        // Assignments for jobs still mining the current chain position stay
+        // resolvable for as long as their job is retained (content-only
+        // rotations must not age out real work mid-round).
+        let same_position = match state.current.as_ref() {
+            Some(current) => state
+                .jobs
+                .iter()
+                .filter(|(id, job)| {
+                    id.as_str() != current.id && job_matches_current_position(current, job)
+                })
+                .map(|(id, _)| id.clone())
+                .collect(),
+            None => HashSet::new(),
+        };
+        Self {
+            current: state.current.as_ref().map(|current| current.id.clone()),
+            same_position,
+            stale_since: state
+                .job_meta
+                .iter()
+                .filter_map(|(id, meta)| meta.stale_since.map(|since| (id.clone(), since)))
+                .collect(),
+        }
+    }
+}
+
+#[cfg(test)]
 fn prune_expired_assignments_locked(
-    state: &mut JobState,
+    templates: &TemplateView,
+    state: &mut AssignmentTable,
     now: Instant,
     max_age: Duration,
     stale_grace: Duration,
-    current_template_job_id: Option<&str>,
 ) -> usize {
-    let expired =
-        collect_expired_assignments_for(state, now, max_age, stale_grace, current_template_job_id);
+    let expired = collect_expired_assignments_for(templates, state, now, max_age, stale_grace);
     remove_assignment_batch_locked(state, &expired)
 }
 
-/// Assignments past their age and grace windows (see
-/// `prune_expired_assignments_locked`); read-only, so it can run under a
-/// read lock.
-fn collect_expired_assignments(
-    state: &JobState,
-    now: Instant,
-    max_age: Duration,
-    stale_grace: Duration,
-) -> Vec<String> {
-    let current_template_job_id = state.current.as_ref().map(|current| current.id.clone());
-    collect_expired_assignments_for(
-        state,
-        now,
-        max_age,
-        stale_grace,
-        current_template_job_id.as_deref(),
-    )
-}
-
+/// Assignments in one shard past their age and grace windows; read-only, so
+/// it can run under a read lock.
 fn collect_expired_assignments_for(
-    state: &JobState,
+    templates: &TemplateView,
+    state: &AssignmentTable,
     now: Instant,
     max_age: Duration,
     stale_grace: Duration,
-    current_template_job_id: Option<&str>,
 ) -> Vec<String> {
     if max_age.is_zero() {
         return Vec::new();
     }
-    // Assignments for jobs still mining the current chain position stay
-    // resolvable for as long as their job is retained (content-only
-    // rotations must not age out real work mid-round).
-    let same_position_templates: HashSet<String> = match state.current.as_ref() {
-        Some(current) => state
-            .jobs
-            .iter()
-            .filter(|(id, job)| {
-                id.as_str() != current.id && job_matches_current_position(current, job)
-            })
-            .map(|(id, _)| id.clone())
-            .collect(),
-        None => HashSet::new(),
-    };
-    let expired_assignment_ids = state
+    state
         .assignments
         .iter()
         .filter_map(|(assignment_id, assignment)| {
-            let retain = if current_template_job_id
-                .is_some_and(|current| assignment.template_job_id == current)
-                || same_position_templates.contains(&assignment.template_job_id)
+            let retain = if templates.current.as_deref() == Some(&assignment.template_job_id)
+                || templates
+                    .same_position
+                    .contains(&assignment.template_job_id)
             {
                 true
             } else {
@@ -2569,24 +2696,33 @@ fn collect_expired_assignments_for(
                         !grace.is_zero() && now.saturating_duration_since(superseded_at) <= grace
                     })
                     || (!stale_grace.is_zero()
-                        && state
-                            .job_meta
+                        && templates
+                            .stale_since
                             .get(&assignment.template_job_id)
-                            .and_then(|meta| meta.stale_since)
                             .is_some_and(|stale_since| {
-                                now.saturating_duration_since(stale_since) <= stale_grace
+                                now.saturating_duration_since(*stale_since) <= stale_grace
                             }))
             };
             (!retain).then(|| assignment_id.clone())
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
-    expired_assignment_ids
+/// Removes `assignment_ids` from one shard in short write-lock batches;
+/// returns how many were still present.
+fn remove_assignments_batched_in(
+    table: &RwLock<AssignmentTable>,
+    assignment_ids: &[String],
+) -> usize {
+    assignment_ids
+        .chunks(ASSIGNMENT_REMOVAL_BATCH)
+        .map(|batch| remove_assignment_batch_locked(&mut table.write(), batch))
+        .sum()
 }
 
 /// Removes a batch of assignments and their order entries; returns how
 /// many were still present.
-fn remove_assignment_batch_locked(state: &mut JobState, assignment_ids: &[String]) -> usize {
+fn remove_assignment_batch_locked(state: &mut AssignmentTable, assignment_ids: &[String]) -> usize {
     let mut removed = HashSet::with_capacity(assignment_ids.len());
     for assignment_id in assignment_ids {
         if remove_assignment_locked(state, assignment_id) {
@@ -2983,7 +3119,7 @@ mod tests {
         }
     }
 
-    fn assert_assignment_indexes(state: &JobState) {
+    fn assert_table_indexes(state: &AssignmentTable) {
         for (assignment_id, assignment) in &state.assignments {
             assert!(state
                 .assignment_ids_by_template
@@ -3006,10 +3142,6 @@ mod tests {
                 );
             }
         }
-        assert_eq!(
-            state.refill_assignment_count,
-            state.assignments.values().filter(|a| a.refill).count()
-        );
         for (template_id, by_connection) in &state.refill_assignments_by_template {
             for (connection_id, ids) in by_connection {
                 assert!(!ids.is_empty());
@@ -3035,6 +3167,70 @@ mod tests {
                 assert_eq!(&assignment.owner_conn_id, connection_id);
                 assert!(assignment.superseded_at.is_none());
             }
+        }
+    }
+
+    impl JobManager {
+        /// The shard holding `assignment_id`, for tests that set up or
+        /// inspect assignments directly.
+        fn table(&self, assignment_id: &str) -> parking_lot::RwLockWriteGuard<'_, AssignmentTable> {
+            self.table_for_id(assignment_id).write()
+        }
+
+        fn assignment(&self, assignment_id: &str) -> Option<MinerAssignment> {
+            self.table_for_id(assignment_id)
+                .read()
+                .assignments
+                .get(assignment_id)
+                .cloned()
+        }
+
+        /// Every assignment ID held for `template_id`, across shards.
+        fn template_assignment_ids(&self, template_id: &str) -> HashSet<String> {
+            self.assignment_shards
+                .iter()
+                .flat_map(|table| {
+                    table
+                        .read()
+                        .assignment_ids_by_template
+                        .get(template_id)
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .collect()
+        }
+
+        fn active_assignment_connections(&self, template_id: &str) -> usize {
+            self.assignment_shards
+                .iter()
+                .map(|table| {
+                    table
+                        .read()
+                        .active_assignments_by_template
+                        .get(template_id)
+                        .map_or(0, HashMap::len)
+                })
+                .sum()
+        }
+
+        fn refill_assignment_total(&self) -> usize {
+            self.refill_assignments.load(Ordering::Relaxed)
+        }
+
+        /// Checks every shard's indexes, that each assignment sits in its
+        /// connection's shard, and the shared refill count.
+        fn assert_assignment_indexes(&self) {
+            let mut refills = 0;
+            for (shard, table) in self.assignment_shards.iter().enumerate() {
+                let table = table.read();
+                assert_table_indexes(&table);
+                for (assignment_id, assignment) in &table.assignments {
+                    assert_eq!(self.shard_for_id(assignment_id), shard, "{assignment_id}");
+                    assert_eq!(self.shard_for_conn(&assignment.owner_conn_id), shard);
+                }
+                refills += table.assignments.values().filter(|a| a.refill).count();
+            }
+            assert_eq!(self.refill_assignment_total(), refills);
         }
     }
 
@@ -3339,7 +3535,7 @@ mod tests {
             let mut state = manager.state.write();
             state.current = Some(template.clone());
             state.jobs.insert(template.id.clone(), template);
-            state.assignments.insert(
+            manager.table("assign-old").assignments.insert(
                 "assign-old".to_string(),
                 test_assignment("conn1", "job1", Instant::now() - Duration::from_secs(2), 0),
             );
@@ -3353,16 +3549,17 @@ mod tests {
     #[test]
     fn prune_expired_assignments_keeps_current_template_assignments() {
         let now = Instant::now();
-        let mut state = JobState {
+        let state = JobState {
             current: Some(test_job("job-current", 10)),
             ..JobState::default()
         };
+        let mut table = AssignmentTable::default();
 
-        state.assignments.insert(
+        table.assignments.insert(
             "assign-current".to_string(),
             test_assignment("conn1", "job-current", now - Duration::from_secs(30), 0),
         );
-        state.assignments.insert(
+        table.assignments.insert(
             "assign-old".to_string(),
             test_assignment(
                 "conn1",
@@ -3371,25 +3568,24 @@ mod tests {
                 NONCE_RANGE_SIZE,
             ),
         );
-        state
+        table
             .assignment_order
             .push_back("assign-current".to_string());
-        state.assignment_order.push_back("assign-old".to_string());
+        table.assignment_order.push_back("assign-old".to_string());
 
-        let current = state.current.as_ref().map(|job| job.id.clone());
         prune_expired_assignments_locked(
-            &mut state,
+            &TemplateView::of(&state),
+            &mut table,
             now,
             Duration::from_secs(1),
             Duration::ZERO,
-            current.as_deref(),
         );
 
-        assert!(state.assignments.contains_key("assign-current"));
-        assert!(!state.assignments.contains_key("assign-old"));
-        assert_eq!(state.assignment_order.len(), 1);
+        assert!(table.assignments.contains_key("assign-current"));
+        assert!(!table.assignments.contains_key("assign-old"));
+        assert_eq!(table.assignment_order.len(), 1);
         assert_eq!(
-            state.assignment_order.front().map(String::as_str),
+            table.assignment_order.front().map(String::as_str),
             Some("assign-current")
         );
     }
@@ -3413,24 +3609,24 @@ mod tests {
                 legacy_probe_at: None,
             },
         );
-        state.assignments.insert(
+        let mut table = AssignmentTable::default();
+        table.assignments.insert(
             "assign-old".to_string(),
             test_assignment("conn1", "job-old", now - Duration::from_secs(30), 0),
         );
-        state.assignment_order.push_back("assign-old".to_string());
+        table.assignment_order.push_back("assign-old".to_string());
 
-        let current = state.current.as_ref().map(|job| job.id.clone());
         prune_expired_assignments_locked(
-            &mut state,
+            &TemplateView::of(&state),
+            &mut table,
             now,
             Duration::from_secs(1),
             Duration::from_secs(5),
-            current.as_deref(),
         );
 
-        assert!(state.assignments.contains_key("assign-old"));
+        assert!(table.assignments.contains_key("assign-old"));
         assert_eq!(
-            state.assignment_order.front().map(String::as_str),
+            table.assignment_order.front().map(String::as_str),
             Some("assign-old")
         );
     }
@@ -3465,19 +3661,19 @@ mod tests {
                     legacy_probe_at: None,
                 },
             );
-            state.assignments.insert(
+            let mut table = manager.table("assign-old");
+            table.assignments.insert(
                 "assign-old".to_string(),
                 test_assignment("conn1", &old_job.id, now - Duration::from_secs(30), 0),
             );
-            state.assignment_order.push_back("assign-old".to_string());
+            table.assignment_order.push_back("assign-old".to_string());
 
-            let current = state.current.as_ref().map(|job| job.id.clone());
             prune_expired_assignments_locked(
-                &mut state,
+                &TemplateView::of(&state),
+                &mut table,
                 now,
                 Duration::from_secs(1),
                 Duration::from_secs(5),
-                current.as_deref(),
             );
         }
 
@@ -3521,7 +3717,7 @@ mod tests {
             state
                 .jobs
                 .insert(current_template.id.clone(), current_template);
-            state.assignments.insert(
+            manager.table("assign-old").assignments.insert(
                 "assign-old".to_string(),
                 test_assignment("conn1", &old_template.id, now - Duration::from_secs(2), 0),
             );
@@ -3566,7 +3762,7 @@ mod tests {
             state.current = Some(new_job.clone());
             state.jobs.insert(old_job.id.clone(), old_job.clone());
             state.jobs.insert(new_job.id.clone(), new_job);
-            state.assignments.insert(
+            manager.table("assign-old").assignments.insert(
                 "assign-old".to_string(),
                 test_assignment("conn1", &old_job.id, now - Duration::from_secs(30), 0),
             );
@@ -3605,7 +3801,7 @@ mod tests {
             state.current = Some(new_job.clone());
             state.jobs.insert(old_job.id.clone(), old_job.clone());
             state.jobs.insert(new_job.id.clone(), new_job);
-            state.assignments.insert(
+            manager.table("assign-old").assignments.insert(
                 "assign-old".to_string(),
                 test_assignment("conn1", &old_job.id, now - Duration::from_secs(30), 0),
             );
@@ -3652,7 +3848,7 @@ mod tests {
             state.current = Some(new_job.clone());
             state.jobs.insert(old_job.id.clone(), old_job.clone());
             state.jobs.insert(new_job.id.clone(), new_job);
-            state.assignments.insert(
+            manager.table("assign-old").assignments.insert(
                 "assign-old".to_string(),
                 test_assignment("conn1", &old_job.id, now - Duration::from_secs(30), 0),
             );
@@ -3722,11 +3918,11 @@ mod tests {
         // A second batch supersedes each connection's previous assignment.
         let second = manager.build_miner_jobs(&requests);
         assert!(second.iter().all(Option::is_some));
-        let state = manager.state.read();
         for job in &first {
-            let assignment = state.assignments.get(&job.job_id).expect("still tracked");
+            let assignment = manager.assignment(&job.job_id).expect("still tracked");
             assert!(assignment.superseded_at.is_some(), "{}", job.job_id);
         }
+        manager.assert_assignment_indexes();
     }
 
     #[test]
@@ -3749,24 +3945,18 @@ mod tests {
             .build_miner_jobs(&requests)
             .iter()
             .all(Option::is_some));
-        let retired: Vec<String> = manager
-            .state
-            .read()
-            .assignment_ids_by_template
-            .get("old")
-            .expect("old template indexed")
-            .iter()
-            .cloned()
-            .collect();
+        let retired: Vec<String> = manager.template_assignment_ids("old").into_iter().collect();
         assert_eq!(retired.len(), count);
 
         assert_eq!(manager.remove_assignments_batched(&retired), count);
-        let state = manager.state.read();
-        assert!(state.assignments.is_empty());
-        assert!(state.assignment_order.is_empty());
-        assert!(!state.assignment_ids_by_template.contains_key("old"));
-        assert!(!state.active_assignments_by_template.contains_key("old"));
-        assert_assignment_indexes(&state);
+        assert_eq!(manager.assignment_count(), 0);
+        for table in manager.assignment_shards.iter() {
+            let table = table.read();
+            assert!(table.assignment_order.is_empty());
+            assert!(!table.assignment_ids_by_template.contains_key("old"));
+            assert!(!table.active_assignments_by_template.contains_key("old"));
+        }
+        manager.assert_assignment_indexes();
     }
 
     #[test]
@@ -3790,7 +3980,7 @@ mod tests {
             state.current = Some(new_job.clone());
             state.jobs.insert(old_job.id.clone(), old_job.clone());
             state.jobs.insert(new_job.id.clone(), new_job);
-            state.assignments.insert(
+            manager.table("assign-old").assignments.insert(
                 "assign-old".to_string(),
                 test_assignment("conn1", &old_job.id, now - Duration::from_secs(120), 0),
             );
@@ -3850,34 +4040,24 @@ mod tests {
                 .jobs
                 .insert(other_height_job.id.clone(), other_height_job.clone());
             state.jobs.insert(new_job.id.clone(), new_job);
-            state.assignments.insert(
+            manager.table("assign-same-position").assignments.insert(
                 "assign-same-position".to_string(),
                 test_assignment("conn1", &old_job.id, stale_age, 0),
             );
-            state.assignments.insert(
+            manager.table("assign-old-height").assignments.insert(
                 "assign-old-height".to_string(),
                 test_assignment("conn2", &other_height_job.id, stale_age, 1),
             );
         }
 
-        {
-            let mut state = manager.state.write();
-            maybe_prune_assignments_locked(
-                &mut state,
-                now,
-                true,
-                Duration::from_secs(300),
-                Duration::from_secs(5),
-            );
-        }
+        manager.prune_assignments_at(now, true, Duration::from_secs(300), Duration::from_secs(5));
 
-        let state = manager.state.read();
         assert!(
-            state.assignments.contains_key("assign-same-position"),
+            manager.assignment("assign-same-position").is_some(),
             "same-position assignment must survive pruning"
         );
         assert!(
-            !state.assignments.contains_key("assign-old-height"),
+            manager.assignment("assign-old-height").is_none(),
             "old-height assignment must still be pruned"
         );
     }
@@ -3952,14 +4132,10 @@ mod tests {
         let _second = manager
             .build_miner_job("conn1", 16, "addr1")
             .expect("second job");
-        let superseded_at = {
-            let state = manager.state.read();
-            state
-                .assignments
-                .get(&first.job_id)
-                .and_then(|assignment| assignment.superseded_at)
-                .expect("first assignment should be superseded")
-        };
+        let superseded_at = manager
+            .assignment(&first.job_id)
+            .and_then(|assignment| assignment.superseded_at)
+            .expect("first assignment should be superseded");
 
         assert!(manager
             .resolve_submit_job(&first.job_id, superseded_at + Duration::from_secs(1))
@@ -4038,31 +4214,23 @@ mod tests {
                 .expect("rebound assignment");
         }
 
-        let state = manager.state.read();
-        assert_eq!(state.assignments.len(), CONNECTIONS * 2);
+        assert_eq!(manager.assignment_count(), CONNECTIONS * 2);
         assert_eq!(
-            state
-                .active_assignments_by_template
-                .get("job-load")
-                .map(HashMap::len),
-            Some(CONNECTIONS)
+            manager.active_assignment_connections("job-load"),
+            CONNECTIONS
         );
         assert_eq!(
-            state
-                .assignment_ids_by_template
-                .get("job-load")
-                .map(HashSet::len),
-            Some(CONNECTIONS * 2)
+            manager.template_assignment_ids("job-load").len(),
+            CONNECTIONS * 2
         );
         assert!(
-            state.last_assignment_prune.is_none(),
+            manager.state.read().last_assignment_prune.is_none(),
             "building miner jobs must not run the global prune scan"
         );
-        assert!(first_jobs.iter().all(|job| state
-            .assignments
-            .get(&job.job_id)
+        assert!(first_jobs.iter().all(|job| manager
+            .assignment(&job.job_id)
             .is_some_and(|assignment| assignment.superseded_at.is_some())));
-        assert_assignment_indexes(&state);
+        manager.assert_assignment_indexes();
     }
 
     #[test]
@@ -4098,17 +4266,19 @@ mod tests {
                 test_assignment("conn1", "job-old", now - Duration::from_secs(30), 0);
             assignment.superseded_at = Some(now - Duration::from_secs(10));
             assignment.superseded_grace = Duration::from_secs(5);
-            insert_assignment_locked(&mut state, "assign-old".to_string(), assignment);
-
-            let removed = maybe_prune_assignments_locked(
-                &mut state,
-                now,
-                false,
-                Duration::from_secs(60),
-                Duration::from_secs(5),
+            insert_assignment_locked(
+                &mut manager.table("assign-old"),
+                "assign-old".to_string(),
+                assignment,
             );
-            assert_eq!(removed, 0);
         }
+        let removed = manager.prune_assignments_at(
+            now,
+            false,
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+        );
+        assert_eq!(removed, 0);
 
         assert!(manager
             .resolve_submit_job("assign-old", received_at)
@@ -4133,21 +4303,22 @@ mod tests {
             },
         );
         let assignment = test_assignment("conn1", "job-old", now - Duration::from_secs(120), 0);
-        insert_assignment_locked(&mut state, "assign-old".to_string(), assignment);
+        let mut table = AssignmentTable::default();
+        insert_assignment_locked(&mut table, "assign-old".to_string(), assignment);
 
-        let removed = maybe_prune_assignments_locked(
-            &mut state,
+        let removed = prune_expired_assignments_locked(
+            &TemplateView::of(&state),
+            &mut table,
             now,
-            false,
             Duration::from_secs(60),
             Duration::from_secs(5),
         );
 
         assert_eq!(removed, 1);
-        assert!(state.assignments.is_empty());
-        assert!(state.assignment_order.is_empty());
-        assert!(state.active_assignments_by_template.is_empty());
-        assert!(state.assignment_ids_by_template.is_empty());
+        assert!(table.assignments.is_empty());
+        assert!(table.assignment_order.is_empty());
+        assert!(table.active_assignments_by_template.is_empty());
+        assert!(table.assignment_ids_by_template.is_empty());
     }
 
     #[test]
@@ -4174,10 +4345,8 @@ mod tests {
             .build_miner_job("conn-dev", 16, crate::dev_fee::SEINE_DEV_FEE_ADDRESS)
             .expect("second job");
         let superseded_at = {
-            let state = manager.state.read();
-            let assignment = state
-                .assignments
-                .get(&first.job_id)
+            let assignment = manager
+                .assignment(&first.job_id)
                 .expect("first assignment should still exist");
             assert_eq!(assignment.superseded_grace, Duration::from_secs(15));
             assignment
@@ -4257,13 +4426,13 @@ mod tests {
             assert_eq!(binding.share_difficulty, Some(64));
             assert_eq!(binding.assigned_miner.as_deref(), Some("addr1"));
         }
-        let state = manager.state.read();
-        assert!(state
+        assert!(manager.assignment_shards.iter().all(|table| table
+            .read()
             .assignments
             .values()
-            .all(|a| a.superseded_at.is_none()));
-        assert_eq!(state.refill_assignment_count, 2);
-        assert_assignment_indexes(&state);
+            .all(|a| a.superseded_at.is_none())));
+        assert_eq!(manager.refill_assignment_total(), 2);
+        manager.assert_assignment_indexes();
     }
 
     #[test]
@@ -4306,9 +4475,8 @@ mod tests {
                 .err(),
             Some(RefillError::StaleJob)
         );
-        let state = manager.state.read();
-        assert_eq!(state.refill_assignment_count, 0);
-        assert_assignment_indexes(&state);
+        assert_eq!(manager.refill_assignment_total(), 0);
+        manager.assert_assignment_indexes();
     }
 
     #[test]
@@ -4340,8 +4508,10 @@ mod tests {
             .refill_miner_job("conn1", &reissued.job_id, 3)
             .expect("refill after re-issue");
 
-        manager.state.write().refill_assignment_count =
-            manager.max_active_assignments() / REFILL_ASSIGNMENT_SHARE;
+        manager.refill_assignments.store(
+            manager.max_active_assignments() / REFILL_ASSIGNMENT_SHARE,
+            Ordering::Relaxed,
+        );
         assert_eq!(
             manager.refill_miner_job("conn2", &other.job_id, 256).err(),
             Some(RefillError::LimitReached),
@@ -4371,13 +4541,22 @@ mod tests {
             .expect("vardiff re-issue");
         assert_eq!(reissued.nonce_start, primary.nonce_start);
         let superseded_at = {
-            let state = manager.state.read();
-            assert_assignment_indexes(&state);
-            let at = state.assignments[&refill.job_id]
+            manager.assert_assignment_indexes();
+            let at = manager
+                .assignment(&refill.job_id)
+                .expect("refill held")
                 .superseded_at
                 .expect("refill superseded with the job");
-            assert_eq!(state.assignments[&primary.job_id].superseded_at, Some(at));
-            assert!(state.assignments[&other_refill.job_id]
+            assert_eq!(
+                manager
+                    .assignment(&primary.job_id)
+                    .expect("job held")
+                    .superseded_at,
+                Some(at)
+            );
+            assert!(manager
+                .assignment(&other_refill.job_id)
+                .expect("other refill held")
                 .superseded_at
                 .is_none());
             at
@@ -4427,12 +4606,14 @@ mod tests {
         }
 
         // Retiring the template drops its refills from every index.
-        let mut state = manager.state.write();
-        remove_assignments_for_templates_locked(&mut state, &["job1".to_string()]);
-        assert!(state.assignments.is_empty());
-        assert_eq!(state.refill_assignment_count, 0);
-        assert!(state.refill_assignments_by_template.is_empty());
-        assert_assignment_indexes(&state);
+        {
+            let mut table = manager.table(&primary.job_id);
+            remove_assignments_for_templates_locked(&mut table, &["job1".to_string()]);
+            assert!(table.assignments.is_empty());
+            assert!(table.refill_assignments_by_template.is_empty());
+        }
+        assert_eq!(manager.refill_assignment_total(), 0);
+        manager.assert_assignment_indexes();
     }
 
     #[test]
@@ -4443,30 +4624,32 @@ mod tests {
             .refill_miner_job("conn1", &primary.job_id, 256)
             .expect("refill");
         manager.install_test_job(test_job("job2", 2));
-        let mut state = manager.state.write();
         let now = Instant::now() + Duration::from_secs(3600);
-        let removed = prune_expired_assignments_locked(
-            &mut state,
+        let removed = manager.prune_assignments_at(
             now,
+            true,
             Duration::from_secs(60),
             Duration::from_secs(5),
-            Some("job2"),
         );
         assert_eq!(removed, 2);
-        assert!(!state.assignments.contains_key(&refill.job_id));
-        assert_eq!(state.refill_assignment_count, 0);
-        assert!(state.refill_assignments_by_template.is_empty());
-        assert_assignment_indexes(&state);
-        drop(state);
+        assert!(manager.assignment(&refill.job_id).is_none());
+        assert_eq!(manager.refill_assignment_total(), 0);
+        assert!(manager
+            .table(&refill.job_id)
+            .refill_assignments_by_template
+            .is_empty());
+        manager.assert_assignment_indexes();
 
         let current = manager.build_miner_job("conn1", 64, "addr1").expect("job");
         let refill = manager
             .refill_miner_job("conn1", &current.job_id, 256)
             .expect("refill");
-        let mut state = manager.state.write();
-        assert!(remove_assignment_locked(&mut state, &refill.job_id));
-        assert_eq!(state.refill_assignment_count, 0);
-        assert_assignment_indexes(&state);
+        assert!(remove_assignment_locked(
+            &mut manager.table(&refill.job_id),
+            &refill.job_id
+        ));
+        assert_eq!(manager.refill_assignment_total(), 0);
+        manager.assert_assignment_indexes();
     }
 
     #[test]
@@ -5035,5 +5218,117 @@ mod tests {
             0,
             false
         ));
+    }
+
+    /// Times job fanout at production scale: `FANOUT_BENCH_THREADS` threads
+    /// (16) build jobs for `FANOUT_BENCH_CONNS` connections (100,000) in
+    /// chunks, over `FANOUT_BENCH_BLOCKS` templates (12), while old templates
+    /// retire and a submit thread times assignment lookups.
+    ///
+    /// `cargo test -p pool-runtime --release --lib fanout_bench -- --ignored --nocapture`
+    #[test]
+    #[ignore = "benchmark"]
+    fn fanout_bench() {
+        use std::sync::atomic::AtomicUsize;
+        let env = |name: &str, default: usize| {
+            std::env::var(name)
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default)
+        };
+        let conns = env("FANOUT_BENCH_CONNS", 100_000);
+        let threads = env("FANOUT_BENCH_THREADS", 16);
+        let blocks = env("FANOUT_BENCH_BLOCKS", 12);
+        let cfg = Config {
+            stratum_max_connections: conns as i32,
+            ..Config::default()
+        };
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            cfg,
+        );
+        let requests: Vec<MinerJobRequest> = (0..conns)
+            .map(|idx| MinerJobRequest {
+                conn_id: format!(
+                    "10.{}.{}.{}:{}",
+                    idx >> 16,
+                    (idx >> 8) & 255,
+                    idx & 255,
+                    40_000 + idx % 20_000
+                ),
+                share_difficulty: 1_000 + (idx % 7) as u64,
+                assigned_miner: format!("{:0>66}.worker{}", idx % 322, idx % 50),
+                range_mode: AssignmentRangeMode::Fresh,
+            })
+            .collect();
+
+        let mut sample_ids: Vec<String> = Vec::new();
+        for block in 0..blocks {
+            manager.install_test_job(test_job(&format!("bench-{block}"), 100 + block as u64));
+            let next = AtomicUsize::new(0);
+            let done = AtomicBool::new(false);
+            let started = Instant::now();
+            let (fanout, new_ids, lookups) = thread::scope(|scope| {
+                let workers: Vec<_> = (0..threads)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            let mut ids = Vec::new();
+                            loop {
+                                let start =
+                                    next.fetch_add(MINER_JOB_BUILD_CHUNK, Ordering::Relaxed);
+                                if start >= conns {
+                                    break ids;
+                                }
+                                let end = (start + MINER_JOB_BUILD_CHUNK).min(conns);
+                                let built = manager.build_miner_jobs(&requests[start..end]);
+                                if let Some(Some(job)) = built.first() {
+                                    ids.push(job.job_id.clone());
+                                }
+                            }
+                        })
+                    })
+                    .collect();
+                let retire = scope.spawn(|| manager.retire_old_templates());
+                let sampler = scope.spawn(|| {
+                    let mut lookups = Vec::new();
+                    let mut idx = 0usize;
+                    while !done.load(Ordering::Relaxed) && !sample_ids.is_empty() {
+                        let id = &sample_ids[idx % sample_ids.len()];
+                        idx += 1;
+                        let at = Instant::now();
+                        let _ = manager.resolve_submit_job_with_reason(id, at);
+                        lookups.push(at.elapsed());
+                        thread::sleep(Duration::from_micros(200));
+                    }
+                    lookups
+                });
+                let ids: Vec<String> = workers
+                    .into_iter()
+                    .flat_map(|worker| worker.join().expect("worker"))
+                    .collect();
+                let fanout = started.elapsed();
+                retire.join().expect("retire");
+                done.store(true, Ordering::Relaxed);
+                (fanout, ids, sampler.join().expect("sampler"))
+            });
+            sample_ids = new_ids;
+            let mut lookups = lookups;
+            lookups.sort();
+            let pct = |p: f64| {
+                lookups
+                    .get(((lookups.len() as f64 * p) as usize).min(lookups.len().saturating_sub(1)))
+                    .map_or(0.0, |d| d.as_secs_f64() * 1e3)
+            };
+            println!(
+                "block {block:2}: fanout {:7.1} ms ({:.2} us/conn), assignments {:7}, lookup p50 {:.3} ms p99 {:.3} ms max {:.3} ms (n={})",
+                fanout.as_secs_f64() * 1e3,
+                fanout.as_secs_f64() * 1e6 / conns as f64,
+                manager.assignment_count(),
+                pct(0.5),
+                pct(0.99),
+                lookups.last().map_or(0.0, |d| d.as_secs_f64() * 1e3),
+                lookups.len(),
+            );
+        }
     }
 }
