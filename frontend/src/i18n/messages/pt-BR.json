@@ -510,7 +510,7 @@
   "farmProxyBody": "O proxy de fazenda do seine roda na sua própria rede e liga cada rig à pool por meio dele, então você define a pool e as reservas em um só lugar. Cada rig continua aparecendo aqui com o próprio nome.",
   "farmProxyAction": "Configurar o proxy de fazenda {0}",
   "farmProxyDismiss": "Ocultar esta dica",
-  "newsGiveawayTitle": "Desculpe pela instabilidade: sorteio de 5.000 $BNT",
-  "newsGiveawayBody": "Muitos mineradores novos entraram hoje e a pool ficou fora do ar por um tempo. Já está resolvido. Para pedir desculpas, 5 mineradores ganham 1.000 $BNT cada: siga @bntpool no X e responda ao post do sorteio com o seu endereço $BNT.",
-  "newsGiveawayLink": "Participar no X"
+  "newsWinnersTitle": "Vencedores do sorteio: 5 × 1.000 $BNT enviados",
+  "newsWinnersBody": "Obrigado por ficar com a gente durante a instabilidade. Cinco mineradores ganharam 1.000 $BNT cada, e os pagamentos já foram enviados. Veja os vencedores e como foi o sorteio no X.",
+  "newsWinnersLink": "Ver os vencedores"
 }

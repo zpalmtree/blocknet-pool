@@ -510,7 +510,7 @@
   "farmProxyBody": "seine 的礦場代理在你自己的網路中執行，所有礦機都透過它連接礦池，因此礦池與備用礦池只需在一處設定。每台礦機仍會以各自的名稱顯示在這裡。",
   "farmProxyAction": "設定礦場代理 {0}",
   "farmProxyDismiss": "隱藏此提示",
-  "newsGiveawayTitle": "停機致歉：贈送 5,000 $BNT",
-  "newsGiveawayBody": "今天大量新礦工加入，礦池出現了一段時間的停機。現已修復。為表歉意，我們將向 5 位礦工各贈送 1,000 $BNT：在 X 上追蹤 @bntpool，並在活動貼文下回覆你的 $BNT 地址。",
-  "newsGiveawayLink": "在 X 上參與"
+  "newsWinnersTitle": "活動得獎者：已發放 5 × 1,000 $BNT",
+  "newsWinnersBody": "感謝大家在停機期間的支持。5 位礦工各獲得 1,000 $BNT，獎勵已全部發放。得獎名單和抽獎方式請見 X。",
+  "newsWinnersLink": "查看得獎者"
 }

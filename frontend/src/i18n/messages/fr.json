@@ -510,7 +510,7 @@
   "farmProxyBody": "Le proxy de ferme de seine tourne sur votre propre réseau et relie chaque rig au pool à travers lui : vous réglez le pool et les pools de secours à un seul endroit. Chaque rig reste affiché ici sous son propre nom.",
   "farmProxyAction": "Configurer le proxy de ferme {0}",
   "farmProxyDismiss": "Masquer ce conseil",
-  "newsGiveawayTitle": "Désolés pour la panne : 5 000 $BNT à gagner",
-  "newsGiveawayBody": "Beaucoup de nouveaux mineurs nous ont rejoints aujourd'hui et le pool a connu une panne. C'est réglé. Pour nous excuser, 5 mineurs gagnent chacun 1 000 $BNT : suivez @bntpool sur X et répondez au post du concours avec votre adresse $BNT.",
-  "newsGiveawayLink": "Participer sur X"
+  "newsWinnersTitle": "Gagnants du concours : 5 × 1 000 $BNT envoyés",
+  "newsWinnersBody": "Merci d'être restés avec nous pendant la panne. Cinq mineurs ont gagné 1 000 $BNT chacun, et les paiements sont envoyés. Découvrez les gagnants et le déroulement du tirage sur X.",
+  "newsWinnersLink": "Voir les gagnants"
 }

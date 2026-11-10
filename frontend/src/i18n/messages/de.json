@@ -510,7 +510,7 @@
   "farmProxyBody": "Der Farm-Proxy von seine läuft in deinem eigenen Netzwerk und verbindet jedes Rig über ihn mit dem Pool, sodass du Pool und Ausweich-Pools an einer Stelle festlegst. Jedes Rig erscheint hier weiterhin unter seinem eigenen Namen.",
   "farmProxyAction": "Farm-Proxy einrichten {0}",
   "farmProxyDismiss": "Tipp ausblenden",
-  "newsGiveawayTitle": "Sorry für den Ausfall: 5.000 $BNT Giveaway",
-  "newsGiveawayBody": "Heute sind viele neue Miner dazugekommen und der Pool hatte einen Ausfall. Das ist behoben. Als Entschuldigung gewinnen 5 Miner je 1.000 $BNT: Folge @bntpool auf X und antworte auf den Giveaway-Post mit deiner $BNT-Adresse.",
-  "newsGiveawayLink": "Auf X mitmachen"
+  "newsWinnersTitle": "Giveaway-Gewinner: 5 × 1.000 $BNT gesendet",
+  "newsWinnersBody": "Danke, dass ihr während des Ausfalls dabeigeblieben seid. Fünf Miner haben je 1.000 $BNT gewonnen, und die Zahlungen sind raus. Die Gewinner und wie gelost wurde, seht ihr auf X.",
+  "newsWinnersLink": "Gewinner ansehen"
 }

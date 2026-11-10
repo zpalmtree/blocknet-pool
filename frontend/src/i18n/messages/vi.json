@@ -510,7 +510,7 @@
   "farmProxyBody": "Proxy farm của seine chạy trong mạng của bạn và nối mọi rig với pool thông qua nó, nên bạn chỉ cần đặt pool và pool dự phòng ở một nơi. Mỗi rig vẫn hiển thị ở đây với tên riêng của nó.",
   "farmProxyAction": "Thiết lập proxy farm {0}",
   "farmProxyDismiss": "Ẩn mẹo này",
-  "newsGiveawayTitle": "Xin lỗi vì sự cố gián đoạn: tặng 5.000 $BNT",
-  "newsGiveawayBody": "Hôm nay có rất nhiều thợ đào mới tham gia và pool đã bị gián đoạn một thời gian. Sự cố đã được khắc phục. Để xin lỗi, 5 thợ đào sẽ nhận mỗi người 1.000 $BNT: hãy theo dõi @bntpool trên X và trả lời bài đăng tặng thưởng bằng địa chỉ $BNT của bạn.",
-  "newsGiveawayLink": "Tham gia trên X"
+  "newsWinnersTitle": "Người thắng giveaway: đã gửi 5 × 1.000 $BNT",
+  "newsWinnersBody": "Cảm ơn bạn đã đồng hành cùng chúng tôi trong thời gian gián đoạn. Năm thợ đào mỗi người thắng 1.000 $BNT và khoản thanh toán đã được gửi. Xem người thắng và cách quay thưởng trên X.",
+  "newsWinnersLink": "Xem người thắng"
 }

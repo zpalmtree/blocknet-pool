@@ -510,7 +510,7 @@
   "farmProxyBody": "seine 팜 프록시는 사용자의 네트워크에서 실행되며 모든 리그를 프록시를 통해 풀에 연결하므로, 풀과 백업 풀을 한곳에서 설정할 수 있습니다. 각 리그는 여기에서 계속 자체 이름으로 표시됩니다.",
   "farmProxyAction": "팜 프록시 설정 {0}",
   "farmProxyDismiss": "이 팁 숨기기",
-  "newsGiveawayTitle": "다운타임 사과: 5,000 $BNT 이벤트",
-  "newsGiveawayBody": "오늘 새로운 채굴자가 대거 참여하면서 풀이 한동안 중단되었습니다. 지금은 해결되었습니다. 사과의 의미로 채굴자 5명에게 각각 1,000 $BNT를 드립니다. X에서 @bntpool을 팔로우하고 이벤트 게시물에 $BNT 주소로 답글을 남겨 주세요.",
-  "newsGiveawayLink": "X에서 참여하기"
+  "newsWinnersTitle": "이벤트 당첨자: 1,000 $BNT × 5명 지급 완료",
+  "newsWinnersBody": "다운타임 동안 함께해 주셔서 감사합니다. 채굴자 5명이 각각 1,000 $BNT에 당첨되었고 지급이 완료되었습니다. 당첨자와 추첨 방식은 X에서 확인하세요.",
+  "newsWinnersLink": "당첨자 보기"
 }

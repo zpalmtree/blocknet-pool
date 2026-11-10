@@ -510,7 +510,7 @@
   "farmProxyBody": "The seine farm proxy runs on your own network and links every rig to the pool through it, so you set the pool and backups in one place. Each rig still shows here under its own name.",
   "farmProxyAction": "Set up the farm proxy {0}",
   "farmProxyDismiss": "Hide this tip",
-  "newsGiveawayTitle": "Sorry for the downtime: 5,000 $BNT giveaway",
-  "newsGiveawayBody": "Lots of new miners joined today and the pool had some downtime. It's fixed now. To say sorry, 5 miners win 1,000 $BNT each: follow @bntpool on X and reply to the giveaway post with your $BNT address.",
-  "newsGiveawayLink": "Enter on X"
+  "newsWinnersTitle": "Giveaway winners: 5 × 1,000 $BNT sent",
+  "newsWinnersBody": "Thanks for sticking with us through the downtime. Five miners won 1,000 $BNT each, and the payments have been sent. See the winners and how the draw worked on X.",
+  "newsWinnersLink": "See the winners"
 }

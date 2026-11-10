@@ -510,7 +510,7 @@
   "farmProxyBody": "seine çiftlik proxy'si kendi ağınızda çalışır ve her rig'i havuza onun üzerinden bağlar; böylece havuzu ve yedek havuzları tek bir yerden ayarlarsınız. Her rig burada yine kendi adıyla görünür.",
   "farmProxyAction": "Çiftlik proxy'sini kur {0}",
   "farmProxyDismiss": "Bu ipucunu gizle",
-  "newsGiveawayTitle": "Kesinti için özür dileriz: 5.000 $BNT çekiliş",
-  "newsGiveawayBody": "Bugün çok sayıda yeni madenci katıldı ve havuzda bir süre kesinti yaşandı. Sorun giderildi. Özür olarak 5 madenci 1.000'er $BNT kazanıyor: X'te @bntpool hesabını takip edin ve çekiliş gönderisine $BNT adresinizle yanıt verin.",
-  "newsGiveawayLink": "X'te katıl"
+  "newsWinnersTitle": "Çekiliş kazananları: 5 × 1.000 $BNT gönderildi",
+  "newsWinnersBody": "Kesinti sırasında bizimle kaldığınız için teşekkürler. Beş madenci 1.000'er $BNT kazandı ve ödemeler gönderildi. Kazananları ve çekilişin nasıl yapıldığını X'te görün.",
+  "newsWinnersLink": "Kazananları gör"
 }

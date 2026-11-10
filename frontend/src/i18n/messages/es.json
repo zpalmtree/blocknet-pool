@@ -510,7 +510,7 @@
   "farmProxyBody": "El proxy de granja de seine funciona en tu propia red y conecta cada rig al pool a través de él, así configuras el pool y los respaldos en un solo lugar. Cada rig sigue apareciendo aquí con su propio nombre.",
   "farmProxyAction": "Configurar el proxy de granja {0}",
   "farmProxyDismiss": "Ocultar este consejo",
-  "newsGiveawayTitle": "Perdón por la caída: sorteo de 5.000 $BNT",
-  "newsGiveawayBody": "Hoy se unieron muchos mineros nuevos y el pool tuvo una caída. Ya está solucionado. Para disculparnos, 5 mineros ganan 1.000 $BNT cada uno: sigue a @bntpool en X y responde a la publicación del sorteo con tu dirección de $BNT.",
-  "newsGiveawayLink": "Participar en X"
+  "newsWinnersTitle": "Ganadores del sorteo: 5 × 1.000 $BNT enviados",
+  "newsWinnersBody": "Gracias por seguir con nosotros durante la caída. Cinco mineros ganaron 1.000 $BNT cada uno y los pagos ya se enviaron. Mira los ganadores y cómo se hizo el sorteo en X.",
+  "newsWinnersLink": "Ver los ganadores"
 }

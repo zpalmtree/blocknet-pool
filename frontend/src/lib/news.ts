@@ -14,8 +14,8 @@ export interface NewsItem {
 export type Feature = 'settings';
 
 export const NEWS: readonly NewsItem[] = [
-  { date: '2026-11-08', titleKey: 'newsGiveawayTitle', bodyKey: 'newsGiveawayBody', linkKey: 'newsGiveawayLink',
-    href: 'https://x.com/bntpool/status/2119565030136136140' },
+  { date: '2026-11-09', titleKey: 'newsWinnersTitle', bodyKey: 'newsWinnersBody', linkKey: 'newsWinnersLink',
+    href: 'https://x.com/bntpool/status/2119942595900035579' },
   { date: '2026-11-04', titleKey: 'newsSettingsTitle', bodyKey: 'newsSettingsBody', linkKey: 'newsSettingsLink',
     href: '/stats#settings', feature: 'settings' },
   { date: '2026-11-04', titleKey: 'newsSoloTitle', bodyKey: 'newsSoloBody', linkKey: 'newsSoloLink',
