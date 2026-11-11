@@ -298,6 +298,35 @@ replay does not model. Count mode's backfill savings on large addresses are
 therefore likely understated; live-audit numbers match production (~3.9/s
 replayed vs ~4.2/s live).
 
+### Rerun on the 2026-11-11 production mix
+
+The last hour of production shares at 00:55 UTC (290 addresses, 221,482
+shares, 50 addresses >= 500/h), growth level 3 at 300 normal-size shares/s
+(60 raw/s at 1x), sample rate 0.05, capacity 11/s, 540 ms single hash, 2x
+speedup, 30 simulated minutes, 6 hours of seeded history, backfill store on.
+Every run kept the simulated clock (1,800 s) and the target share rate.
+
+| Load | Policy | Verifies/s (live + background) | Normal/Shed/Emergency % | Audit drops/s | Large addr. coverage (samples/addr/h) | Small addr. coverage |
+|---|---|---|---|---|---|---|
+| 1x | ratio | 9.41 (8.45 + 0.92) | 68 / 4 / 28 | 0.46 | 15.0% (337) | 34.6% |
+| 1x | count | 2.44 (1.04 + 1.35) | 100 / 0 / 0 | 0 | 2.25% (51) | 57.4% |
+| 1.3x | ratio | 10.01 (9.70 + 0.27) | 50 / 12 / 38 | 2.16 | 12.6% (337) | 19.2% |
+| 1.3x | count | 2.74 (1.25 + 1.45) | 100 / 0 / 0 | 0 | 1.99% (53) | 54.8% |
+
+The ratio arm is harsher than production (which spent 60-96% of recent
+half hours in Normal), so compare arms. Small addresses get more coverage
+under count mode because the verifiers stay in Normal: under ratio, Shed and
+Emergency suppress their samples. Raw:
+`perf-results/2026-11-10/pool-verify/count-enable/`.
+
+The first attempt at this rerun could not keep up: on the old engine the
+count policy rescanned each address's window on every share under the
+global validation lock (~4 ms per share for a 142k-share window, ~1.5 ms
+under ratio), so the replay driver fell behind (half the target share
+rate). The incremental window (running totals, sorted sample times, gap
+counting) brings that to ~46 us (count) and ~16 us (ratio)
+(`bench_large_address_submit_path`); the runs above use it.
+
 ## Open items for the owner
 
 - ~~Update the API's pending estimate and reward-status to the count rule.~~

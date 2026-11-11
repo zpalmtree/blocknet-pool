@@ -391,7 +391,9 @@ struct ValidationAddressState {
     resume_forced_at: Option<SystemTime>,
     hold_cause: Option<ValidationHoldCause>,
     provisional_at: VecDeque<TrackedProvisionalShare>,
-    accepted_window: VecDeque<AcceptedWindowShare>,
+    /// Copy on write: hot paths clone the state to evaluate holds without
+    /// committing them, which must not copy the window.
+    accepted_window: Arc<AcceptedWindow>,
     last_replay_backfill_at: Option<SystemTime>,
     /// Latest failed sample (in memory only). Under the count policy an
     /// address with a failure inside the PPLNS window is sampled at the ratio
@@ -414,6 +416,179 @@ struct AcceptedWindowShare {
     verified: bool,
 }
 
+/// An address's accepted shares inside the PPLNS window, kept sorted by
+/// creation time, with running totals and the sorted creation times of its
+/// verified shares. The hold checks run on every share under the state lock,
+/// so they read these instead of rescanning the window: totals for the whole
+/// window, a binary search plus the recent tail for the provisional delay,
+/// and the gaps between samples for count coverage.
+#[derive(Debug, Clone, Default)]
+struct AcceptedWindow {
+    shares: VecDeque<AcceptedWindowShare>,
+    /// `created_at` of every verified share, ascending.
+    sample_times: VecDeque<SystemTime>,
+    verified_difficulty: u64,
+    provisional_shares: u64,
+    provisional_difficulty: u64,
+}
+
+impl AcceptedWindow {
+    fn len(&self) -> usize {
+        self.shares.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.shares.is_empty()
+    }
+
+    fn iter(&self) -> std::collections::vec_deque::Iter<'_, AcceptedWindowShare> {
+        self.shares.iter()
+    }
+
+    fn verified_shares(&self) -> u64 {
+        self.sample_times.len() as u64
+    }
+
+    fn front(&self) -> Option<&AcceptedWindowShare> {
+        self.shares.front()
+    }
+
+    /// Inserts in creation order (after shares with the same time). Shares
+    /// arrive almost in order, so this searches back from the end.
+    fn push(&mut self, share: AcceptedWindowShare) {
+        let pos = self
+            .shares
+            .iter()
+            .rposition(|existing| existing.created_at <= share.created_at)
+            .map_or(0, |idx| idx + 1);
+        self.shares.insert(pos, share);
+        self.add_totals(&share);
+    }
+
+    fn add_totals(&mut self, share: &AcceptedWindowShare) {
+        if share.verified {
+            self.verified_difficulty = self.verified_difficulty.saturating_add(share.difficulty);
+            insert_sorted(&mut self.sample_times, share.created_at);
+        } else {
+            self.provisional_shares = self.provisional_shares.saturating_add(1);
+            self.provisional_difficulty =
+                self.provisional_difficulty.saturating_add(share.difficulty);
+        }
+    }
+
+    fn remove_totals(&mut self, share: &AcceptedWindowShare) {
+        if share.verified {
+            self.verified_difficulty = self.verified_difficulty.saturating_sub(share.difficulty);
+            remove_sorted(&mut self.sample_times, share.created_at);
+        } else {
+            self.provisional_shares = self.provisional_shares.saturating_sub(1);
+            self.provisional_difficulty =
+                self.provisional_difficulty.saturating_sub(share.difficulty);
+        }
+    }
+
+    fn pop_front(&mut self) -> Option<AcceptedWindowShare> {
+        let share = self.shares.pop_front()?;
+        self.remove_totals(&share);
+        Some(share)
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Marks the share verified; false if it is not in the window.
+    fn mark_verified(&mut self, share_id: i64) -> bool {
+        let Some(pos) = self
+            .shares
+            .iter()
+            .rposition(|share| share.share_id == share_id)
+        else {
+            return false;
+        };
+        let share = self.shares[pos];
+        if !share.verified {
+            self.remove_totals(&share);
+            self.shares[pos].verified = true;
+            let updated = self.shares[pos];
+            self.add_totals(&updated);
+        }
+        true
+    }
+
+    fn remove_share(&mut self, share_id: i64) {
+        if let Some(pos) = self
+            .shares
+            .iter()
+            .rposition(|share| share.share_id == share_id)
+        {
+            if let Some(share) = self.shares.remove(pos) {
+                self.remove_totals(&share);
+            }
+        }
+    }
+
+    fn retain(&mut self, keep: impl FnMut(&AcceptedWindowShare) -> bool) {
+        let mut keep = keep;
+        let before = self.shares.len();
+        self.shares.retain(|share| keep(share));
+        if self.shares.len() != before {
+            self.rebuild_totals();
+        }
+    }
+
+    fn rebuild_totals(&mut self) {
+        let shares = std::mem::take(&mut self.shares);
+        *self = Self::default();
+        for share in &shares {
+            self.add_totals(share);
+        }
+        self.shares = shares;
+    }
+
+    /// Index of the first share created after `at`.
+    fn first_after(&self, at: SystemTime) -> usize {
+        self.shares.partition_point(|share| share.created_at <= at)
+    }
+
+    /// Index of the first share created at or after `at`.
+    fn first_at_or_after(&self, at: SystemTime) -> usize {
+        self.shares.partition_point(|share| share.created_at < at)
+    }
+
+    /// Unverified shares and their difficulty from index `from` to the end.
+    fn provisional_from(&self, from: usize) -> (u64, u64) {
+        self.shares
+            .range(from..)
+            .filter(|share| !share.verified)
+            .fold((0, 0), |(count, difficulty), share| {
+                (count + 1, difficulty.saturating_add(share.difficulty))
+            })
+    }
+
+    /// Test helper: edit shares in place, then restore order and totals.
+    #[cfg(test)]
+    fn edit(&mut self, edit: impl FnOnce(&mut VecDeque<AcceptedWindowShare>)) {
+        edit(&mut self.shares);
+        self.shares
+            .make_contiguous()
+            .sort_by_key(|share| share.created_at);
+        self.rebuild_totals();
+    }
+}
+
+fn insert_sorted(times: &mut VecDeque<SystemTime>, at: SystemTime) {
+    let pos = times.partition_point(|existing| *existing <= at);
+    times.insert(pos, at);
+}
+
+fn remove_sorted(times: &mut VecDeque<SystemTime>, at: SystemTime) {
+    let pos = times.partition_point(|existing| *existing < at);
+    if times.get(pos) == Some(&at) {
+        times.remove(pos);
+    }
+}
+
 impl Default for ValidationAddressState {
     fn default() -> Self {
         Self {
@@ -429,7 +604,7 @@ impl Default for ValidationAddressState {
             resume_forced_at: None,
             hold_cause: None,
             provisional_at: VecDeque::new(),
-            accepted_window: VecDeque::new(),
+            accepted_window: Arc::default(),
             last_replay_backfill_at: None,
             last_invalid_sample_at: None,
             last_seen_at: SystemTime::now(),
@@ -438,6 +613,10 @@ impl Default for ValidationAddressState {
 }
 
 impl ValidationAddressState {
+    fn window_mut(&mut self) -> &mut AcceptedWindow {
+        Arc::make_mut(&mut self.accepted_window)
+    }
+
     fn clear_risk_window(&mut self) {
         self.risk_sampled_shares = 0;
         self.risk_invalid_samples = 0;
@@ -1299,7 +1478,8 @@ impl ValidationInner {
         }
 
         let now = SystemTime::now();
-        let state = self.state.lock();
+        let mut state = self.state.lock();
+        self.prune_expired_locked(&mut state, address, now);
         let mut default_state = ValidationAddressState::default();
         prune_accepted_window(&mut default_state, &self.config(), now);
         let st = state.get(address).unwrap_or(&default_state);
@@ -1374,7 +1554,8 @@ impl ValidationInner {
         }
 
         let now = SystemTime::now();
-        let state = self.state.lock();
+        let mut state = self.state.lock();
+        self.prune_expired_locked(&mut state, address, now);
         let mut default_state = ValidationAddressState::default();
         prune_accepted_window(&mut default_state, &self.config(), now);
         let st = state.get(address).unwrap_or(&default_state);
@@ -1585,7 +1766,7 @@ impl ValidationInner {
             );
         }
         if update.accepted {
-            st.accepted_window.push_back(AcceptedWindowShare {
+            st.window_mut().push(AcceptedWindowShare {
                 share_id: update.share_id.unwrap_or_default(),
                 created_at: update.created_at,
                 difficulty: update.difficulty.max(1),
@@ -1716,6 +1897,21 @@ impl ValidationInner {
         }
         refresh_dynamic_validation_hold(st, &self.config(), now);
         followup
+    }
+
+    /// Drops the address's expired provisional and window entries in place,
+    /// so the clone a hold check evaluates shares the window instead of
+    /// copying it (pruning a clone would copy).
+    fn prune_expired_locked(
+        &self,
+        state: &mut HashMap<String, ValidationAddressState>,
+        address: &str,
+        now: SystemTime,
+    ) {
+        if let Some(st) = state.get_mut(address) {
+            self.prune_provisional_locked(st, now);
+            prune_accepted_window(st, &self.config(), now);
+        }
     }
 
     fn prune_provisional_locked(&self, st: &mut ValidationAddressState, now: SystemTime) {
@@ -2089,26 +2285,20 @@ impl ValidationInner {
             entry.provisional_at.remove(pos);
         }
         if accepted {
-            if let Some(existing) = entry
-                .accepted_window
-                .iter_mut()
-                .find(|share| share.share_id == share_id)
-            {
-                existing.verified = true;
-            } else {
-                entry.accepted_window.push_back(AcceptedWindowShare {
+            if !entry.window_mut().mark_verified(share_id) {
+                entry.window_mut().push(AcceptedWindowShare {
                     share_id,
                     created_at,
                     difficulty: difficulty.max(1),
                     verified: true,
                 });
             }
-        } else if let Some(pos) = entry
+        } else if entry
             .accepted_window
             .iter()
-            .position(|share| share.share_id == share_id)
+            .any(|share| share.share_id == share_id)
         {
-            entry.accepted_window.remove(pos);
+            entry.window_mut().remove_share(share_id);
         }
 
         let invalid_sample = !accepted;
@@ -2385,7 +2575,9 @@ impl ValidationInner {
 
     fn address_has_live_hold(&self, address: &str) -> bool {
         let now = SystemTime::now();
-        self.state.lock().get(address).is_some_and(|st| {
+        let mut state = self.state.lock();
+        self.prune_expired_locked(&mut state, address, now);
+        state.get(address).is_some_and(|st| {
             let mut effective = st.clone();
             if self.config().provisional_share_delay_duration().is_zero() {
                 effective.provisional_at.clear();
@@ -2587,8 +2779,14 @@ impl ValidationInner {
         if let Some(st) = state.get_mut(address) {
             st.provisional_at
                 .retain(|share| !share.share_id.is_some_and(|id| revoked.contains(&id)));
-            st.accepted_window
-                .retain(|share| share.verified || !revoked.contains(&share.share_id));
+            if st
+                .accepted_window
+                .iter()
+                .any(|share| !share.verified && revoked.contains(&share.share_id))
+            {
+                st.window_mut()
+                    .retain(|share| share.verified || !revoked.contains(&share.share_id));
+            }
         }
         drop(state);
         let mut pending = self.audit_pending_shares.lock();
@@ -2724,21 +2922,32 @@ fn payout_coverage_window_start(config: &Config, now: SystemTime) -> Option<Syst
     Some(now.checked_sub(duration).unwrap_or(UNIX_EPOCH))
 }
 
+/// Drops shares older than the PPLNS window. Leaves a shared (cloned)
+/// window untouched when there is nothing to drop.
 fn prune_accepted_window(state: &mut ValidationAddressState, config: &Config, now: SystemTime) {
     let Some(cutoff) = payout_coverage_window_start(config, now) else {
-        state.accepted_window.clear();
+        if !state.accepted_window.is_empty() {
+            state.window_mut().clear();
+        }
         return;
     };
-    while state
+    if state
         .accepted_window
+        .front()
+        .is_none_or(|share| share.created_at >= cutoff)
+    {
+        return;
+    }
+    let window = state.window_mut();
+    while window
         .front()
         .is_some_and(|share| share.created_at < cutoff)
     {
-        state.accepted_window.pop_front();
+        window.pop_front();
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct PayoutCoverageStats {
     verified_shares: u64,
     verified_difficulty: u64,
@@ -2762,7 +2971,7 @@ impl PayoutCoverageStats {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct ProvisionalBacklogStats {
     recent_shares: u64,
     recent_verified_shares: u64,
@@ -2781,8 +2990,38 @@ fn provisional_backlog_stats(
     }
 
     let cutoff = now.checked_sub(delay).unwrap_or(now);
+    let window = &state.accepted_window;
     let mut stats = ProvisionalBacklogStats::default();
-    for share in &state.accepted_window {
+    for share in window.shares.range(window.first_after(cutoff)..) {
+        stats.recent_shares = stats.recent_shares.saturating_add(1);
+        if share.verified {
+            stats.recent_verified_shares = stats.recent_verified_shares.saturating_add(1);
+            stats.recent_verified_difficulty = stats
+                .recent_verified_difficulty
+                .saturating_add(share.difficulty);
+        } else {
+            stats.recent_provisional_difficulty = stats
+                .recent_provisional_difficulty
+                .saturating_add(share.difficulty);
+        }
+    }
+    Some(stats)
+}
+
+/// Full-scan reference for `provisional_backlog_stats`.
+#[cfg(test)]
+fn provisional_backlog_stats_scan(
+    state: &ValidationAddressState,
+    config: &Config,
+    now: SystemTime,
+) -> Option<ProvisionalBacklogStats> {
+    let delay = config.provisional_share_delay_duration();
+    if delay.is_zero() {
+        return None;
+    }
+    let cutoff = now.checked_sub(delay).unwrap_or(now);
+    let mut stats = ProvisionalBacklogStats::default();
+    for share in state.accepted_window.iter() {
         if share.created_at <= cutoff {
             continue;
         }
@@ -2841,9 +3080,36 @@ fn payout_coverage_stats(
 ) -> Option<PayoutCoverageStats> {
     let _ = payout_coverage_window_start(config, now)?;
     let provisional_delay = config.provisional_share_delay_duration();
+    let window = &state.accepted_window;
+    // Provisional shares still inside the delay are not payout-eligible.
+    let (delayed_shares, delayed_difficulty) = if provisional_delay.is_zero() {
+        (0, 0)
+    } else {
+        let provisional_cutoff = now.checked_sub(provisional_delay).unwrap_or(now);
+        window.provisional_from(window.first_after(provisional_cutoff))
+    };
+    Some(PayoutCoverageStats {
+        verified_shares: window.verified_shares(),
+        verified_difficulty: window.verified_difficulty,
+        eligible_provisional_shares: window.provisional_shares.saturating_sub(delayed_shares),
+        eligible_provisional_difficulty: window
+            .provisional_difficulty
+            .saturating_sub(delayed_difficulty),
+    })
+}
+
+/// Full-scan reference for `payout_coverage_stats`.
+#[cfg(test)]
+fn payout_coverage_stats_scan(
+    state: &ValidationAddressState,
+    config: &Config,
+    now: SystemTime,
+) -> Option<PayoutCoverageStats> {
+    let _ = payout_coverage_window_start(config, now)?;
+    let provisional_delay = config.provisional_share_delay_duration();
     let provisional_cutoff = now.checked_sub(provisional_delay).unwrap_or(now);
     let mut stats = PayoutCoverageStats::default();
-    for share in &state.accepted_window {
+    for share in state.accepted_window.iter() {
         if share.verified {
             stats.verified_shares = stats.verified_shares.saturating_add(1);
             stats.verified_difficulty = stats.verified_difficulty.saturating_add(share.difficulty);
@@ -2900,12 +3166,8 @@ fn count_window_shares(state: &ValidationAddressState, config: &Config, now: Sys
     let cutoff = now
         .checked_sub(config.count_window_duration())
         .unwrap_or(UNIX_EPOCH);
-    state
-        .accepted_window
-        .iter()
-        .rev()
-        .take_while(|share| share.created_at > cutoff)
-        .count() as u64
+    let window = &state.accepted_window;
+    (window.len() - window.first_after(cutoff)) as u64
 }
 
 /// Expected fraction of an address's shares the ratio sampler verifies in
@@ -2966,56 +3228,71 @@ struct CountCoverageStats {
 
 /// Count policy view of the address's PPLNS window: clean samples, and the
 /// payout-eligible provisional shares with no clean sample within
-/// `count_sample_radius`. Runs under the state lock on every share, so it is
-/// one pass over the (time-ordered) window; an out-of-order window falls back
-/// to sorting the sample times.
+/// `count_sample_radius`. Runs under the state lock on every share. An
+/// unverified share has no sample within the radius exactly when it lies
+/// strictly between two consecutive samples more than two radii apart (or
+/// before the first or after the last), so this counts the window's shares in
+/// those gaps by binary search: O(samples x log window).
 fn count_coverage_stats(
     state: &ValidationAddressState,
     config: &Config,
     now: SystemTime,
 ) -> CountCoverageStats {
     let delay = config.provisional_share_delay_duration();
-    let cutoff = now.checked_sub(delay).unwrap_or(now);
     let radius = config.count_sample_radius_duration();
-    let eligible = |share: &AcceptedWindowShare| {
-        !share.verified && (delay.is_zero() || share.created_at <= cutoff)
+    let window = &state.accepted_window;
+    // Shares from this index on are still inside the provisional delay.
+    let eligible_end = if delay.is_zero() {
+        window.len()
+    } else {
+        window.first_after(now.checked_sub(delay).unwrap_or(now))
     };
-    let mut stats = CountCoverageStats::default();
-    // Eligible shares after the last sample and beyond its radius, waiting
-    // to see whether the next sample is close enough.
-    let mut waiting = VecDeque::<SystemTime>::new();
-    let mut last_sample: Option<SystemTime> = None;
-    let mut previous: Option<SystemTime> = None;
-    for share in &state.accepted_window {
-        if previous.is_some_and(|previous| share.created_at < previous) {
-            return count_coverage_stats_unordered(state, radius, eligible);
+    let (delayed_shares, _) = window.provisional_from(eligible_end);
+
+    // Eligible shares created after `after + radius` and before
+    // `before - radius`; None leaves that side open.
+    let in_gap = |after: Option<SystemTime>, before: Option<SystemTime>| -> u64 {
+        let start = match after {
+            None => 0,
+            Some(sample) => sample
+                .checked_add(radius)
+                .map_or(window.len(), |low| window.first_after(low)),
+        };
+        let end = match before {
+            None => window.len(),
+            Some(sample) => sample
+                .checked_sub(radius)
+                .map_or(0, |high| window.first_at_or_after(high)),
+        };
+        end.min(eligible_end).saturating_sub(start) as u64
+    };
+    let samples = &window.sample_times;
+    let uncovered = match (samples.front(), samples.back()) {
+        (Some(first), Some(last)) => {
+            let two_radii = radius.checked_mul(2);
+            let between = samples
+                .iter()
+                .zip(samples.iter().skip(1))
+                .filter(|(a, b)| {
+                    two_radii
+                        .and_then(|span| a.checked_add(span))
+                        .is_some_and(|reach| reach < **b)
+                })
+                .map(|(a, b)| in_gap(Some(*a), Some(*b)))
+                .sum::<u64>();
+            in_gap(None, Some(*first)) + between + in_gap(Some(*last), None)
         }
-        previous = Some(share.created_at);
-        if share.verified {
-            stats.verified_shares += 1;
-            let reach = share.created_at.checked_sub(radius).unwrap_or(UNIX_EPOCH);
-            while waiting.front().is_some_and(|at| *at < reach) {
-                waiting.pop_front();
-                stats.uncovered_provisional_shares += 1;
-            }
-            waiting.clear();
-            last_sample = Some(share.created_at);
-        } else if eligible(share) {
-            stats.eligible_provisional_shares += 1;
-            let covered_before = last_sample.is_some_and(|sample| {
-                sample
-                    .checked_add(radius)
-                    .is_none_or(|reach| share.created_at <= reach)
-            });
-            if !covered_before {
-                waiting.push_back(share.created_at);
-            }
-        }
+        _ => in_gap(None, None),
+    };
+    CountCoverageStats {
+        verified_shares: window.verified_shares(),
+        eligible_provisional_shares: window.provisional_shares.saturating_sub(delayed_shares),
+        uncovered_provisional_shares: uncovered,
     }
-    stats.uncovered_provisional_shares += waiting.len() as u64;
-    stats
 }
 
+/// Reference for `count_coverage_stats`: a sorted-sample lookup per share.
+#[cfg(test)]
 fn count_coverage_stats_unordered(
     state: &ValidationAddressState,
     radius: Duration,
@@ -3138,7 +3415,7 @@ fn load_initial_validation_state(
                 resume_forced_at: entry.resume_forced_at.filter(|start_at| *start_at > now),
                 hold_cause: entry.hold_cause,
                 provisional_at: VecDeque::new(),
-                accepted_window: VecDeque::new(),
+                accepted_window: Arc::default(),
                 last_replay_backfill_at: None,
                 last_invalid_sample_at: None,
                 last_seen_at: entry.last_seen_at,
@@ -3159,7 +3436,7 @@ fn load_initial_validation_state(
 
     for accepted in loaded.accepted_window {
         let entry = state.entry(accepted.address.clone()).or_default();
-        entry.accepted_window.push_back(AcceptedWindowShare {
+        entry.window_mut().push(AcceptedWindowShare {
             share_id: accepted.share_id,
             created_at: accepted.created_at,
             difficulty: accepted.difficulty,
@@ -3663,7 +3940,7 @@ mod tests {
                     seeded_ids += 1;
                     let created_at = now - Duration::from_secs_f64(age);
                     let verified = seed_rng.gen::<f64>() < coverage;
-                    st.accepted_window.push_back(AcceptedWindowShare {
+                    st.window_mut().push(AcceptedWindowShare {
                         share_id: seeded_ids,
                         created_at,
                         difficulty,
@@ -4039,7 +4316,7 @@ mod tests {
         for i in 0..count {
             let age = span.mul_f64((count - i) as f64 / count as f64);
             let verified = verified_every > 0 && i % verified_every == 0;
-            st.accepted_window.push_back(AcceptedWindowShare {
+            st.window_mut().push(AcceptedWindowShare {
                 share_id: 1_000_000 + i as i64,
                 created_at: now - age,
                 difficulty: 1,
@@ -4176,21 +4453,25 @@ mod tests {
         let mut gap = farm.clone();
         let gap_from = now - Duration::from_secs(4 * 3600);
         let gap_to = now - Duration::from_secs(3 * 3600);
-        for share in gap.accepted_window.iter_mut() {
-            if share.created_at > gap_from && share.created_at < gap_to {
-                share.verified = false;
+        gap.window_mut().edit(|shares| {
+            for share in shares.iter_mut() {
+                if share.created_at > gap_from && share.created_at < gap_to {
+                    share.verified = false;
+                }
             }
-        }
+        });
         assert!(should_force_for_payout_coverage(&gap, &count, now));
 
         // Too few recent samples: the backlog hold applies as under ratio.
         let mut quiet = farm.clone();
         let recent = now - Duration::from_secs(15 * 60);
-        for share in quiet.accepted_window.iter_mut() {
-            if share.created_at > recent {
-                share.verified = false;
+        quiet.window_mut().edit(|shares| {
+            for share in shares.iter_mut() {
+                if share.created_at > recent {
+                    share.verified = false;
+                }
             }
-        }
+        });
         assert!(should_force_for_provisional_backlog(&quiet, &count, now));
 
         // A small address with ratio-level coverage but few samples gets the
@@ -4221,11 +4502,13 @@ mod tests {
         // A farm with no recent samples is in backlog hold.
         let mut farm = seeded_state(7_100, Duration::from_secs(3600), 100);
         let recent = SystemTime::now() - Duration::from_secs(20 * 60);
-        for share in farm.accepted_window.iter_mut() {
-            if share.created_at > recent {
-                share.verified = false;
+        farm.window_mut().edit(|shares| {
+            for share in shares.iter_mut() {
+                if share.created_at > recent {
+                    share.verified = false;
+                }
             }
-        }
+        });
         seed_address(&engine, "farm", farm);
         let trials = 20_000;
         let held = (0..trials)
@@ -4382,33 +4665,147 @@ mod tests {
     }
 
     #[test]
-    fn count_coverage_one_pass_matches_sorted_lookup() {
-        let cfg = Config {
-            provisional_share_delay: "15m".to_string(),
-            ..count_cfg()
-        };
-        let radius = cfg.count_sample_radius_duration();
-        let now = SystemTime::now();
+    fn window_stats_match_full_scans() {
         let mut rng = StdRng::seed_from_u64(11);
-        for verified_every in [3u64, 40, 200, 2_000] {
-            let mut st = seeded_state(6_000, Duration::from_secs(6 * 3600), 0);
-            for share in st.accepted_window.iter_mut() {
-                share.verified = rng.gen_range(0..verified_every) == 0;
-            }
+        for (delay, radius) in [("15m", "10m"), ("0s", "10m"), ("15m", "0s"), ("15m", "3h")] {
+            let cfg = Config {
+                provisional_share_delay: delay.to_string(),
+                count_sample_radius: radius.to_string(),
+                payout_provisional_cap_multiplier: 19.0,
+                ..count_cfg()
+            };
+            let radius = cfg.count_sample_radius_duration();
             let delay = cfg.provisional_share_delay_duration();
-            let eligible =
-                |share: &AcceptedWindowShare| !share.verified && share.created_at <= now - delay;
-            let one_pass = count_coverage_stats(&st, &cfg, now);
-            assert_eq!(
-                one_pass,
-                count_coverage_stats_unordered(&st, radius, eligible)
+            for verified_every in [1u64, 3, 40, 200, 2_000, u64::MAX] {
+                let now = SystemTime::now();
+                let mut st = ValidationAddressState::default();
+                // Out-of-order arrivals, repeated timestamps, mixed sizes.
+                for i in 0..6_000i64 {
+                    let age = Duration::from_secs(rng.gen_range(0..6 * 3600));
+                    st.window_mut().push(AcceptedWindowShare {
+                        share_id: i,
+                        created_at: now - age,
+                        difficulty: rng.gen_range(1..50),
+                        verified: rng.gen_range(0..verified_every) == 0,
+                    });
+                }
+                // Audits, failed audits and revocations change the window
+                // after insertion.
+                for _ in 0..200 {
+                    let id = rng.gen_range(0..6_000i64);
+                    match rng.gen_range(0..3) {
+                        0 => {
+                            st.window_mut().mark_verified(id);
+                        }
+                        1 => st.window_mut().remove_share(id),
+                        _ => st.window_mut().retain(|share| share.share_id != id),
+                    }
+                }
+                let window = &st.accepted_window;
+                assert!(window
+                    .iter()
+                    .zip(window.iter().skip(1))
+                    .all(|(a, b)| a.created_at <= b.created_at));
+                for check_at in [
+                    now,
+                    now + Duration::from_secs(600),
+                    now - Duration::from_secs(7_200),
+                ] {
+                    let eligible = |share: &AcceptedWindowShare| {
+                        !share.verified && (delay.is_zero() || share.created_at <= check_at - delay)
+                    };
+                    assert_eq!(
+                        count_coverage_stats(&st, &cfg, check_at),
+                        count_coverage_stats_unordered(&st, radius, eligible),
+                        "count coverage, verified_every {verified_every}"
+                    );
+                    assert_eq!(
+                        payout_coverage_stats(&st, &cfg, check_at),
+                        payout_coverage_stats_scan(&st, &cfg, check_at)
+                    );
+                    assert_eq!(
+                        provisional_backlog_stats(&st, &cfg, check_at),
+                        provisional_backlog_stats_scan(&st, &cfg, check_at)
+                    );
+                    let hour_ago = check_at - cfg.count_window_duration();
+                    assert_eq!(
+                        count_window_shares(&st, &cfg, check_at),
+                        st.accepted_window
+                            .iter()
+                            .filter(|share| share.created_at > hour_ago)
+                            .count() as u64
+                    );
+                }
+                // Pruning keeps the totals in step.
+                let mut pruned = st.clone();
+                prune_accepted_window(&mut pruned, &cfg, now + Duration::from_secs(3 * 3600));
+                let mut rebuilt = pruned.clone();
+                rebuilt.window_mut().rebuild_totals();
+                assert_eq!(
+                    pruned.accepted_window.sample_times,
+                    rebuilt.accepted_window.sample_times
+                );
+                assert_eq!(
+                    (
+                        pruned.accepted_window.provisional_shares,
+                        pruned.accepted_window.provisional_difficulty,
+                        pruned.accepted_window.verified_difficulty
+                    ),
+                    (
+                        rebuilt.accepted_window.provisional_shares,
+                        rebuilt.accepted_window.provisional_difficulty,
+                        rebuilt.accepted_window.verified_difficulty
+                    )
+                );
+            }
+        }
+    }
+
+    /// Per-share cost of the hot submit path (plan + hot accept, both under
+    /// the global state lock) for the largest production address: ~142k
+    /// shares in a 6-hour window. Prints one line per policy.
+    ///
+    ///   cargo test --release -p pool-runtime bench_large_address_submit_path \
+    ///     -- --ignored --nocapture
+    #[test]
+    #[ignore = "benchmark"]
+    fn bench_large_address_submit_path() {
+        let window_shares = 142_000u64;
+        for (policy, verified_every) in [("ratio", 8u64), ("count", 30)] {
+            let cfg = Config {
+                verification_policy: policy.to_string(),
+                sample_rate: 0.05,
+                min_sample_every: 25,
+                provisional_share_delay: "15m".to_string(),
+                payout_provisional_cap_multiplier: 19.0,
+                pplns_window_duration: "6h".to_string(),
+                warmup_shares: 5,
+                ..test_cfg()
+            };
+            let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+            let address = "bench-large";
+            seed_address(
+                &engine,
+                address,
+                seeded_state(window_shares, Duration::from_secs(6 * 3600), verified_every),
             );
-            // An out-of-order entry takes the sorted path.
-            let mut shuffled = st.clone();
-            shuffled.accepted_window.swap(10, 3_000);
-            assert_eq!(
-                count_coverage_stats(&shuffled, &cfg, now),
-                count_coverage_stats_unordered(&shuffled, radius, eligible)
+            let iterations = 2_000;
+            let started = Instant::now();
+            for i in 0..iterations {
+                let plan = engine.plan_regular_submit_for_source(address, true);
+                engine.record_hot_accept(
+                    address,
+                    10_000_000 + i as i64,
+                    1,
+                    SystemTime::now(),
+                    None,
+                    plan,
+                );
+            }
+            let per_share = started.elapsed() / iterations;
+            println!(
+                "bench_large_address_submit_path policy={policy} window={window_shares} per_share_us={:.1}",
+                per_share.as_secs_f64() * 1e6
             );
         }
     }
@@ -5875,9 +6272,10 @@ mod tests {
             assert_eq!(restored.provisional_at.len(), 1);
             assert_eq!(restored.provisional_at[0].share_id, Some(share_id));
             assert_eq!(restored.accepted_window.len(), 1);
-            assert_eq!(restored.accepted_window[0].share_id, share_id);
-            assert_eq!(restored.accepted_window[0].difficulty, 7);
-            assert!(!restored.accepted_window[0].verified);
+            let restored_share = restored.accepted_window.front().expect("restored share");
+            assert_eq!(restored_share.share_id, share_id);
+            assert_eq!(restored_share.difficulty, 7);
+            assert!(!restored_share.verified);
         }
         let after_restart = restarted.plan_regular_submit(address);
         assert!(
