@@ -218,11 +218,17 @@ that requires a fake to survive past maturity, whose probability is in the
     no saving, but no worse treatment than today.
   - *CPU*: the count criterion is one pass over the address's in-memory
     window, like the existing ratio checks, run under the same lock.
-- **API previews.** The API's pending-balance estimate and reward-status
-  labels still apply the ratio cap (they use per-address aggregates, not
-  share timelines). With count mode on they would understate large farms'
-  pending balances and label them "capped provisional". Payouts themselves
-  are correct. This must be updated before enabling (see open items).
+- **API previews.** The miner-facing pending-balance estimate never applied
+  the ratio cap (it weights all ready provisional work), so count mode does
+  not change it. The admin block reward breakdown's payout view does apply
+  the payout rule: under count mode it reads each address's clean-sample
+  count and uncovered provisional difficulty with
+  `PostgresStore::count_policy_window_coverage` (one index lookup per
+  uncovered stretch, ~0.6-0.8 s for a 6-hour production window) and labels a
+  row "capped" only when neither rule credits all of it. A test checks the
+  query against `payout::count_policy_provisional_credit` on random share
+  timelines. The API reads `verification_policy` at startup, so restart it
+  together with the Stratum handover when switching policy.
 
 ## Interaction with growth mode
 
@@ -243,7 +249,7 @@ Enable when sustained verifier demand approaches capacity (for example
 `BlocknetPoolBeyondGrowthCapacity`, or live + background audits above ~8-9/s
 for an hour with growth level 3 already active), and after:
 
-1. the API preview follow-up below is done;
+1. the API preview follow-up is done (done 2026-11-10, see "API previews" above);
 2. one production reload in shadow (or a short enabled window) confirms the
    replay: large-address coverage ~2-3%, no rise in holds or in
    `forced_verify_addresses`, payouts for the top addresses unchanged.
@@ -294,8 +300,9 @@ replayed vs ~4.2/s live).
 
 ## Open items for the owner
 
-- Update the API's pending estimate and reward-status to the count rule
-  (`payout::count_policy_provisional_credit` takes the share timeline).
+- ~~Update the API's pending estimate and reward-status to the count rule.~~
+  Done 2026-11-10 (the breakdown's payout view; the pending estimate needed
+  no change).
 - Decide whether to persist the failure pause and source establishment
   across handovers (today both reset to the conservative side).
 - The honest-error band (2% + 3 sigma, soft strikes) is the dominant standing

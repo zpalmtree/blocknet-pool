@@ -167,7 +167,7 @@ pub struct CountPayoutRule {
 }
 
 impl PayoutTrustPolicy {
-    fn from_config(cfg: &Config) -> Self {
+    pub fn from_config(cfg: &Config) -> Self {
         Self {
             count: cfg.count_verification_policy().then(|| CountPayoutRule {
                 min_samples: cfg.count_payout_min_samples.max(1) as u64,

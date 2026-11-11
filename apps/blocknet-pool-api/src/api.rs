@@ -48,7 +48,8 @@ use pool_runtime::hashrate::{
 use pool_runtime::jobs::JobManager;
 use pool_runtime::node::{NodeClient, WalletBalance};
 use pool_runtime::payout::{
-    is_share_payout_eligible, recover_share_window_by_replay, reward_window_end, PayoutTrustPolicy,
+    count_policy_provisional_credit, is_share_payout_eligible, recover_share_window_by_replay,
+    reward_window_end, CountPayoutRule, PayoutTrustPolicy,
 };
 use pool_runtime::pgdb::{
     with_statement_timeout, BalanceSourceSummary, ConfirmedPayoutImportRecipient,
@@ -1512,6 +1513,9 @@ struct RewardWindowAddressStats {
     verified_difficulty: u64,
     provisional_shares_eligible: u64,
     provisional_difficulty_eligible: u64,
+    /// Provisional difficulty the count verification policy credits
+    /// (`payout::count_policy_provisional_credit`); 0 under the ratio policy.
+    count_provisional_credit: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -3423,6 +3427,7 @@ fn preview_weight(
     preview: &ShareWindowAddressPreview,
     force_verify_active: bool,
     trust_policy: PayoutTrustPolicy,
+    count_provisional_credit: u64,
 ) -> Option<u64> {
     let provisional_difficulty = if force_verify_active {
         0
@@ -3447,6 +3452,11 @@ fn preview_weight(
             * trust_policy.provisional_cap_multiplier)
             .clamp(0.0, u64::MAX as f64) as u64;
         provisional_difficulty.min(provisional_cap)
+    };
+    let counted_provisional = if trust_policy.count.is_some() {
+        counted_provisional.max(count_provisional_credit.min(provisional_difficulty))
+    } else {
+        counted_provisional
     };
     let weight = preview
         .verified_difficulty
@@ -3675,7 +3685,7 @@ fn estimate_unconfirmed_pending_snapshot(
             let stats = collect_address_preview_stats_from_summary(Some(preview), risky);
             stats_by_address.insert(preview.address.clone(), stats);
 
-            let Some(weight) = preview_weight(preview, risky, preview_trust_policy) else {
+            let Some(weight) = preview_weight(preview, risky, preview_trust_policy, 0) else {
                 continue;
             };
             total_weight = total_weight.saturating_add(weight);
@@ -3825,21 +3835,61 @@ fn collect_reward_window_stats(
     shares: &[DbShare],
     now: SystemTime,
     provisional_delay: Duration,
+    count_rule: Option<CountPayoutRule>,
 ) -> HashMap<String, RewardWindowAddressStats> {
     let mut by_address = HashMap::<String, RewardWindowAddressStats>::new();
+    // Count policy only: (verified share times, eligible provisional shares).
+    let mut timelines = HashMap::<&str, (Vec<SystemTime>, Vec<(SystemTime, u64)>)>::new();
     for share in shares {
         let entry = by_address.entry(share.miner.clone()).or_default();
         if is_verified_share_status(&share.status) {
             entry.verified_shares = entry.verified_shares.saturating_add(1);
             entry.verified_difficulty = entry.verified_difficulty.saturating_add(share.difficulty);
+            if count_rule.is_some() {
+                timelines
+                    .entry(share.miner.as_str())
+                    .or_default()
+                    .0
+                    .push(share.created_at);
+            }
         } else if is_share_payout_eligible(share, now, provisional_delay) {
             entry.provisional_shares_eligible = entry.provisional_shares_eligible.saturating_add(1);
             entry.provisional_difficulty_eligible = entry
                 .provisional_difficulty_eligible
                 .saturating_add(share.difficulty);
+            if count_rule.is_some() {
+                timelines
+                    .entry(share.miner.as_str())
+                    .or_default()
+                    .1
+                    .push((share.created_at, share.difficulty));
+            }
+        }
+    }
+    if let Some(rule) = count_rule {
+        for (address, (mut sampled_at, eligible)) in timelines {
+            if let Some(entry) = by_address.get_mut(address) {
+                entry.count_provisional_credit =
+                    count_policy_provisional_credit(&mut sampled_at, &eligible, rule);
+            }
         }
     }
     by_address
+}
+
+/// Count policy credit from a window's clean-sample count and the eligible
+/// provisional difficulty no clean sample covers; matches
+/// `payout::count_policy_provisional_credit` on the same shares.
+fn count_credit_from_coverage(
+    provisional_difficulty_eligible: u64,
+    samples: u64,
+    uncovered_provisional_difficulty: u64,
+    rule: CountPayoutRule,
+) -> u64 {
+    let covered = provisional_difficulty_eligible.saturating_sub(uncovered_provisional_difficulty);
+    let need = rule.min_samples.max(1);
+    let have = samples.min(need);
+    ((covered as u128 * have as u128) / need as u128) as u64
 }
 
 fn reward_participant_status(
@@ -3868,7 +3918,12 @@ fn reward_participant_status(
         let provisional_cap = ((stats.verified_difficulty as f64)
             * trust_policy.provisional_cap_multiplier)
             .clamp(0.0, u64::MAX as f64) as u64;
-        if provisional_difficulty_eligible > provisional_cap {
+        let count_credit = if trust_policy.count.is_some() {
+            stats.count_provisional_credit
+        } else {
+            0
+        };
+        if provisional_difficulty_eligible > provisional_cap.max(count_credit) {
             return RewardParticipantStatus::CappedProvisional;
         }
     }
@@ -3897,6 +3952,7 @@ fn compute_reward_mode(
                 .copied()
                 .unwrap_or(false),
             trust_policy,
+            stats.count_provisional_credit,
         ) {
             weights.insert(address.clone(), weight);
             total_weight = total_weight.saturating_add(weight);
@@ -3973,9 +4029,28 @@ fn load_block_reward_window(
         .iter()
         .map(|preview| preview.seen_shares as usize)
         .sum();
+    let count_rule = PayoutTrustPolicy::from_config(&config.runtime).count;
+    let coverage = match count_rule {
+        Some(rule) => store.count_policy_window_coverage(
+            start,
+            end,
+            cutoff.unwrap_or(UNIX_EPOCH),
+            rule.sample_radius,
+        )?,
+        None => HashMap::new(),
+    };
     let stats = previews
         .into_iter()
         .map(|preview| {
+            let count_provisional_credit = match (count_rule, coverage.get(&preview.address)) {
+                (Some(rule), Some(coverage)) => count_credit_from_coverage(
+                    preview.provisional_difficulty_ready,
+                    coverage.samples,
+                    coverage.uncovered_provisional_difficulty,
+                    rule,
+                ),
+                _ => 0,
+            };
             (
                 preview.address,
                 RewardWindowAddressStats {
@@ -3983,6 +4058,7 @@ fn load_block_reward_window(
                     verified_difficulty: preview.verified_difficulty,
                     provisional_shares_eligible: preview.provisional_shares_ready,
                     provisional_difficulty_eligible: preview.provisional_difficulty_ready,
+                    count_provisional_credit,
                 },
             )
         })
@@ -4048,10 +4124,7 @@ fn build_block_reward_breakdown(
         provisional_cap_multiplier: 0.0,
         count: None,
     };
-    let payout_trust_policy = PayoutTrustPolicy::from_values(
-        config.runtime.payout_min_verified_shares,
-        config.runtime.payout_provisional_cap_multiplier,
-    );
+    let payout_trust_policy = PayoutTrustPolicy::from_config(&config.runtime);
     let reward_context = RewardModeContext {
         distributable_reward,
         risky_by_address: &risky_by_address,
@@ -4085,8 +4158,12 @@ fn build_block_reward_breakdown(
             false,
         ) {
             Ok(recovery) if recovery.attempted => {
-                display_stats_by_address =
-                    collect_reward_window_stats(&display_shares, now, provisional_delay);
+                display_stats_by_address = collect_reward_window_stats(
+                    &display_shares,
+                    now,
+                    provisional_delay,
+                    payout_trust_policy.count,
+                );
                 preview_mode = compute_reward_mode(
                     preview_trust_policy,
                     &reward_context,
@@ -7174,6 +7251,9 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
+        collect_reward_window_stats, load_block_reward_window, reward_window_end, PayoutTrustPolicy,
+    };
+    use super::{
         pending_estimate_snapshot_can_serve, pending_estimate_snapshot_needs_refresh,
         CheckpointFileError, ClientIp, HashrateStatsInput, MinerHashrateRamp,
         PendingEstimateSnapshotCache, PendingPreviewValidation, PublicTelemetryRateLimiter,
@@ -9266,6 +9346,285 @@ mod tests {
             miner_a.payout_status,
             RewardParticipantStatus::CappedProvisional
         );
+    }
+
+    fn test_run_tag() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64
+            % 1_000_000_000
+    }
+
+    fn count_policy_test_config(min_samples: i32, radius: &str) -> Config {
+        let mut cfg = pplns_test_config("24h");
+        cfg.runtime.payout_min_verified_shares = 1;
+        cfg.runtime.payout_provisional_cap_multiplier = 1.0;
+        cfg.runtime.verification_policy = "count".to_string();
+        cfg.runtime.count_payout_min_samples = min_samples;
+        cfg.runtime.count_sample_radius = radius.to_string();
+        cfg
+    }
+
+    #[test]
+    fn block_reward_breakdown_applies_count_policy_credit() {
+        let store = require_test_store!();
+        let mut cfg = count_policy_test_config(2, "60s");
+        cfg.runtime.provisional_share_delay = "0s".to_string();
+
+        // The shared test database keeps rows between runs; tag this run's.
+        let tag = test_run_tag();
+        let (c_addr, d_addr, e_addr) = (
+            format!("count-c-{tag}"),
+            format!("count-d-{tag}"),
+            format!("count-e-{tag}"),
+        );
+        let (c_addr, d_addr, e_addr) = (c_addr.as_str(), d_addr.as_str(), e_addr.as_str());
+        let job =
+            |name: &str| -> &'static str { Box::leak(format!("{name}-{tag}").into_boxed_str()) };
+        let height = 8_800_000_000 + tag;
+        let hash = format!("blk-count-{tag}");
+        let base = UNIX_EPOCH + Duration::from_secs(8_800_000);
+        let at = |secs: u64| base + Duration::from_secs(secs);
+        add_test_shares(
+            &store,
+            &[
+                // count-c: two samples; the shares at +10 and +290 are within
+                // 60 s of one, the share at +150 is not.
+                (
+                    job("j-cnt-c-v1"),
+                    c_addr,
+                    "wc",
+                    20,
+                    1,
+                    "verified",
+                    true,
+                    at(0),
+                ),
+                (
+                    job("j-cnt-c-p1"),
+                    c_addr,
+                    "wc",
+                    100,
+                    2,
+                    "provisional",
+                    false,
+                    at(10),
+                ),
+                (
+                    job("j-cnt-c-p2"),
+                    c_addr,
+                    "wc",
+                    100,
+                    3,
+                    "provisional",
+                    false,
+                    at(150),
+                ),
+                (
+                    job("j-cnt-c-p3"),
+                    c_addr,
+                    "wc",
+                    100,
+                    4,
+                    "provisional",
+                    false,
+                    at(290),
+                ),
+                (
+                    job("j-cnt-c-v2"),
+                    c_addr,
+                    "wc",
+                    20,
+                    5,
+                    "verified",
+                    true,
+                    at(300),
+                ),
+                // count-d: one sample of the two needed, so half credit.
+                (
+                    job("j-cnt-d-v1"),
+                    d_addr,
+                    "wd",
+                    20,
+                    6,
+                    "verified",
+                    true,
+                    at(400),
+                ),
+                (
+                    job("j-cnt-d-p1"),
+                    d_addr,
+                    "wd",
+                    100,
+                    7,
+                    "provisional",
+                    false,
+                    at(410),
+                ),
+                // count-e: ratio cap already covers it.
+                (
+                    job("j-cnt-e-v1"),
+                    e_addr,
+                    "we",
+                    50,
+                    8,
+                    "verified",
+                    true,
+                    at(500),
+                ),
+                (
+                    job("j-cnt-e-p1"),
+                    e_addr,
+                    "we",
+                    40,
+                    9,
+                    "provisional",
+                    false,
+                    at(900),
+                ),
+            ],
+        );
+        let block_ts = at(1_000);
+        add_test_block(
+            &store,
+            (height, &hash, e_addr, "we", 1_200, block_ts, false, false),
+        );
+
+        let breakdown =
+            build_block_reward_breakdown(&store, &cfg, height, block_ts + Duration::from_secs(10))
+                .expect("reward breakdown");
+        let row = |address: &str| {
+            breakdown
+                .participants
+                .iter()
+                .find(|row| row.address == address)
+                .unwrap_or_else(|| panic!("{address} row"))
+        };
+        let c = row(c_addr);
+        assert_eq!(c.preview_weight, 340);
+        // Ratio cap 40; count credit 200 (two covered shares, full samples).
+        assert_eq!(c.payout_weight, 40 + 200);
+        assert_eq!(c.payout_status, RewardParticipantStatus::CappedProvisional);
+        let d = row(d_addr);
+        // Ratio cap 20; count credit 100 x 1/2.
+        assert_eq!(d.payout_weight, 20 + 50);
+        assert_eq!(d.payout_status, RewardParticipantStatus::CappedProvisional);
+        let e = row(e_addr);
+        assert_eq!(e.payout_weight, 90);
+        assert_eq!(e.payout_status, RewardParticipantStatus::Included);
+
+        // Under the ratio policy the same window is capped at 1x verified.
+        cfg.runtime.verification_policy = "ratio".to_string();
+        let ratio =
+            build_block_reward_breakdown(&store, &cfg, height, block_ts + Duration::from_secs(10))
+                .expect("ratio breakdown");
+        let ratio_c = ratio
+            .participants
+            .iter()
+            .find(|row| row.address == c_addr)
+            .expect("count-c ratio row");
+        assert_eq!(ratio_c.payout_weight, 40 + 40);
+    }
+
+    /// The SQL coverage query must credit exactly what the payout's
+    /// in-memory count rule credits on the same shares.
+    #[test]
+    fn count_policy_window_coverage_matches_payout_rule() {
+        use rand::{Rng, SeedableRng};
+        let store = require_test_store!();
+        let mut cfg = count_policy_test_config(30, "120s");
+        cfg.runtime.provisional_share_delay = "10m".to_string();
+
+        let base = UNIX_EPOCH + Duration::from_secs(9_100_000);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xC0FFEE);
+        let tag = test_run_tag();
+        let addresses = ["r1", "r2", "r3", "r4"].map(|name| -> &'static str {
+            Box::leak(format!("count-{name}-{tag}").into_boxed_str())
+        });
+        let verify_odds = [0.02, 0.08, 0.3, 0.0];
+        let mut nonce = 100u64;
+        for (address, odds) in addresses.iter().zip(verify_odds) {
+            for i in 0..300u64 {
+                nonce += 1;
+                let secs = rng.gen_range(0..7_200u64);
+                let roll: f64 = rng.gen();
+                let status = if roll < odds {
+                    "verified"
+                } else if roll < odds + 0.05 {
+                    "rejected"
+                } else {
+                    "provisional"
+                };
+                let job = format!("j-{address}-{i}");
+                add_test_shares(
+                    &store,
+                    &[(
+                        job.as_str(),
+                        address,
+                        "wr",
+                        rng.gen_range(1..1_000u64),
+                        nonce,
+                        status,
+                        status == "verified",
+                        base + Duration::from_secs(secs),
+                    )],
+                );
+            }
+        }
+        let block_ts = base + Duration::from_secs(7_200);
+        add_test_block(
+            &store,
+            (
+                9_100_000_000 + tag,
+                &format!("blk-count-rand-{tag}"),
+                addresses[0],
+                "wr",
+                1_200,
+                block_ts,
+                false,
+                false,
+            ),
+        );
+        let block = store
+            .get_block(9_100_000_000 + tag)
+            .unwrap()
+            .expect("block");
+        let rule = PayoutTrustPolicy::from_config(&cfg.runtime)
+            .count
+            .expect("count rule");
+        let delay = cfg.runtime.provisional_share_delay_duration();
+        // A `now` that leaves the last stretch of shares inside the delay.
+        let now = base + Duration::from_secs(6_000) + delay;
+
+        let (sql_stats, _) =
+            load_block_reward_window(&store, &cfg, &block, now, delay).expect("sql window");
+        let end = reward_window_end(&store, &block).unwrap();
+        let start = end
+            .checked_sub(cfg.runtime.pplns_window_duration())
+            .unwrap();
+        let start = UNIX_EPOCH + Duration::from_secs(system_time_to_unix_secs(start));
+        let shares = store.get_shares_between(start, end).unwrap();
+        let rust_stats = collect_reward_window_stats(&shares, now, delay, Some(rule));
+
+        let mut credited = 0;
+        for address in addresses {
+            let sql = sql_stats.get(address).expect("sql address");
+            let rust = rust_stats.get(address).expect("rust address");
+            assert_eq!(
+                sql.provisional_difficulty_eligible, rust.provisional_difficulty_eligible,
+                "{address} eligible"
+            );
+            assert_eq!(
+                sql.count_provisional_credit, rust.count_provisional_credit,
+                "{address} count credit"
+            );
+            if sql.count_provisional_credit > 0 {
+                credited += 1;
+            }
+        }
+        assert!(credited >= 2, "fixture should exercise partial coverage");
+        assert_eq!(sql_stats[addresses[3]].count_provisional_credit, 0);
     }
 
     #[test]

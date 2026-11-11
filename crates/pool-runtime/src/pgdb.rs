@@ -87,6 +87,13 @@ pub struct ShareWindowAddressPreview {
     pub provisional_shares_delayed: u64,
 }
 
+/// Per-address count policy inputs for one PPLNS window (`count_policy_window_coverage`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CountPolicyWindowCoverage {
+    pub samples: u64,
+    pub uncovered_provisional_difficulty: u64,
+}
+
 pub type WorkerStats = Vec<(String, u64, u64, u64, i64)>;
 pub type WorkerHashrateStats = Vec<(String, u64, u64, Option<SystemTime>, Option<SystemTime>)>;
 pub type WorkerVersions = Vec<(String, String, Option<String>)>;
@@ -2059,6 +2066,75 @@ impl PostgresStore {
             .into_iter()
             .map(row_to_share_window_preview)
             .collect::<Vec<_>>())
+    }
+
+    /// Count policy inputs for one PPLNS window `[start, end]` (seconds,
+    /// inclusive), per address with at least one clean sample: the number of
+    /// clean (verified) samples, and the difficulty of provisional shares
+    /// created at or before `ready_end` that have no clean sample within
+    /// `radius`. Only the uncovered stretches are read row by row, so a well
+    /// sampled address costs little beyond its samples (~0.6 s for a 6-hour
+    /// production window on 2026-11-11).
+    pub fn count_policy_window_coverage(
+        &self,
+        start: SystemTime,
+        end: SystemTime,
+        ready_end: SystemTime,
+        radius: Duration,
+    ) -> Result<HashMap<String, CountPolicyWindowCoverage>> {
+        let start_ts = to_unix(start);
+        let end_ts = to_unix(end);
+        let ready_ts = to_unix(ready_end).min(end_ts);
+        let radius_s = i64::try_from(radius.as_secs()).unwrap_or(i64::MAX / 4);
+        let rows = self.conn().query(
+            "WITH v AS (
+                SELECT miner, created_at,
+                       LAG(created_at) OVER (PARTITION BY miner ORDER BY created_at) AS prev
+                FROM shares
+                WHERE created_at >= $1 AND created_at <= $2 AND NOT solo
+                  AND status IN ('', 'verified')
+             ), samples AS (
+                SELECT miner, COUNT(*)::bigint AS n,
+                       MIN(created_at) AS first_at, MAX(created_at) AS last_at
+                FROM v GROUP BY miner
+             ), gaps AS (
+                SELECT miner, prev + $4 + 1 AS lo, created_at - $4 - 1 AS hi
+                FROM v WHERE prev IS NOT NULL AND created_at - prev > 2 * $4 + 1
+                UNION ALL
+                SELECT miner, $1, first_at - $4 - 1 FROM samples
+                UNION ALL
+                SELECT miner, last_at + $4 + 1, $3 FROM samples
+             ), clipped AS (
+                SELECT miner, GREATEST(lo, $1) AS lo, LEAST(hi, $3) AS hi FROM gaps
+             ), uncovered AS (
+                -- One index lookup per gap. The constant bounds let the
+                -- planner prune share partitions outside the window.
+                SELECT c.miner, SUM(x.work)::bigint AS work
+                FROM clipped c CROSS JOIN LATERAL (
+                    SELECT SUM(s.difficulty) AS work FROM shares s
+                    WHERE s.miner = c.miner AND s.status = 'provisional' AND NOT s.solo
+                      AND s.created_at >= c.lo AND s.created_at <= c.hi
+                      AND s.created_at >= $1 AND s.created_at <= $3
+                ) x
+                WHERE c.lo <= c.hi
+                GROUP BY c.miner
+             )
+             SELECT s.miner, s.n, COALESCE(u.work, 0)::bigint
+             FROM samples s LEFT JOIN uncovered u ON u.miner = s.miner",
+            &[&start_ts, &end_ts, &ready_ts, &radius_s],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    CountPolicyWindowCoverage {
+                        samples: row.get::<_, i64>(1).max(0) as u64,
+                        uncovered_provisional_difficulty: row.get::<_, i64>(2).max(0) as u64,
+                    },
+                )
+            })
+            .collect())
     }
 
     pub(crate) fn latest_share_timestamp_for_block_hash(
