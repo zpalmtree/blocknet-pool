@@ -310,9 +310,12 @@ groups:
           description: The daemon reported an unknown or expired template ID in the last 15 minutes, and for at least one minute the pool has had no confirmed template fetch or renewal within two minutes. A daemon restart or switch can invalidate an ID before its lease expires.
 
       - alert: BlocknetPoolTemplateExpiredAtBlockSubmit
+        # increase() extrapolates each counter differently (never below zero),
+        # so compare the difference against half an event, not the raw values.
         expr: >-
           increase(blocknet_pool_monitor_template_submit_expired_responses_total[15m])
-          > increase(blocknet_pool_monitor_block_submit_full_fallback_stale_total[15m])
+          - increase(blocknet_pool_monitor_block_submit_full_fallback_stale_total[15m])
+          >= 0.5
         labels:
           severity: warning
           visibility: private
@@ -332,17 +335,21 @@ groups:
 
       - alert: BlocknetPoolCandidatePipelineDropped
         # Preserve rejection alerts while older monitors lack the invalid-nonce counter.
+        # increase() extrapolates each counter differently (never below zero), so
+        # excluded rejections can leave a fractional remainder; an unexcluded
+        # rejection adds about one.
         expr: >-
           increase(blocknet_pool_monitor_candidate_permit_rejected_total[15m]) > 0
           or increase(blocknet_pool_monitor_candidate_enqueue_rejected_total[15m]) > 0
           or (
             increase(blocknet_pool_monitor_candidate_rejected_total[15m])
-            > increase(blocknet_pool_monitor_candidate_stale_block_total[15m])
-              + increase(blocknet_pool_monitor_candidate_disproven_claims_total[15m])
-              + (
-                increase(blocknet_pool_monitor_candidate_invalid_nonce_total[15m])
-                or 0 * increase(blocknet_pool_monitor_candidate_rejected_total[15m])
-              )
+            - increase(blocknet_pool_monitor_candidate_stale_block_total[15m])
+            - increase(blocknet_pool_monitor_candidate_disproven_claims_total[15m])
+            - (
+              increase(blocknet_pool_monitor_candidate_invalid_nonce_total[15m])
+              or 0 * increase(blocknet_pool_monitor_candidate_rejected_total[15m])
+            )
+            >= 0.5
           )
           or increase(blocknet_pool_monitor_candidate_worker_failure_total[15m]) > 0
         labels:

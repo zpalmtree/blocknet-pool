@@ -45,6 +45,27 @@ tests:
   - eval_time: 10m
     alertname: BlocknetPoolCandidatePipelineDropped
     exp_alerts: []
+- name: stale block after an earlier fake claim
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_candidate_permit_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_enqueue_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
+  - series: blocknet_pool_monitor_candidate_stale_block_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_disproven_claims_total{job="blocknet_pool_monitor",instance="test"}
+    values: 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_invalid_nonce_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_worker_failure_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolCandidatePipelineDropped
+    exp_alerts: []
 - name: real rejection alongside excluded inputs
   interval: 1m
   input_series:
