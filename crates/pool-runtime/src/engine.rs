@@ -571,6 +571,23 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
     fn prune_miner_source_work(&self, _before: SystemTime) -> Result<u64> {
         Ok(0)
     }
+    /// Writes pair trust deltas (see `source_risk::SourcePairTrustUpdate`).
+    fn apply_source_pair_trust(
+        &self,
+        _updates: &[crate::source_risk::SourcePairTrustUpdate],
+    ) -> Result<()> {
+        Ok(())
+    }
+    fn load_source_pair_trust(
+        &self,
+        _since: SystemTime,
+        _now: SystemTime,
+    ) -> Result<Vec<crate::source_risk::PersistedSourcePairTrust>> {
+        Ok(Vec::new())
+    }
+    fn prune_source_pair_trust(&self, _before: SystemTime, _now: SystemTime) -> Result<u64> {
+        Ok(0)
+    }
 }
 
 /// Most early block submissions started per window. Real blocks arrive a
@@ -1084,6 +1101,22 @@ impl PoolEngine {
         node: Arc<dyn NodeApi>,
     ) -> Self {
         let source_risk = Arc::new(SourceRiskTracker::new(SourcePolicy::from_config(&cfg)));
+        let wall_now = SystemTime::now();
+        match store.load_source_pair_trust(
+            wall_now
+                .checked_sub(crate::source_risk::SOURCE_TRUST_RETENTION)
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+            wall_now,
+        ) {
+            Ok(rows) => {
+                let loaded = rows.len();
+                source_risk.restore_trust(rows);
+                if loaded > 0 {
+                    tracing::info!(pairs = loaded, "loaded source trust");
+                }
+            }
+            Err(err) => tracing::warn!(error = %err, "failed loading source trust"),
+        }
         let admission = Arc::new(AdmissionState::new(cfg.sync_verify_slot_count()));
         let base_cfg = Mutex::new(cfg.clone());
         let live_cfg = Arc::new(LiveConfig::new(cfg));
@@ -1454,6 +1487,25 @@ impl PoolEngine {
             ));
         }
         Ok(result)
+    }
+
+    /// Writes each source pair's trust changes, so a restart or handover
+    /// keeps established and struck sources (see `source_risk.rs`).
+    pub(crate) fn flush_source_trust(&self) -> Result<usize> {
+        let updates = self.source_risk.take_trust();
+        let written = updates.len();
+        if let Err(err) = self.store.apply_source_pair_trust(&updates) {
+            self.source_risk.restore_trust_updates(updates);
+            return Err(err);
+        }
+        Ok(written)
+    }
+
+    pub(crate) fn prune_source_trust(&self, now: SystemTime) -> Result<u64> {
+        let before = now
+            .checked_sub(crate::source_risk::SOURCE_TRUST_RETENTION)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        self.store.prune_source_pair_trust(before, now)
     }
 
     /// Writes accepted work per source to the store (see `miner_settings.rs`).
@@ -4806,6 +4858,7 @@ mod tests {
             .iter()
             .map(
                 |(address, sampled, invalid)| crate::validation::PersistedValidationAddressState {
+                    last_invalid_sample_at: None,
                     address: address.clone(),
                     total_shares: sampled * 20,
                     sampled_shares: *sampled,
@@ -5892,6 +5945,7 @@ mod tests {
         )
         .expect("seed provisional share");
         let mut hold = PersistedValidationAddressState {
+            last_invalid_sample_at: None,
             address: address.clone(),
             total_shares: 1,
             sampled_shares: 0,

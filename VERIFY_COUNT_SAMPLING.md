@@ -332,12 +332,24 @@ counting) brings that to ~46 us (count) and ~16 us (ratio)
 - ~~Update the API's pending estimate and reward-status to the count rule.~~
   Done 2026-11-10 (the breakdown's payout view; the pending estimate needed
   no change).
-- Decide whether to persist the failure pause and source establishment
-  across handovers (today both reset to the conservative side).
-- The honest-error band (2% + 3 sigma, soft strikes) is the dominant standing
-  exposure under both policies; count mode slows full strikes just above it
-  on large addresses (by ~20% at f = 3% up to ~3x at f = 10%, all still well
-  before maturity) even with the pause. Tightening the band
-  for large addresses is a separate decision.
-- Production share mix: the replay uses a synthesized 2026-10-29 mix; rerun
-  with a fresh `address-share-counts-1h` export before enabling.
+- ~~Decide whether to persist the failure pause and source establishment
+  across handovers.~~ Owner, 2026-11-11: persist them, so a handover does
+  not send every big farm back to the ratio sampler at once (a single-rig
+  source needs ~2 h at c0 to re-establish). Done: the pause is a
+  `validation_address_states` column, and each (address, IP group) source's
+  verified and proven-fake samples, strikes and ban live in
+  `source_pair_trust`, written as deltas every 30 s by both engines and
+  loaded at startup (24 h retention). IP-group bans are still in memory only.
+- The honest-error band (`source_honest_invalid_rate`, 2% + 3 sigma, soft
+  strikes) is the dominant standing exposure under both policies; count
+  mode slows full strikes just above it on large addresses (by ~20% at
+  f = 3% up to ~3x at f = 10%, all still well before maturity) even with
+  the pause. Production, 7 days to 2026-11-11: 104 "invalid share proof"
+  rejections in total. Addresses with long clean history ran 0.02-0.06%
+  (our own dev-fee address 0.03%, all five in one hour, i.e. one faulty
+  rig); two addresses at 0.20% and 2.85% were struck, two at 0.59% and
+  0.91% were not. Owner thinks 2% is high; 0.5% would still be ~10x the
+  worst clean address and cut the steady gain a cheater can hide inside the
+  band by 4x. Restart-only setting (a handover). Pending the owner's call.
+- ~~Production share mix: rerun with a fresh export before enabling.~~ Done
+  2026-11-11 (see "Rerun on the 2026-11-11 production mix").

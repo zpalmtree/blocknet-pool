@@ -772,6 +772,146 @@ impl PostgresStore {
         Ok(())
     }
 
+    /// Applies pair trust deltas (see `source_risk::SourcePairTrustUpdate`).
+    /// Verified samples add up unless the update follows a strike, which sets
+    /// the count; strike and ban deadlines keep the later one.
+    pub(crate) fn apply_source_pair_trust(
+        &self,
+        updates: &[crate::source_risk::SourcePairTrustUpdate],
+    ) -> Result<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn();
+        let mut tx = conn.transaction()?;
+        for reset in [false, true] {
+            let rows = updates
+                .iter()
+                .filter(|update| update.reset == reset)
+                .collect::<Vec<_>>();
+            if rows.is_empty() {
+                continue;
+            }
+            let addresses = rows
+                .iter()
+                .map(|row| row.address.as_str())
+                .collect::<Vec<_>>();
+            let groups = rows
+                .iter()
+                .map(|row| row.ip_group.as_str())
+                .collect::<Vec<_>>();
+            let verified = rows
+                .iter()
+                .map(|row| i64::try_from(row.verified_ok).unwrap_or(i64::MAX))
+                .collect::<Vec<_>>();
+            let invalid = rows
+                .iter()
+                .map(|row| i64::try_from(row.invalid).unwrap_or(i64::MAX))
+                .collect::<Vec<_>>();
+            let strikes = rows
+                .iter()
+                .map(|row| i32::try_from(row.strikes).unwrap_or(i32::MAX))
+                .collect::<Vec<_>>();
+            let strike_until = rows
+                .iter()
+                .map(|row| row.strike_until.map(to_unix))
+                .collect::<Vec<_>>();
+            let ban_until = rows
+                .iter()
+                .map(|row| row.ban_until.map(to_unix))
+                .collect::<Vec<_>>();
+            let ban_reason = rows
+                .iter()
+                .map(|row| row.ban_reason.as_deref())
+                .collect::<Vec<_>>();
+            let at = rows.iter().map(|row| to_unix(row.at)).collect::<Vec<_>>();
+            let verified_rule = if reset {
+                "EXCLUDED.verified_ok"
+            } else {
+                "LEAST(t.verified_ok::numeric + EXCLUDED.verified_ok::numeric, 9223372036854775807)::bigint"
+            };
+            tx.execute(
+                &format!(
+                    "INSERT INTO source_pair_trust AS t (
+                        address, ip_group, verified_ok, invalid, strikes,
+                        strike_until, ban_until, ban_reason, updated_at
+                     )
+                     SELECT * FROM UNNEST(
+                        $1::text[], $2::text[], $3::bigint[], $4::bigint[], $5::int[],
+                        $6::bigint[], $7::bigint[], $8::text[], $9::bigint[]
+                     )
+                     ON CONFLICT (address, ip_group) DO UPDATE SET
+                        verified_ok = {verified_rule},
+                        invalid = LEAST(
+                            t.invalid::numeric + EXCLUDED.invalid::numeric,
+                            9223372036854775807
+                        )::bigint,
+                        strikes = CASE WHEN EXCLUDED.strike_until IS NOT NULL
+                            THEN EXCLUDED.strikes ELSE t.strikes END,
+                        strike_until = GREATEST(t.strike_until, EXCLUDED.strike_until),
+                        ban_until = GREATEST(t.ban_until, EXCLUDED.ban_until),
+                        ban_reason = COALESCE(EXCLUDED.ban_reason, t.ban_reason),
+                        updated_at = GREATEST(t.updated_at, EXCLUDED.updated_at)"
+                ),
+                &[
+                    &addresses,
+                    &groups,
+                    &verified,
+                    &invalid,
+                    &strikes,
+                    &strike_until,
+                    &ban_until,
+                    &ban_reason,
+                    &at,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Pair trust changed since `since`, or with a strike or ban still running
+    /// at `now`.
+    pub(crate) fn load_source_pair_trust(
+        &self,
+        since: SystemTime,
+        now: SystemTime,
+    ) -> Result<Vec<crate::source_risk::PersistedSourcePairTrust>> {
+        let rows = self.conn().query(
+            "SELECT address, ip_group, verified_ok, invalid, strikes,
+                    strike_until, ban_until, ban_reason
+             FROM source_pair_trust
+             WHERE updated_at >= $1 OR strike_until > $2 OR ban_until > $2",
+            &[&to_unix(since), &to_unix(now)],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| crate::source_risk::PersistedSourcePairTrust {
+                address: row.get(0),
+                ip_group: row.get(1),
+                verified_ok: row.get::<_, i64>(2).max(0) as u64,
+                invalid: row.get::<_, i64>(3).max(0) as u64,
+                strikes: row.get::<_, i32>(4).max(0) as u32,
+                strike_until: row.get::<_, Option<i64>>(5).map(from_unix),
+                ban_until: row.get::<_, Option<i64>>(6).map(from_unix),
+                ban_reason: row.get(7),
+            })
+            .collect())
+    }
+
+    /// Drops pair trust unchanged since `before` with no strike or ban
+    /// running at `now`.
+    pub fn prune_source_pair_trust(&self, before: SystemTime, now: SystemTime) -> Result<u64> {
+        let deleted = self.conn().execute(
+            "DELETE FROM source_pair_trust
+             WHERE updated_at < $1
+               AND COALESCE(strike_until, 0) <= $2
+               AND COALESCE(ban_until, 0) <= $2",
+            &[&to_unix(before), &to_unix(now)],
+        )?;
+        Ok(deleted)
+    }
+
     /// Forgets an IP group's work for an account (after a proven fake share).
     pub fn clear_miner_source_work(&self, account: &str, ip_group: &str) -> Result<()> {
         self.conn().execute(
@@ -6224,7 +6364,7 @@ impl PostgresStore {
                     risk_sampled_shares, risk_invalid_samples,
                     forced_started_at, forced_until,
                     forced_sampled_shares, forced_invalid_samples,
-                    resume_forced_at, hold_cause, last_seen_at
+                    resume_forced_at, hold_cause, last_seen_at, last_invalid_sample_at
              FROM validation_address_states
              WHERE last_seen_at >= $1
                 OR (forced_until IS NOT NULL AND forced_until > $2)
@@ -6250,6 +6390,7 @@ impl PostgresStore {
                         row.get::<_, Option<String>>(11).as_deref(),
                     )?,
                     last_seen_at: from_unix(row.get::<_, i64>(12)),
+                    last_invalid_sample_at: row.get::<_, Option<i64>>(13).map(from_unix),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -6335,8 +6476,8 @@ impl PostgresStore {
                 risk_sampled_shares, risk_invalid_samples,
                 forced_started_at, forced_until,
                 forced_sampled_shares, forced_invalid_samples,
-                resume_forced_at, hold_cause, last_seen_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                resume_forced_at, hold_cause, last_seen_at, last_invalid_sample_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT(address) DO UPDATE SET
                 total_shares = EXCLUDED.total_shares,
                 sampled_shares = EXCLUDED.sampled_shares,
@@ -6349,7 +6490,13 @@ impl PostgresStore {
                 forced_invalid_samples = EXCLUDED.forced_invalid_samples,
                 resume_forced_at = EXCLUDED.resume_forced_at,
                 hold_cause = EXCLUDED.hold_cause,
-                last_seen_at = EXCLUDED.last_seen_at",
+                last_seen_at = EXCLUDED.last_seen_at,
+                -- Both engines write during a Stratum handover; keep the
+                -- latest failure either of them saw.
+                last_invalid_sample_at = GREATEST(
+                    validation_address_states.last_invalid_sample_at,
+                    EXCLUDED.last_invalid_sample_at
+                )",
             &[
                 &state.address,
                 &u64_to_i64(state.total_shares)?,
@@ -6364,6 +6511,7 @@ impl PostgresStore {
                 &state.resume_forced_at.map(to_unix),
                 &validation_hold_cause_to_db(state.hold_cause),
                 &to_unix(state.last_seen_at),
+                &state.last_invalid_sample_at.map(to_unix),
             ],
         )?;
         Ok(())
@@ -7815,6 +7963,23 @@ CREATE TABLE IF NOT EXISTS miner_settings_sessions (
 CREATE INDEX IF NOT EXISTS idx_miner_settings_sessions_last_used
     ON miner_settings_sessions(last_used);
 
+-- Trust per (address, IP group) source, so a Stratum restart or handover
+-- keeps which sources are established and which are struck or banned.
+CREATE TABLE IF NOT EXISTS source_pair_trust (
+    address TEXT NOT NULL,
+    ip_group TEXT NOT NULL,
+    verified_ok BIGINT NOT NULL DEFAULT 0,
+    invalid BIGINT NOT NULL DEFAULT 0,
+    strikes INTEGER NOT NULL DEFAULT 0,
+    strike_until BIGINT,
+    ban_until BIGINT,
+    ban_reason TEXT,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (address, ip_group)
+);
+CREATE INDEX IF NOT EXISTS idx_source_pair_trust_updated_at
+    ON source_pair_trust(updated_at);
+
 -- Accepted share difficulty per account, IP group and hour, which decides
 -- settings take-backs.
 CREATE TABLE IF NOT EXISTS miner_source_work (
@@ -7944,7 +8109,8 @@ CREATE TABLE IF NOT EXISTS validation_address_states (
     forced_invalid_samples BIGINT NOT NULL DEFAULT 0,
     resume_forced_at BIGINT,
     hold_cause TEXT,
-    last_seen_at BIGINT NOT NULL
+    last_seen_at BIGINT NOT NULL,
+    last_invalid_sample_at BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_validation_address_states_last_seen
     ON validation_address_states(last_seen_at DESC);
@@ -8162,6 +8328,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_started_at BIGINT",
     )
     .context("ensure validation_address_states.forced_started_at column")?;
+    conn.batch_execute(
+        "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS last_invalid_sample_at BIGINT",
+    )
+    .context("ensure validation_address_states.last_invalid_sample_at column")?;
     conn.batch_execute(
             "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_sampled_shares BIGINT NOT NULL DEFAULT 0",
         )
@@ -8426,6 +8596,116 @@ mod tests {
             .update_miner_settings("addr", (Some("hash-3"), "203.0.113.24"), &cleared, reset)
             .unwrap());
         assert!(store.miner_min_payouts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn source_pair_trust_merges_deltas_from_both_engines() {
+        use crate::source_risk::SourcePairTrustUpdate;
+        let Some(store) = test_store() else {
+            return;
+        };
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        let update = |ip: &str, verified_ok: u64, at: SystemTime| SourcePairTrustUpdate {
+            address: "farm".to_string(),
+            ip_group: ip.to_string(),
+            verified_ok,
+            reset: false,
+            invalid: 0,
+            strikes: 0,
+            strike_until: None,
+            ban_until: None,
+            ban_reason: None,
+            at,
+        };
+        // Two engines during a handover each add what they verified.
+        store
+            .apply_source_pair_trust(&[
+                update("203.0.113.1", 2, now),
+                update("198.51.100.9", 5, now),
+            ])
+            .unwrap();
+        store
+            .apply_source_pair_trust(&[update("203.0.113.1", 3, now + Duration::from_secs(5))])
+            .unwrap();
+        // A strike sets the count and records the ban; a later delta adds to it.
+        let strike = SourcePairTrustUpdate {
+            verified_ok: 0,
+            reset: true,
+            invalid: 1,
+            strikes: 1,
+            strike_until: Some(now + Duration::from_secs(86_400)),
+            ban_until: Some(now + Duration::from_secs(900)),
+            ban_reason: Some("invalid share proof".to_string()),
+            ..update("198.51.100.9", 0, now + Duration::from_secs(10))
+        };
+        store.apply_source_pair_trust(&[strike]).unwrap();
+        store
+            .apply_source_pair_trust(&[update("198.51.100.9", 1, now + Duration::from_secs(20))])
+            .unwrap();
+
+        let mut rows = store
+            .load_source_pair_trust(now - Duration::from_secs(60), now)
+            .unwrap();
+        rows.sort_by(|a, b| a.ip_group.cmp(&b.ip_group));
+        assert_eq!(rows.len(), 2);
+        let (struck, honest) = (&rows[0], &rows[1]);
+        assert_eq!(honest.ip_group, "203.0.113.1");
+        assert_eq!(honest.verified_ok, 5);
+        assert_eq!(struck.verified_ok, 1);
+        assert_eq!(struck.invalid, 1);
+        assert_eq!(struck.strikes, 1);
+        assert_eq!(struck.ban_until, Some(now + Duration::from_secs(900)));
+        assert_eq!(struck.ban_reason.as_deref(), Some("invalid share proof"));
+
+        // Old rows go unless a strike or ban is still running.
+        let later = now + Duration::from_secs(3 * 86_400);
+        assert!(store
+            .load_source_pair_trust(later - Duration::from_secs(60), later)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .prune_source_pair_trust(later, now + Duration::from_secs(60))
+                .unwrap(),
+            1
+        );
+        assert_eq!(store.prune_source_pair_trust(later, later).unwrap(), 1);
+    }
+
+    #[test]
+    fn validation_state_keeps_the_latest_failed_sample() {
+        let Some(store) = test_store() else {
+            return;
+        };
+        let now = SystemTime::now();
+        let state = |last_invalid_sample_at| PersistedValidationAddressState {
+            address: "farm".to_string(),
+            total_shares: 10,
+            sampled_shares: 2,
+            invalid_samples: 1,
+            risk_sampled_shares: 2,
+            risk_invalid_samples: 1,
+            forced_started_at: None,
+            forced_until: None,
+            forced_sampled_shares: 0,
+            forced_invalid_samples: 0,
+            resume_forced_at: None,
+            hold_cause: None,
+            last_seen_at: now,
+            last_invalid_sample_at,
+        };
+        let failed_at = UNIX_EPOCH
+            + Duration::from_secs(now.duration_since(UNIX_EPOCH).unwrap().as_secs() - 60);
+        store
+            .upsert_validation_state(&state(Some(failed_at)))
+            .unwrap();
+        // The other engine, which has not seen the failure, writes later.
+        store.upsert_validation_state(&state(None)).unwrap();
+        let loaded = store
+            .load_validation_state(now - Duration::from_secs(3600), now, now, now)
+            .unwrap();
+        assert_eq!(loaded.states.len(), 1);
+        assert_eq!(loaded.states[0].last_invalid_sample_at, Some(failed_at));
     }
 
     #[test]
@@ -10863,6 +11143,7 @@ mod tests {
             .expect("seed address risk");
         store
             .upsert_validation_state(&PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: address.clone(),
                 total_shares: 10,
                 sampled_shares: 2,

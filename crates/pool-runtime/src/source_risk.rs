@@ -25,9 +25,12 @@
 //! failure strikes the pair (revoking all of its unverified credit); a pass
 //! clears the cohort, which then counts like any other provisional share.
 //!
-//! State is in-memory only. A Stratum restart forgets bans and which
-//! provisional shares came from which source; address-level checks still
-//! cover shares from before the restart.
+//! Each pair's trust (verified and proven-fake samples, strikes, bans) is
+//! also written to the store and loaded at startup, so a restart or Stratum
+//! handover keeps which sources are established (see `take_trust`). The rest
+//! is in memory only: a restart forgets IP-group bans and which provisional
+//! shares came from which source; address-level checks still cover shares
+//! from before the restart.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -47,6 +50,11 @@ const SOURCE_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const SOURCE_MAX_TRACKED_SHARES: usize = 400_000;
 /// Hard bound on tracked pairs; idle pairs are evicted first.
 const SOURCE_MAX_TRACKED_PAIRS: usize = 200_000;
+/// Persisted pair trust older than this (no new sample, strike or ban) is
+/// not loaded at startup and is pruned.
+pub(crate) const SOURCE_TRUST_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+/// Pairs with unwritten trust changes kept at most (memory guard).
+const SOURCE_TRUST_MAX_PENDING: usize = 200_000;
 /// Audits per pair per degraded-window review.
 const DEGRADED_REVIEW_MAX_SAMPLES: usize = 4;
 /// A review whose audits never reported back is retried after this long.
@@ -148,6 +156,89 @@ impl StrikeRule {
             StrikeKind::Soft
         }
     }
+}
+
+/// Unwritten trust changes for one pair. Both engines write during a
+/// handover, so these are deltas: verified samples are added, unless a strike
+/// reset the pair, in which case `verified_ok` is the count since the reset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourcePairTrustUpdate {
+    pub address: String,
+    pub ip_group: String,
+    pub verified_ok: u64,
+    pub reset: bool,
+    pub invalid: u64,
+    pub strikes: u32,
+    pub strike_until: Option<SystemTime>,
+    pub ban_until: Option<SystemTime>,
+    pub ban_reason: Option<String>,
+    pub at: SystemTime,
+}
+
+impl SourcePairTrustUpdate {
+    fn new(address: &str, ip_group: &str, at: SystemTime) -> Self {
+        Self {
+            address: address.to_string(),
+            ip_group: ip_group.to_string(),
+            verified_ok: 0,
+            reset: false,
+            invalid: 0,
+            strikes: 0,
+            strike_until: None,
+            ban_until: None,
+            ban_reason: None,
+            at,
+        }
+    }
+
+    /// `self` followed by `later`.
+    fn then(self, later: Self) -> Self {
+        let (verified_ok, reset) = if later.reset {
+            (later.verified_ok, true)
+        } else {
+            (
+                self.verified_ok.saturating_add(later.verified_ok),
+                self.reset,
+            )
+        };
+        let struck_later = later.strike_until.is_some();
+        Self {
+            verified_ok,
+            reset,
+            invalid: self.invalid.saturating_add(later.invalid),
+            strikes: if struck_later {
+                later.strikes
+            } else {
+                self.strikes
+            },
+            strike_until: later.strike_until.or(self.strike_until),
+            ban_until: later.ban_until.or(self.ban_until),
+            ban_reason: later.ban_reason.or(self.ban_reason),
+            at: self.at.max(later.at),
+            ..later
+        }
+    }
+}
+
+/// A pair's trust as stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PersistedSourcePairTrust {
+    pub address: String,
+    pub ip_group: String,
+    pub verified_ok: u64,
+    pub invalid: u64,
+    pub strikes: u32,
+    pub strike_until: Option<SystemTime>,
+    pub ban_until: Option<SystemTime>,
+    pub ban_reason: Option<String>,
+}
+
+fn wall_time_of(at: Instant, now: Instant, wall_now: SystemTime) -> SystemTime {
+    wall_now + at.saturating_duration_since(now)
+}
+
+fn instant_of(at: SystemTime, now: Instant, wall_now: SystemTime) -> Option<Instant> {
+    at.duration_since(wall_now).ok().map(|ahead| now + ahead)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,6 +393,8 @@ pub(crate) struct SourceRiskTracker {
     policy: SourcePolicy,
     inner: Mutex<Inner>,
     work: Mutex<SourceWorkLedger>,
+    /// Unwritten trust changes by pair key (taken by `take_trust`).
+    trust: Mutex<HashMap<String, SourcePairTrustUpdate>>,
 }
 
 /// Accepted work per (address, IP group, hour) not yet written to the store.
@@ -346,6 +439,83 @@ impl SourceRiskTracker {
             policy,
             inner: Mutex::new(Inner::default()),
             work: Mutex::new(SourceWorkLedger::default()),
+            trust: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Records a trust change for `pair` to be written by `take_trust`.
+    fn note_trust(&self, pair: &PairEntry, change: impl FnOnce(&mut SourcePairTrustUpdate)) {
+        let key = pair_key(&pair.address, &pair.ip_group);
+        let mut trust = self.trust.lock();
+        if trust.len() >= SOURCE_TRUST_MAX_PENDING && !trust.contains_key(&key) {
+            return;
+        }
+        let entry = trust.entry(key).or_insert_with(|| {
+            SourcePairTrustUpdate::new(&pair.address, &pair.ip_group, SystemTime::now())
+        });
+        entry.at = SystemTime::now();
+        change(entry);
+    }
+
+    /// Unwritten trust changes; the caller writes them or hands them back
+    /// with `restore_trust_updates`.
+    pub(crate) fn take_trust(&self) -> Vec<SourcePairTrustUpdate> {
+        std::mem::take(&mut *self.trust.lock())
+            .into_values()
+            .collect()
+    }
+
+    /// Puts back updates that failed to write, before any made since.
+    pub(crate) fn restore_trust_updates(&self, updates: Vec<SourcePairTrustUpdate>) {
+        let mut trust = self.trust.lock();
+        for update in updates {
+            let key = pair_key(&update.address, &update.ip_group);
+            let merged = match trust.remove(&key) {
+                Some(later) => update.then(later),
+                None => update,
+            };
+            trust.insert(key, merged);
+        }
+    }
+
+    /// Seeds pairs from stored trust at startup, so sources established
+    /// before a restart or handover stay established and struck ones stay
+    /// struck.
+    pub(crate) fn restore_trust(&self, rows: Vec<PersistedSourcePairTrust>) {
+        let now = Instant::now();
+        let wall_now = SystemTime::now();
+        let mut inner = self.inner.lock();
+        for row in rows {
+            let key = pair_key(&row.address, &row.ip_group);
+            let ip_arc: Arc<str> = match inner.ips.get_key_value(row.ip_group.as_str()) {
+                Some((existing, _)) => Arc::clone(existing),
+                None => Arc::from(row.ip_group.as_str()),
+            };
+            let pair_arc: Arc<str> = Arc::from(key.as_str());
+            let pair = inner.pairs.entry(Arc::clone(&pair_arc)).or_insert_with(|| {
+                PairEntry::new(Arc::from(row.address.as_str()), Arc::clone(&ip_arc), now)
+            });
+            pair.verified_ok = pair.verified_ok.max(row.verified_ok);
+            pair.invalid = pair.invalid.max(row.invalid);
+            if let Some(until) = row
+                .strike_until
+                .and_then(|at| instant_of(at, now, wall_now))
+            {
+                pair.strikes = StrikeCounter {
+                    strikes: row.strikes.max(1),
+                    window_until: Some(until),
+                };
+            }
+            if let Some(until) = row.ban_until.and_then(|at| instant_of(at, now, wall_now)) {
+                pair.ban = Some(Ban {
+                    until,
+                    reason: row
+                        .ban_reason
+                        .clone()
+                        .unwrap_or_else(|| "invalid share proof".to_string()),
+                });
+            }
+            inner.ips.entry(ip_arc).or_default().pairs.insert(pair_arc);
         }
     }
 
@@ -553,6 +723,9 @@ impl SourceRiskTracker {
             Some(pair) => {
                 pair.invalid = pair.invalid.saturating_add(1);
                 pair.last_seen = Instant::now();
+                self.note_trust(pair, |trust| {
+                    trust.invalid = trust.invalid.saturating_add(1)
+                });
                 (pair.verified_ok, pair.invalid)
             }
             None => (0, 1),
@@ -595,6 +768,9 @@ impl SourceRiskTracker {
         };
         if let Some(pair) = inner.pairs.get_mut(&pair_key) {
             pair.verified_ok = pair.verified_ok.saturating_add(1);
+            self.note_trust(pair, |trust| {
+                trust.verified_ok = trust.verified_ok.saturating_add(1)
+            });
         }
     }
 
@@ -618,6 +794,9 @@ impl SourceRiskTracker {
         };
         if let Some(pair) = inner.pairs.get_mut(&pair_key) {
             pair.verified_ok = pair.verified_ok.saturating_add(1);
+            self.note_trust(pair, |trust| {
+                trust.verified_ok = trust.verified_ok.saturating_add(1)
+            });
             Self::settle_review_sample(pair, share_id);
         }
         true
@@ -857,6 +1036,20 @@ impl SourceRiskTracker {
             pair.verified_ok = 0;
             pair.boost_remaining = 0;
             pair.last_seen = now;
+            let wall_now = SystemTime::now();
+            let strike_until = pair
+                .strikes
+                .window_until
+                .map(|until| wall_time_of(until, now, wall_now));
+            let ban_until = wall_time_of(now + ban_for, now, wall_now);
+            self.note_trust(pair, |trust| {
+                trust.verified_ok = 0;
+                trust.reset = true;
+                trust.strikes = strikes;
+                trust.strike_until = strike_until;
+                trust.ban_until = Some(ban_until);
+                trust.ban_reason = Some(reason.to_string());
+            });
             outcome.pair_strikes = strikes;
             outcome.pair_banned_for = ban_for;
         }
@@ -1049,6 +1242,94 @@ mod tests {
         for _ in 0..SOURCE_ESTABLISHED_MIN_VERIFIED {
             tracker.record_verified(source);
         }
+    }
+
+    /// The store's merge rule (pgdb `apply_source_pair_trust`), for tests.
+    fn apply_trust(
+        stored: &mut HashMap<(String, String), PersistedSourcePairTrust>,
+        updates: Vec<SourcePairTrustUpdate>,
+    ) {
+        for update in updates {
+            let row = stored
+                .entry((update.address.clone(), update.ip_group.clone()))
+                .or_insert_with(|| PersistedSourcePairTrust {
+                    address: update.address.clone(),
+                    ip_group: update.ip_group.clone(),
+                    verified_ok: 0,
+                    invalid: 0,
+                    strikes: 0,
+                    strike_until: None,
+                    ban_until: None,
+                    ban_reason: None,
+                });
+            row.verified_ok = if update.reset {
+                update.verified_ok
+            } else {
+                row.verified_ok + update.verified_ok
+            };
+            row.invalid += update.invalid;
+            if update.strike_until.is_some() {
+                row.strikes = update.strikes;
+            }
+            row.strike_until = row.strike_until.max(update.strike_until);
+            row.ban_until = row.ban_until.max(update.ban_until);
+            row.ban_reason = update.ban_reason.or(row.ban_reason.take());
+        }
+    }
+
+    #[test]
+    fn established_and_struck_sources_survive_a_restart() {
+        let before = SourceRiskTracker::new(policy());
+        let honest = before.open_session("farm", "203.0.113.1").unwrap();
+        establish(&before, &honest);
+        let cheat = before.open_session("farm", "198.51.100.9").unwrap();
+        establish(&before, &cheat);
+        before.record_failure(&cheat);
+        before.strike(&cheat, "invalid share proof");
+        let mut stored = HashMap::new();
+        apply_trust(&mut stored, before.take_trust());
+        assert!(before.take_trust().is_empty(), "taking drains the ledger");
+
+        let after = SourceRiskTracker::new(policy());
+        after.restore_trust(stored.into_values().collect());
+        assert!(after.is_established("farm", "203.0.113.1"));
+        assert!(!after.is_established("farm", "198.51.100.9"));
+        let banned = after.open_session("farm", "198.51.100.9");
+        assert!(banned.is_err(), "the ban outlives the restart");
+        // The struck pair's evidence is kept for the next strike decision.
+        let rejoined = after.open_session("farm", "203.0.113.1").unwrap();
+        assert_eq!(
+            after.source_good(&rejoined),
+            SOURCE_ESTABLISHED_MIN_VERIFIED
+        );
+    }
+
+    #[test]
+    fn failed_trust_writes_merge_before_newer_changes() {
+        let tracker = SourceRiskTracker::new(policy());
+        let source = tracker.open_session("farm", "203.0.113.1").unwrap();
+        tracker.record_verified(&source);
+        tracker.record_verified(&source);
+        let failed = tracker.take_trust();
+        tracker.record_verified(&source);
+        tracker.restore_trust_updates(failed);
+        let pending = tracker.take_trust();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].verified_ok, 3);
+        assert!(!pending[0].reset);
+
+        // A strike after a failed write wins: the count restarts from it.
+        tracker.record_verified(&source);
+        let failed = tracker.take_trust();
+        tracker.record_failure(&source);
+        tracker.strike(&source, "invalid share proof");
+        tracker.restore_trust_updates(failed);
+        let pending = tracker.take_trust();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].reset);
+        assert_eq!(pending[0].verified_ok, 0);
+        assert_eq!(pending[0].invalid, 1);
+        assert!(pending[0].ban_until.is_some());
     }
 
     #[test]

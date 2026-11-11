@@ -420,8 +420,8 @@ fn start_heap_trim(task_metrics: Arc<NamedTimedOperationTracker>) {
 const SOURCE_WORK_FLUSH_INTERVAL: Duration = Duration::from_secs(30);
 const SOURCE_WORK_PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
-/// Every engine writes the work it accepted (both do during a handover);
-/// only the primary prunes old rows.
+/// Every engine writes the work it accepted and its source trust changes
+/// (both do during a handover); only the primary prunes old rows.
 fn start_source_work_flush(
     engine: Arc<PoolEngine>,
     role: Arc<EngineRole>,
@@ -438,9 +438,12 @@ fn start_source_work_flush(
                 && last_prune.is_none_or(|at| at.elapsed() >= SOURCE_WORK_PRUNE_INTERVAL);
             let task_engine = Arc::clone(&engine);
             let failed = match tokio::task::spawn_blocking(move || {
+                let trust = task_engine.flush_source_trust();
                 task_engine.flush_source_work()?;
+                trust?;
                 if prune {
                     task_engine.prune_source_work(SystemTime::now())?;
+                    task_engine.prune_source_trust(SystemTime::now())?;
                 }
                 Ok::<_, anyhow::Error>(())
             })

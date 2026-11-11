@@ -565,6 +565,25 @@ impl ShareStore for PoolStore {
     fn prune_miner_source_work(&self, before: SystemTime) -> Result<u64> {
         self.inner.prune_miner_source_work(before)
     }
+
+    fn apply_source_pair_trust(
+        &self,
+        updates: &[crate::source_risk::SourcePairTrustUpdate],
+    ) -> Result<()> {
+        self.inner.apply_source_pair_trust(updates)
+    }
+
+    fn load_source_pair_trust(
+        &self,
+        since: SystemTime,
+        now: SystemTime,
+    ) -> Result<Vec<crate::source_risk::PersistedSourcePairTrust>> {
+        self.inner.load_source_pair_trust(since, now)
+    }
+
+    fn prune_source_pair_trust(&self, before: SystemTime, now: SystemTime) -> Result<u64> {
+        self.inner.prune_source_pair_trust(before, now)
+    }
 }
 
 impl ValidationStateStore for PoolStore {
@@ -1037,6 +1056,7 @@ mod tests {
         ValidationStateStore::upsert_validation_state(
             store.as_ref(),
             &PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: "addr-risk".to_string(),
                 total_shares: 1,
                 sampled_shares: 0,
@@ -1086,6 +1106,7 @@ mod tests {
             (Some(ValidationHoldCause::InvalidSamples), true),
         ] {
             let mut state = PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: "addr-hold".to_string(),
                 total_shares: 1,
                 sampled_shares: 0,

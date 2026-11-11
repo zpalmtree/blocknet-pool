@@ -214,6 +214,9 @@ pub struct PersistedValidationAddressState {
     pub resume_forced_at: Option<SystemTime>,
     pub hold_cause: Option<ValidationHoldCause>,
     pub last_seen_at: SystemTime,
+    /// Latest failed sample; under the count policy it keeps the address on
+    /// the ratio sampler for the rest of the PPLNS window, across restarts.
+    pub last_invalid_sample_at: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone)]
@@ -395,9 +398,9 @@ struct ValidationAddressState {
     /// committing them, which must not copy the window.
     accepted_window: Arc<AcceptedWindow>,
     last_replay_backfill_at: Option<SystemTime>,
-    /// Latest failed sample (in memory only). Under the count policy an
-    /// address with a failure inside the PPLNS window is sampled at the ratio
-    /// rate again, so evidence of fakes restores today's detection power.
+    /// Latest failed sample (persisted). Under the count policy an address
+    /// with a failure inside the PPLNS window is sampled at the ratio rate
+    /// again, so evidence of fakes restores today's detection power.
     last_invalid_sample_at: Option<SystemTime>,
     last_seen_at: SystemTime,
 }
@@ -3369,6 +3372,7 @@ fn persisted_validation_state(
         resume_forced_at: state.resume_forced_at,
         hold_cause: state.hold_cause,
         last_seen_at: state.last_seen_at,
+        last_invalid_sample_at: state.last_invalid_sample_at,
     }
 }
 
@@ -3417,7 +3421,7 @@ fn load_initial_validation_state(
                 provisional_at: VecDeque::new(),
                 accepted_window: Arc::default(),
                 last_replay_backfill_at: None,
-                last_invalid_sample_at: None,
+                last_invalid_sample_at: entry.last_invalid_sample_at,
                 last_seen_at: entry.last_seen_at,
             },
         );
@@ -4810,6 +4814,62 @@ mod tests {
         }
     }
 
+    /// A failed sample keeps a big address on the ratio sampler for the rest
+    /// of the PPLNS window, including after a restart or handover.
+    #[test]
+    fn count_failure_pause_survives_restart() {
+        let now = SystemTime::now();
+        let restarted = |last_invalid_sample_at: Option<SystemTime>| {
+            let accepted_window = (0..7_100u64)
+                .map(|i| PersistedValidationAcceptedShare {
+                    address: "farm".to_string(),
+                    share_id: i as i64,
+                    created_at: now - Duration::from_secs(3600) * (7_100 - i) as u32 / 7_100,
+                    difficulty: 1,
+                    verified: i % 100 == 0,
+                })
+                .collect::<Vec<_>>();
+            let store = Arc::new(InMemoryAuditStore::new(
+                LoadedValidationState {
+                    states: vec![PersistedValidationAddressState {
+                        address: "farm".to_string(),
+                        total_shares: 7_100,
+                        sampled_shares: 71,
+                        invalid_samples: 1,
+                        risk_sampled_shares: 71,
+                        risk_invalid_samples: 1,
+                        forced_started_at: None,
+                        forced_until: None,
+                        forced_sampled_shares: 0,
+                        forced_invalid_samples: 0,
+                        resume_forced_at: None,
+                        hold_cause: None,
+                        last_seen_at: now,
+                        last_invalid_sample_at,
+                    }],
+                    provisionals: Vec::new(),
+                    accepted_window,
+                },
+                Vec::new(),
+            ));
+            ValidationEngine::new_with_state_store(
+                count_cfg(),
+                Arc::new(DeterministicTestHasher),
+                store as Arc<dyn ValidationStateStore>,
+            )
+        };
+        let scaled = sampled_fraction(&restarted(None), "farm", true);
+        let paused = sampled_fraction(
+            &restarted(Some(now - Duration::from_secs(600))),
+            "farm",
+            true,
+        );
+        assert!(scaled < 0.03, "count rate without a failure: {scaled}");
+        // The ratio sampler's random 8% (planning alone never reaches the
+        // every-25th share).
+        assert!(paused > 0.06, "ratio rate after a stored failure: {paused}");
+    }
+
     #[test]
     fn ratio_policy_ignores_count_settings() {
         let now = SystemTime::now();
@@ -5530,6 +5590,7 @@ mod tests {
             .expect("add unconfirmed block");
         store
             .upsert_validation_state(&PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: address.clone(),
                 total_shares: 3,
                 sampled_shares: 1,
@@ -5653,6 +5714,7 @@ mod tests {
             .expect("seed provisional b");
         store
             .upsert_validation_state(&PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: address.clone(),
                 total_shares: 3,
                 sampled_shares: 0,
@@ -5768,6 +5830,7 @@ mod tests {
             .expect("add passive coverage block");
         store
             .upsert_validation_state(&PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: address.clone(),
                 total_shares: 3,
                 sampled_shares: 1,
@@ -5882,6 +5945,7 @@ mod tests {
         let store = Arc::new(InMemoryAuditStore::new(
             LoadedValidationState {
                 states: vec![PersistedValidationAddressState {
+                    last_invalid_sample_at: None,
                     address: address.clone(),
                     total_shares: accepted_window.len() as u64,
                     sampled_shares: 1,
@@ -6296,6 +6360,7 @@ mod tests {
         let address = format!("validation-clear-{}", rand::random::<u64>());
         store
             .upsert_validation_state(&PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: address.clone(),
                 total_shares: 12,
                 sampled_shares: 3,

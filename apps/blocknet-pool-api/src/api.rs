@@ -8420,6 +8420,7 @@ mod tests {
             .expect("escalate address risk");
         store
             .upsert_validation_state(&PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: "validator-addr".to_string(),
                 total_shares: 42,
                 sampled_shares: 7,
@@ -8558,6 +8559,7 @@ mod tests {
 
         store
             .upsert_validation_state(&PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: "miner-live".to_string(),
                 total_shares: 5,
                 sampled_shares: 1,
@@ -8938,6 +8940,7 @@ mod tests {
         store.add_share(share).expect("add share");
         store
             .upsert_validation_state(&PersistedValidationAddressState {
+                last_invalid_sample_at: None,
                 address: "miner-backlog".to_string(),
                 total_shares: 20,
                 sampled_shares: 0,
