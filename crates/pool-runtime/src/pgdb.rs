@@ -2069,6 +2069,22 @@ impl PostgresStore {
         Ok(row.get::<_, Option<i64>>(0).map(from_unix))
     }
 
+    /// One miner's PPLNS shares in `[start, end]`, in no particular order.
+    pub(crate) fn get_miner_shares_between(
+        &self,
+        address: &str,
+        start: SystemTime,
+        end: SystemTime,
+    ) -> Result<Vec<DbShare>> {
+        let rows = self.conn().query(
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND created_at <= $3 AND NOT solo",
+            &[&address, &to_unix(start), &to_unix(end)],
+        )?;
+        Ok(rows.into_iter().map(row_to_share).collect())
+    }
+
     /// PPLNS shares in `[start, end]`. Solo shares are never part of a PPLNS
     /// window.
     pub fn get_shares_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<DbShare>> {

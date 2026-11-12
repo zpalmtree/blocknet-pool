@@ -181,9 +181,8 @@ impl PoolStore {
         }
 
         let provisional_delay = config.provisional_share_delay_duration();
-        let mut window_shares = Vec::<DbShare>::new();
-        let mut seen = HashSet::<i64>::new();
         // Solo blocks credit their finder without a PPLNS window to audit.
+        let mut windows = Vec::<(SystemTime, SystemTime)>::new();
         for block in self
             .get_unconfirmed_blocks()?
             .into_iter()
@@ -193,13 +192,13 @@ impl PoolStore {
             let start = window_end
                 .checked_sub(config.pplns_window_duration())
                 .unwrap_or(std::time::UNIX_EPOCH);
-            let shares = self.get_shares_between(start, window_end)?;
-
-            for share in shares {
-                if share.miner == address && seen.insert(share.id) {
-                    window_shares.push(share);
-                }
-            }
+            windows.push((start, window_end));
+        }
+        // Load only this address's shares, once per run of overlapping
+        // windows.
+        let mut window_shares = Vec::<DbShare>::new();
+        for (start, end) in merge_time_ranges(windows) {
+            window_shares.extend(self.inner.get_miner_shares_between(address, start, end)?);
         }
 
         if window_shares.is_empty() {
@@ -691,6 +690,20 @@ pub(crate) struct BackfillShare {
 /// unless closing the count criterion (every eligible provisional share within
 /// `count_sample_radius` of a clean sample, and `count_payout_min_samples`
 /// clean samples) takes no more audits; payouts credit whichever is higher.
+/// Sorts closed time ranges and merges the ones that overlap or touch, so
+/// the result is disjoint.
+fn merge_time_ranges(mut ranges: Vec<(SystemTime, SystemTime)>) -> Vec<(SystemTime, SystemTime)> {
+    ranges.sort();
+    let mut merged = Vec::<(SystemTime, SystemTime)>::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
+}
+
 pub(crate) fn select_payout_backfill(
     shares: &[BackfillShare],
     config: &Config,
@@ -1309,5 +1322,115 @@ mod tests {
         assert!(listed
             .iter()
             .all(|(account, address)| account.starts_with("memo:") && address == "shared-address"));
+    }
+
+    #[test]
+    fn merge_time_ranges_joins_overlapping_and_touching_ranges() {
+        let at = |secs: u64| SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+        assert_eq!(
+            merge_time_ranges(vec![
+                (at(50), at(60)),
+                (at(0), at(10)),
+                (at(10), at(20)),
+                (at(5), at(8)),
+                (at(30), at(40)),
+            ]),
+            vec![(at(0), at(20)), (at(30), at(40)), (at(50), at(60))]
+        );
+        assert!(merge_time_ranges(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn pending_payout_audit_shares_load_only_the_address_inside_block_windows() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {} to run postgres integration checks",
+                PoolStore::TEST_POSTGRES_URL_ENV
+            );
+            return;
+        };
+
+        // No provisional cap, so the backfill selects every loaded share.
+        let cfg = Config {
+            payout_provisional_cap_multiplier: 0.0,
+            ..Config::default()
+        };
+        let window = cfg.pplns_window_duration();
+        let hour = Duration::from_secs(3600);
+        let now = SystemTime::now();
+        let suffix = rand::random::<u32>();
+        let address = format!("backfill-miner-{suffix}");
+        let other = format!("backfill-other-{suffix}");
+        // Two overlapping windows ending 1 h and 2 h ago, and one ending
+        // past both of them plus a gap.
+        let ends = [now - hour, now - 2 * hour, now - 3 * window];
+        for (i, end) in ends.iter().enumerate() {
+            store
+                .add_block(&DbBlock {
+                    height: 90_000 + (suffix as u64 % 10_000) * 10 + i as u64,
+                    hash: format!("backfill-block-{suffix}-{i}"),
+                    difficulty: 1,
+                    finder: other.clone(),
+                    finder_worker: "rig".to_string(),
+                    reward: 100,
+                    timestamp: *end,
+                    confirmed: false,
+                    orphaned: false,
+                    paid_out: false,
+                    effort_pct: None,
+                    solo: false,
+                })
+                .expect("add block");
+        }
+
+        let job_id = format!("backfill-job-{suffix}");
+        let add = |miner: &str, created_at: SystemTime, solo: bool| -> i64 {
+            store
+                .add_share_with_replay_and_id(
+                    ShareRecord {
+                        job_id: job_id.clone(),
+                        miner: miner.to_string(),
+                        worker: "rig".to_string(),
+                        difficulty: 1,
+                        nonce: rand::random::<u32>() as u64,
+                        status: "provisional",
+                        was_sampled: false,
+                        block_hash: None,
+                        claimed_hash: None,
+                        reject_reason: None,
+                        created_at,
+                        solo,
+                    },
+                    Some(ShareReplayData {
+                        job_id: job_id.clone(),
+                        header_base: vec![1, 2, 3],
+                        network_target: [0xff; 32],
+                        created_at,
+                    }),
+                )
+                .expect("add share")
+        };
+        let in_recent = add(&address, now - 2 * hour - hour / 2, false);
+        let in_overlap = add(&address, now - window - hour / 2, false);
+        let in_old = add(&address, now - 3 * window - hour, false);
+        add(&address, now - 2 * window, false); // between the windows
+        add(&address, now - hour / 2, false); // after every window
+        add(&address, now - 2 * hour - hour / 4, true); // solo
+        add(&other, now - 2 * hour - hour / 2, false);
+
+        let mut loaded = store
+            .load_pending_payout_audit_shares(&address, &cfg, now, 100)
+            .expect("load backfill shares")
+            .into_iter()
+            .map(|share| {
+                assert_eq!(share.miner, address);
+                assert_eq!(share.header_base, vec![1, 2, 3]);
+                share.share_id
+            })
+            .collect::<Vec<_>>();
+        loaded.sort_unstable();
+        let mut expected = vec![in_recent, in_overlap, in_old];
+        expected.sort_unstable();
+        assert_eq!(loaded, expected);
     }
 }
