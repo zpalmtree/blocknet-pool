@@ -104,6 +104,8 @@ pub(crate) struct StrikeEvidence {
     pub source_invalid: u64,
     pub address_good: u64,
     pub address_invalid: u64,
+    /// Strikes against this pair still inside the strike window.
+    pub source_strikes: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -141,13 +143,17 @@ impl StrikeRule {
         invalid as f64 > threshold
     }
 
-    /// Full strike when the source cannot point to verified history (its own,
-    /// or its address's persisted samples), or when either its own or its
-    /// address's invalid rate is clearly above an honest-error rate.
+    /// Full strike when the pair was already struck inside the strike window,
+    /// when the source cannot point to verified history (its own, or its
+    /// address's persisted samples), or when either its own or its address's
+    /// invalid rate is clearly above an honest-error rate. A strike clears the
+    /// pair's verified samples, so without the first rule its address's
+    /// history would shield it again right after the ban.
     pub(crate) fn decide(&self, evidence: StrikeEvidence) -> StrikeKind {
         let has_history = evidence.source_good >= self.min_source_good
             || evidence.address_good >= self.min_address_good;
-        if !has_history
+        if evidence.source_strikes > 0
+            || !has_history
             || self.clearly_above_honest(evidence.source_good, evidence.source_invalid)
             || self.clearly_above_honest(evidence.address_good, evidence.address_invalid)
         {
@@ -730,6 +736,16 @@ impl SourceRiskTracker {
             }
             None => (0, 1),
         }
+    }
+
+    /// Strikes against the source's pair still inside the strike window.
+    pub(crate) fn active_strikes(&self, source: &SourceRef) -> u32 {
+        let inner = self.inner.lock();
+        let key = Self::pair_key_for(&inner, source);
+        inner
+            .pairs
+            .get(&key)
+            .map_or(0, |pair| pair.strikes.active(Instant::now()))
     }
 
     /// Soft strike: the source keeps its credit and access, but its next
@@ -1460,6 +1476,7 @@ mod tests {
             source_invalid: 1,
             address_good: good_shares / 20,
             address_invalid: bad,
+            source_strikes: 0,
         }
     }
 
@@ -1484,6 +1501,7 @@ mod tests {
                 source_invalid: bad,
                 address_good: 0,
                 address_invalid: 0,
+                source_strikes: 0,
             };
             assert_eq!(rule.decide(evidence), expected, "{name} (source history)");
         }
@@ -1497,6 +1515,7 @@ mod tests {
             source_invalid,
             address_good: 0,
             address_invalid: 0,
+            source_strikes: 0,
         };
         assert_eq!(rule.decide(at(19, 1)), StrikeKind::Full, "no history");
         assert_eq!(rule.decide(at(20, 1)), StrikeKind::Soft);
@@ -1515,6 +1534,7 @@ mod tests {
             source_invalid,
             address_good: 5_000,
             address_invalid: 10,
+            source_strikes: 0,
         };
         assert_eq!(rule.decide(new_source(1)), StrikeKind::Soft);
         assert_eq!(
@@ -1527,8 +1547,39 @@ mod tests {
             source_invalid: 4,
             address_good: 5_000,
             address_invalid: 10,
+            source_strikes: 0,
         };
         assert_eq!(rule.decide(after_boost), StrikeKind::Full);
+    }
+
+    #[test]
+    fn a_struck_pair_gets_no_benefit_of_the_doubt_inside_its_strike_window() {
+        let rule = rule();
+        // 2026-11-12 production case: struck at 1 good / 2 invalid, then two
+        // more fakes with 1 good sample and a long address history.
+        let repeat = StrikeEvidence {
+            source_good: 1,
+            source_invalid: 3,
+            address_good: 41_313,
+            address_invalid: 0,
+            source_strikes: 0,
+        };
+        assert_eq!(rule.decide(repeat), StrikeKind::Soft);
+        assert_eq!(
+            rule.decide(StrikeEvidence {
+                source_strikes: 1,
+                ..repeat
+            }),
+            StrikeKind::Full
+        );
+
+        let tracker = SourceRiskTracker::new(policy());
+        let source = tracker.open_session("addr", "192.0.2.1").unwrap();
+        let neighbour = tracker.open_session("addr", "192.0.2.2").unwrap();
+        assert_eq!(tracker.active_strikes(&source), 0);
+        tracker.strike(&source, "invalid share proof");
+        assert_eq!(tracker.active_strikes(&source), 1);
+        assert_eq!(tracker.active_strikes(&neighbour), 0, "other IP group");
     }
 
     #[test]

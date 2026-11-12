@@ -790,8 +790,9 @@ struct ProvenFake<'a> {
 }
 
 /// Penalizes a source for a proven fake share, proportionally: a source
-/// without verified history, or with an invalid rate clearly above honest
-/// hardware/backend error rates, gets a full strike (revoke its unverified
+/// already struck inside the strike window, one without verified history, or
+/// one with an invalid rate clearly above honest hardware/backend error rates
+/// gets a full strike (revoke its unverified
 /// window, ban, disconnect); anything else gets a soft strike (the share is
 /// rejected, the failure is counted and the source's next shares audited).
 fn penalize_proven_fake(
@@ -823,6 +824,7 @@ fn penalize_proven_fake(
         address_invalid: fake
             .address_invalid
             .saturating_add(u64::from(fake.count_at_address)),
+        source_strikes: tracker.active_strikes(source),
     };
     let kind = if fake.immediate {
         StrikeKind::Full
