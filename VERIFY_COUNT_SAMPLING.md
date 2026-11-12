@@ -1,9 +1,13 @@
 # Count-based share verification
 
 Status: implemented behind `verification_policy` (default `"ratio"`, which
-leaves today's behaviour unchanged). Not deployed. Intended only if verifier
-load nears capacity before the Faraday fork; from the fork every share is
-checked inline (one BLAKE2b compression) and sampling stops mattering.
+leaves today's behaviour unchanged). Enabled on bntpool since 2026-11-11
+19:00 EST (`"verification_policy": "count"`, `source_honest_invalid_rate`
+0.005) after `BlocknetPoolBeyondGrowthCapacity` fired at ~340 normal-size
+shares/s: overload went from ~79% Shed/Emergency to 0% and verifies from
+~8.7/s to ~1.7/s. Rollback: set `"ratio"` and hand over the engine. From the
+Faraday fork every share is checked inline (one BLAKE2b compression) and
+sampling stops mattering.
 
 ## Problem
 
