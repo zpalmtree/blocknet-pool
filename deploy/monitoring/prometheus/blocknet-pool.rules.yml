@@ -41,23 +41,32 @@ groups:
           summary: Growth mode is on
           description: The share rate passed growth_submit_rate, so miners were moved to fewer, larger shares (growth_vardiff_target_shares, growth_sample_rate). Expected as the pool grows; see VERIFY_PERFORMANCE.md.
 
-      # Fires only when load is past what level 3 was tested for and the
-      # verifiers are spending real time outside Normal (Shed or Emergency),
-      # so coverage is actually falling. keep_firing_for stops it flapping
-      # while load hovers at the threshold.
-      - alert: BlocknetPoolBeyondGrowthCapacity
-        expr: >-
-          blocknet_pool_monitor_growth_normal_size_submits_per_s > 225
-          and on()
-          sum(rate(blocknet_pool_monitor_validation_overload_seconds_total{mode!="normal"}[30m])) > 0.05
+      # Verifier-seconds spent hashing per second, averaged over an hour.
+      # Overload (Shed/Emergency) has started at about 6 since 2026-10-29;
+      # at 5-6 it almost never did, so this warns before coverage drops.
+      - alert: BlocknetPoolVerifierHeadroomLow
+        expr: sum(rate(blocknet_pool_monitor_validation_hash_millis_sum[1h])) / 1000 > 5
+        for: 30m
+        keep_firing_for: 30m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Share verifiers are close to capacity
+          description: Verifiers spent over 5 seconds per second hashing for the last hour; shedding starts near 6. Plan more verifier capacity (VERIFY_PERFORMANCE.md, VERIFY_COUNT_SAMPLING.md).
+
+      # The verifiers spent real time outside Normal, so audit coverage is
+      # actually falling. keep_firing_for stops it flapping at the edge.
+      - alert: BlocknetPoolVerifiersShedding
+        expr: sum(rate(blocknet_pool_monitor_validation_overload_seconds_total{mode!="normal"}[30m])) > 0.05
         for: 15m
         keep_firing_for: 30m
         labels:
           severity: warning
           visibility: private
         annotations:
-          summary: Load is beyond what growth mode was tested for
-          description: Load is past what growth level 3 was tested for and the verifiers spent over 5% of the last 30 minutes shedding, so audit coverage is falling. Add verifier capacity (a faster verifier host) or enable count-based verification (VERIFY_COUNT_SAMPLING.md).
+          summary: Share verifiers are shedding
+          description: The verifiers spent over 5% of the last 30 minutes in Shed or Emergency, so audit coverage is falling. Add verifier capacity or lower sampling (VERIFY_PERFORMANCE.md, VERIFY_COUNT_SAMPLING.md).
 
       - alert: BlocknetPoolGatewayNoEngine
         expr: blocknet_pool_gateway_engines == 0

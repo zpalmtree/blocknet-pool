@@ -1,0 +1,55 @@
+# Run from this directory: promtool test rules verifier-capacity.test.yml
+rule_files:
+- blocknet-pool.rules.yml
+evaluation_interval: 1m
+tests:
+- name: Verifier headroom warns after busy time stays above 5 s/s
+  interval: 1m
+  input_series:
+  # 2 hours at 4 busy seconds per second, then 6.
+  - series: blocknet_pool_monitor_validation_hash_millis_sum{lane="live_audit",instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 0+240000x120 28800000+360000x150
+  alert_rule_test:
+  - eval_time: 2h
+    alertname: BlocknetPoolVerifierHeadroomLow
+    exp_alerts: []
+  # The 1 h average passes 5 at 2h30m and must hold for 30 minutes.
+  - eval_time: 2h50m
+    alertname: BlocknetPoolVerifierHeadroomLow
+    exp_alerts: []
+  - eval_time: 3h10m
+    alertname: BlocknetPoolVerifierHeadroomLow
+    exp_alerts:
+    - exp_labels:
+        alertname: BlocknetPoolVerifierHeadroomLow
+        severity: warning
+        visibility: private
+      exp_annotations:
+        summary: Share verifiers are close to capacity
+        description: Verifiers spent over 5 seconds per second hashing for the last hour; shedding starts near 6. Plan more verifier capacity (VERIFY_PERFORMANCE.md, VERIFY_COUNT_SAMPLING.md).
+
+- name: Shedding alerts at any load; brief shedding stays quiet
+  interval: 1m
+  input_series:
+  # 1 hour Normal, 1 minute of Shed (quiet), 1 hour Normal, then 20% Shed.
+  - series: blocknet_pool_monitor_validation_overload_seconds_total{mode="shed",instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 0x60 60 60x60 60+12x60
+  - series: blocknet_pool_monitor_validation_overload_seconds_total{mode="normal",instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 0+60x60 3600 3660+60x60 7260+48x60
+  alert_rule_test:
+  - eval_time: 1h20m
+    alertname: BlocknetPoolVerifiersShedding
+    exp_alerts: []
+  - eval_time: 2h5m
+    alertname: BlocknetPoolVerifiersShedding
+    exp_alerts: []
+  - eval_time: 2h40m
+    alertname: BlocknetPoolVerifiersShedding
+    exp_alerts:
+    - exp_labels:
+        alertname: BlocknetPoolVerifiersShedding
+        severity: warning
+        visibility: private
+      exp_annotations:
+        summary: Share verifiers are shedding
+        description: The verifiers spent over 5% of the last 30 minutes in Shed or Emergency, so audit coverage is falling. Add verifier capacity or lower sampling (VERIFY_PERFORMANCE.md, VERIFY_COUNT_SAMPLING.md).

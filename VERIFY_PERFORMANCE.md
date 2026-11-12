@@ -52,7 +52,8 @@ and `growth_sample_rate` (0.08); below `growth_exit_submit_rate` (40/s) it
 returns to the configured values. Switches wait 10 minutes to settle, the mode
 is persisted (meta `growth_mode_v1`) so restarts and handovers resume it, and
 setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
-`BlocknetPoolGrowthModeActive`, `BlocknetPoolBeyondGrowthCapacity`.
+`BlocknetPoolGrowthModeActive`, `BlocknetPoolVerifierHeadroomLow`,
+`BlocknetPoolVerifiersShedding` (before 2026-11-12: `BlocknetPoolBeyondGrowthCapacity`).
 
 Level 2 (owner-approved 2026-10-29): above `growth2_submit_rate` (110/s at the
 normal size, twice the level-1 trigger) Stratum asks for
@@ -93,6 +94,16 @@ the verifiers stayed Normal (0 s Shed over 6 hours, regular verifiers about
 half busy, accept p99 49 ms). The alert now also needs over 5% of the last
 30 minutes spent in Shed or Emergency, sustained 15 minutes, and keeps firing
 30 minutes after it clears.
+
+On 2026-11-12, after count verification cut verifies from ~8.7/s to ~2/s at
+~350/s normal-size, the share-rate condition stopped meaning anything and was
+dropped. The alert, renamed `BlocknetPoolVerifiersShedding`, now fires on
+shedding alone (over 5% of 30 minutes, for 15 minutes). The earlier warning is
+`BlocknetPoolVerifierHeadroomLow`: verifier busy time
+(`sum(rate(blocknet_pool_monitor_validation_hash_millis_sum[1h])) / 1000`)
+above 5 seconds per second for 30 minutes. Hourly data from 2026-10-29 to
+2026-11-11 showed shedding in 42% of hours at 6-7 busy seconds per second and
+in about 1% at 5-6; under count mode the pool runs at about 1.5-2.5.
 
 - 2026-11-05 · T2 · level 3 vs level 2 only (`VERIFY_REPLAY_GROWTH3_RATE=0`),
   fresh 1-hour production mix (321 addresses, 47.8 shares/s), runs starting at

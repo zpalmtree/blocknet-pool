@@ -147,6 +147,7 @@ Validate the rules and recovery scenarios before provisioning:
 cd deploy/monitoring/prometheus
 promtool check rules blocknet-pool.rules.yml
 promtool test rules template-lease.test.yml
+promtool test rules verifier-capacity.test.yml
 ```
 
 ## Build Blocknet Daemon For bntpool
