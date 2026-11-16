@@ -6306,10 +6306,10 @@ impl PostgresStore {
                  FROM shares s
                  JOIN share_job_replays r
                    ON r.job_id = s.job_id
-                  AND r.created_at >= $1 - 21600
-                  AND r.created_at < $2 + 120
-                 WHERE s.created_at >= $1
-                   AND s.created_at < $2
+                  AND r.created_at >= $1::bigint - 21600
+                  AND r.created_at < $2::bigint + 120
+                 WHERE s.created_at >= $1::bigint
+                   AND s.created_at < $2::bigint
                    AND s.status IN ('verified', 'provisional')
                    AND NOT s.solo
                    AND length(s.claimed_hash) = 64
