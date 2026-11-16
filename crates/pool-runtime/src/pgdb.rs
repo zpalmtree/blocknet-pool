@@ -129,6 +129,19 @@ pub struct MonitorUptimeSummary {
     pub public_http_up: u64,
 }
 
+/// Pool (non-solo) accepted shares over a window, bucketed by how close the
+/// share hash came to its job's network target.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BlockShareTailCounts {
+    pub shares: u64,
+    /// Sum of share difficulty over network difficulty: blocks the work should find.
+    pub expected_blocks: f64,
+    /// Hashes under the network target.
+    pub blocks: u64,
+    /// Hashes from one to four times the network target.
+    pub near_misses: u64,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OrphanBlockReconciliation {
     pub orphaned: bool,
@@ -6272,6 +6285,53 @@ impl PostgresStore {
                 created_at_ms: row.get(5),
             })
             .collect())
+    }
+
+    /// Counts pool shares created in `[since, until)` (unix seconds) by how
+    /// close each claimed hash came to its job's network target. The job
+    /// header stores difficulty little-endian at bytes 84..92; the ratio uses
+    /// the hash's top 56 bits.
+    pub fn block_share_tail_counts(&self, since: i64, until: i64) -> Result<BlockShareTailCounts> {
+        let row = self.conn().query_one(
+            "WITH j AS (
+                 SELECT s.difficulty::float8 AS share_diff,
+                        (get_byte(r.header_base, 84)::bigint
+                          + get_byte(r.header_base, 85)::bigint * 256
+                          + get_byte(r.header_base, 86)::bigint * 65536
+                          + get_byte(r.header_base, 87)::bigint * 16777216
+                          + get_byte(r.header_base, 88)::bigint * 4294967296
+                          + get_byte(r.header_base, 89)::bigint * 1099511627776
+                          + get_byte(r.header_base, 90)::bigint * 281474976710656)::float8 AS dnet,
+                        (('x' || substr(s.claimed_hash, 1, 14))::bit(56)::bigint)::float8 AS h56
+                 FROM shares s
+                 JOIN share_job_replays r
+                   ON r.job_id = s.job_id
+                  AND r.created_at >= $1 - 21600
+                  AND r.created_at < $2 + 120
+                 WHERE s.created_at >= $1
+                   AND s.created_at < $2
+                   AND s.status IN ('verified', 'provisional')
+                   AND NOT s.solo
+                   AND length(s.claimed_hash) = 64
+                   AND length(r.header_base) >= 92
+             ), k AS (
+                 SELECT share_diff, dnet, h56 * dnet / 72057594037927936.0 AS v
+                 FROM j
+                 WHERE dnet > 0
+             )
+             SELECT count(*)::bigint,
+                    COALESCE(sum(share_diff / dnet), 0)::float8,
+                    count(*) FILTER (WHERE v < 1)::bigint,
+                    count(*) FILTER (WHERE v >= 1 AND v < 4)::bigint
+             FROM k",
+            &[&since, &until],
+        )?;
+        Ok(BlockShareTailCounts {
+            shares: row.get::<_, i64>(0).max(0) as u64,
+            expected_blocks: row.get::<_, f64>(1).max(0.0),
+            blocks: row.get::<_, i64>(2).max(0) as u64,
+            near_misses: row.get::<_, i64>(3).max(0) as u64,
+        })
     }
 
     pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {

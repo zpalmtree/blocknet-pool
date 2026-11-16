@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::net::SocketAddr;
@@ -24,6 +24,7 @@ use pool_common::db::{MonitorHeartbeatUpsert, MonitorIncidentUpsert};
 use pool_runtime::admission::UnprocessedSubmitSnapshot;
 use pool_runtime::config::CANDIDATE_VALIDATION_QUEUE_SIZE;
 use pool_runtime::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
+use pool_runtime::pgdb::BlockShareTailCounts;
 use pool_runtime::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use pool_runtime::runtime::load_dotenv;
 use pool_runtime::service_state::{
@@ -60,6 +61,15 @@ const EXPLORER_STATUS_URL: &str = "https://explorer.blocknetcrypto.com/status.js
 const DEFAULT_HEARTBEAT_RETENTION: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const DEFAULT_INCIDENT_RETENTION: Duration = Duration::from_secs(180 * 24 * 60 * 60);
 const HOUSEKEEPING_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// Pool shares are compared over this trailing window: hashes under the
+/// network target against hashes one to four times above it.
+const BLOCK_SHARE_TAIL_WINDOW: Duration = Duration::from_secs(6 * 60 * 60);
+const BLOCK_SHARE_TAIL_INTERVAL: Duration = Duration::from_secs(5 * 60);
+/// Shares newer than this may not be persisted yet, so the window ends here.
+const BLOCK_SHARE_TAIL_SETTLE: Duration = Duration::from_secs(2 * 60);
+/// With hashes uniform below each target, a hash that reaches four times the
+/// network target is under it with this probability.
+const BLOCK_SHARE_TAIL_BLOCK_FRACTION: f64 = 0.25;
 const STRATUM_SNAPSHOT_STALE_AFTER: Duration = POOL_ACTIVITY_SNAPSHOT_STALE_AFTER;
 const TEMPLATE_REFRESH_WARN_AFTER: Duration = Duration::from_secs(45);
 const TEMPLATE_REFRESH_CRITICAL_AFTER: Duration = Duration::from_secs(120);
@@ -130,6 +140,7 @@ struct MonitorSnapshot {
     wallet_up: Option<bool>,
     miner_balance_probe_up: Option<bool>,
     miner_balance_probe_millis: Option<u64>,
+    block_share_tail: Option<BlockShareTailMetrics>,
     last_accepted_share_age_seconds: Option<u64>,
     payout_pending_count: Option<u64>,
     payout_pending_amount: Option<u64>,
@@ -331,6 +342,85 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct BlockShareTailMetrics {
+    window_seconds: u64,
+    counts: BlockShareTailCounts,
+    /// Chance of this few blocks or fewer among `blocks + near_misses`
+    /// hashes, if every block-level hash reached the pool.
+    shortfall_pvalue: f64,
+    updated_unix: u64,
+}
+
+/// Rolling sum of per-slice tail counts over the trailing window.
+#[derive(Default)]
+struct BlockShareTailWindow {
+    /// `(since, until, counts)` per queried slice, oldest first.
+    slices: VecDeque<(i64, i64, BlockShareTailCounts)>,
+}
+
+impl BlockShareTailWindow {
+    /// Where the next query should start, if any slice has been recorded.
+    fn covered_until(&self) -> Option<i64> {
+        self.slices.back().map(|(_, until, _)| *until)
+    }
+
+    fn push(&mut self, since: i64, until: i64, counts: BlockShareTailCounts, window: i64) {
+        self.slices.push_back((since, until, counts));
+        while self
+            .slices
+            .front()
+            .is_some_and(|(_, slice_until, _)| *slice_until <= until - window)
+        {
+            self.slices.pop_front();
+        }
+    }
+
+    fn metrics(&self, updated_unix: u64) -> Option<BlockShareTailMetrics> {
+        let (first_since, _, _) = self.slices.front()?;
+        let (_, last_until, _) = self.slices.back()?;
+        let mut counts = BlockShareTailCounts::default();
+        for (_, _, slice) in &self.slices {
+            counts.shares += slice.shares;
+            counts.expected_blocks += slice.expected_blocks;
+            counts.blocks += slice.blocks;
+            counts.near_misses += slice.near_misses;
+        }
+        Some(BlockShareTailMetrics {
+            window_seconds: (last_until - first_since).max(0) as u64,
+            counts,
+            shortfall_pvalue: binomial_lower_tail(
+                counts.blocks,
+                counts.blocks + counts.near_misses,
+                BLOCK_SHARE_TAIL_BLOCK_FRACTION,
+            ),
+            updated_unix,
+        })
+    }
+}
+
+fn unix_now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// P(X <= k) for X ~ Binomial(n, p), summed in log space.
+fn binomial_lower_tail(k: u64, n: u64, p: f64) -> f64 {
+    if k >= n {
+        return 1.0;
+    }
+    let (ln_p, ln_q) = (p.ln(), (1.0 - p).ln());
+    let mut ln_pmf = n as f64 * ln_q;
+    let mut total = ln_pmf.exp();
+    for i in 0..k {
+        ln_pmf += ((n - i) as f64).ln() - ((i + 1) as f64).ln() + ln_p - ln_q;
+        total += ln_pmf.exp();
+    }
+    total.min(1.0)
+}
+
 #[derive(Clone, Default)]
 struct ConditionState {
     failing_since: Option<SystemTime>,
@@ -465,6 +555,11 @@ pub(crate) async fn run_monitor(config_path: &Path) -> Result<()> {
     let balance_cache = Arc::clone(&monitor.balance_probe);
     tokio::spawn(async move {
         run_balance_probe_loop(balance_cache, || balance_monitor.probe_miner_balance()).await;
+    });
+
+    let tail_monitor = Arc::clone(&monitor);
+    tokio::spawn(async move {
+        tail_monitor.block_share_tail_loop().await;
     });
 
     let loop_monitor = Arc::clone(&monitor);
@@ -1739,6 +1834,42 @@ impl MonitorRuntime {
         }
     }
 
+    /// Queries each new slice of settled shares and publishes the rolling
+    /// block and near-miss counts.
+    async fn block_share_tail_loop(self: Arc<Self>) {
+        let window = BLOCK_SHARE_TAIL_WINDOW.as_secs() as i64;
+        let settle = BLOCK_SHARE_TAIL_SETTLE.as_secs() as i64;
+        let mut tail = BlockShareTailWindow::default();
+        let mut ticker = tokio::time::interval(BLOCK_SHARE_TAIL_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let now = unix_now_secs();
+            let until = now - settle;
+            let since = tail
+                .covered_until()
+                .filter(|covered| *covered > until - window)
+                .unwrap_or(until - window);
+            if until <= since {
+                continue;
+            }
+            let result = self
+                .run_store_task("block share tail task", move |store| {
+                    store.block_share_tail_counts(since, until)
+                })
+                .await;
+            match result {
+                Ok(counts) => {
+                    tail.push(since, until, counts, window);
+                    self.metrics.write().block_share_tail = tail.metrics(now.max(0) as u64);
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed loading block share tail counts");
+                }
+            }
+        }
+    }
+
     fn local_api_url(&self, path: &str) -> String {
         format!("http://{}:{}{path}", self.cfg.api_host, self.cfg.api_port)
     }
@@ -2360,6 +2491,36 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             "blocknet_pool_monitor_miner_balance_probe_millis",
             millis,
         );
+    }
+    if let Some(tail) = snapshot.block_share_tail.as_ref() {
+        for (name, value) in [
+            (
+                "blocknet_pool_monitor_block_share_window_seconds",
+                tail.window_seconds as f64,
+            ),
+            (
+                "blocknet_pool_monitor_block_share_expected_blocks",
+                tail.counts.expected_blocks,
+            ),
+            (
+                "blocknet_pool_monitor_block_share_blocks",
+                tail.counts.blocks as f64,
+            ),
+            (
+                "blocknet_pool_monitor_block_share_near_misses",
+                tail.counts.near_misses as f64,
+            ),
+            (
+                "blocknet_pool_monitor_block_share_shortfall_pvalue",
+                tail.shortfall_pvalue,
+            ),
+            (
+                "blocknet_pool_monitor_block_share_updated_timestamp_seconds",
+                tail.updated_unix as f64,
+            ),
+        ] {
+            metric_line(&mut out, name, value);
+        }
     }
 
     metric_line(
@@ -3195,6 +3356,77 @@ mod tests {
             reference_height_divergence_severity: None,
             wallet_ready: true,
         }
+    }
+
+    #[test]
+    fn binomial_lower_tail_matches_known_values() {
+        use super::binomial_lower_tail;
+        assert!((binomial_lower_tail(0, 1, 0.25) - 0.75).abs() < 1e-12);
+        assert!((binomial_lower_tail(1, 2, 0.5) - 0.75).abs() < 1e-12);
+        assert_eq!(binomial_lower_tail(5, 5, 0.25), 1.0);
+        assert_eq!(binomial_lower_tail(7, 3, 0.25), 1.0);
+        // 2026-11-16 07:59-12:02 EST: 4 blocks among 79 tail hashes.
+        let p = binomial_lower_tail(4, 79, 0.25);
+        assert!(p > 1e-6 && p < 1e-5, "{p}");
+        // A normal 6 h window: 32 blocks among 131.
+        assert!(binomial_lower_tail(32, 131, 0.25) > 0.3);
+        // Large windows stay finite.
+        let big = binomial_lower_tail(1_000, 10_000, 0.25);
+        assert!(big.is_finite() && big < 1e-100);
+    }
+
+    #[test]
+    fn block_share_tail_window_sums_slices_inside_the_window() {
+        use super::{BlockShareTailCounts, BlockShareTailWindow};
+        let slice = |blocks, near_misses| BlockShareTailCounts {
+            shares: 10,
+            expected_blocks: 1.5,
+            blocks,
+            near_misses,
+        };
+        let mut tail = BlockShareTailWindow::default();
+        assert!(tail.metrics(0).is_none());
+        tail.push(0, 3_600, slice(2, 6), 7_200);
+        tail.push(3_600, 7_200, slice(1, 3), 7_200);
+        let metrics = tail.metrics(7_300).unwrap();
+        assert_eq!(metrics.window_seconds, 7_200);
+        assert_eq!(metrics.counts.blocks, 3);
+        assert_eq!(metrics.counts.near_misses, 9);
+        assert_eq!(metrics.counts.shares, 20);
+        assert!((metrics.counts.expected_blocks - 3.0).abs() < 1e-12);
+        // The first slice ends at the new window start and drops out.
+        tail.push(7_200, 10_800, slice(0, 4), 7_200);
+        let metrics = tail.metrics(10_900).unwrap();
+        assert_eq!(metrics.window_seconds, 7_200);
+        assert_eq!(metrics.counts.blocks, 1);
+        assert_eq!(metrics.counts.near_misses, 7);
+        assert_eq!(tail.covered_until(), Some(10_800));
+    }
+
+    #[test]
+    fn render_metrics_outputs_block_share_tail() {
+        let snapshot = super::MonitorSnapshot {
+            block_share_tail: Some(super::BlockShareTailMetrics {
+                window_seconds: 21_600,
+                counts: super::BlockShareTailCounts {
+                    shares: 100,
+                    expected_blocks: 22.5,
+                    blocks: 4,
+                    near_misses: 75,
+                },
+                shortfall_pvalue: 0.000002,
+                updated_unix: 1_794_848_520,
+            }),
+            ..super::MonitorSnapshot::default()
+        };
+        let out = super::render_metrics(&snapshot);
+        assert!(out.contains("blocknet_pool_monitor_block_share_blocks 4\n"));
+        assert!(out.contains("blocknet_pool_monitor_block_share_near_misses 75\n"));
+        assert!(out.contains("blocknet_pool_monitor_block_share_expected_blocks 22.5\n"));
+        assert!(out.contains("blocknet_pool_monitor_block_share_window_seconds 21600\n"));
+        assert!(out.contains("blocknet_pool_monitor_block_share_shortfall_pvalue 0.000002\n"));
+        let empty = super::render_metrics(&super::MonitorSnapshot::default());
+        assert!(!empty.contains("blocknet_pool_monitor_block_share_"));
     }
 
     #[test]

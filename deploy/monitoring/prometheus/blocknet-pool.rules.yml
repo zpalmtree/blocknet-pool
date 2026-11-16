@@ -134,6 +134,47 @@ groups:
           summary: Pool hashrate fell below 40% of its recent average
           description: Check share rejections (stale job), the gateway relay delay and Stratum logs; connected miners may be mining without credit.
 
+      # Over 6 h, a quarter of pool hashes from one to four times the network
+      # target should be under it. Far fewer means block-level shares are not
+      # reaching the pool while the work around them does.
+      - alert: BlocknetPoolBlockSharesMissing
+        expr: |
+          blocknet_pool_monitor_block_share_shortfall_pvalue < 0.0001
+            and blocknet_pool_monitor_block_share_window_seconds >= 18000
+            and time() - blocknet_pool_monitor_block_share_updated_timestamp_seconds < 1200
+        for: 10m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Pool shares near the block target arrive but blocks do not
+          description: Hashes 1-4x above the network target keep arriving at the usual rate, but fewer of the hashes below it do (p={{ $value | printf "%.1e" }} over 6 h). Compare blocks and near misses by address, source IP and miner release, and check the gateway.
+
+      - alert: BlocknetPoolBlockSharesLow
+        expr: |
+          blocknet_pool_monitor_block_share_shortfall_pvalue < 0.001
+            and blocknet_pool_monitor_block_share_window_seconds >= 18000
+            and time() - blocknet_pool_monitor_block_share_updated_timestamp_seconds < 1200
+        for: 10m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Fewer pool blocks than the near-target shares predict
+          description: Blocks found over 6 h are low against hashes just above the network target (p={{ $value | printf "%.1e" }}). Watch for BlocknetPoolBlockSharesMissing.
+
+      - alert: BlocknetPoolBlockShareTailStale
+        expr: |
+          time() - blocknet_pool_monitor_block_share_updated_timestamp_seconds > 1800
+            or absent(blocknet_pool_monitor_block_share_updated_timestamp_seconds)
+        for: 30m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: The monitor stopped updating block-share tail counts
+          description: The block-share shortfall alert cannot fire while these counts are stale; check the monitor log for block share tail errors.
+
       # Gateways before blocknet_pool_gateway_max_miners existed ran with 16,384.
       - alert: BlocknetPoolMinerConnectionsNearCap
         expr: blocknet_pool_gateway_miners > 0.8 * scalar(blocknet_pool_gateway_max_miners or on() vector(16384))

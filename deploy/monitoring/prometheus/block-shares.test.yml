@@ -1,0 +1,98 @@
+# Run from this directory: promtool test rules block-shares.test.yml
+rule_files:
+- blocknet-pool.rules.yml
+evaluation_interval: 1m
+tests:
+- name: Normal tail stays quiet; a shortfall alerts after 10 minutes
+  interval: 1m
+  input_series:
+  # Updated every minute (time() in seconds), full 6 h window.
+  - series: blocknet_pool_monitor_block_share_updated_timestamp_seconds{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 0+60x120
+  - series: blocknet_pool_monitor_block_share_window_seconds{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 21600x120
+  # p 0.4 for an hour, then 0.0005 for 20 minutes, then 0.000003.
+  - series: blocknet_pool_monitor_block_share_shortfall_pvalue{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 0.4x60 0.0005x20 0.000003x40
+  alert_rule_test:
+  - eval_time: 59m
+    alertname: BlocknetPoolBlockSharesLow
+    exp_alerts: []
+  - eval_time: 75m
+    alertname: BlocknetPoolBlockSharesLow
+    exp_alerts:
+    - exp_labels:
+        alertname: BlocknetPoolBlockSharesLow
+        severity: warning
+        visibility: private
+        instance: 127.0.0.1:24784
+        job: blocknet_pool_monitor
+      exp_annotations:
+        summary: Fewer pool blocks than the near-target shares predict
+        description: Blocks found over 6 h are low against hashes just above the network target (p=5.0e-04). Watch for BlocknetPoolBlockSharesMissing.
+  - eval_time: 75m
+    alertname: BlocknetPoolBlockSharesMissing
+    exp_alerts: []
+  - eval_time: 85m
+    alertname: BlocknetPoolBlockSharesMissing
+    exp_alerts: []
+  - eval_time: 95m
+    alertname: BlocknetPoolBlockSharesMissing
+    exp_alerts:
+    - exp_labels:
+        alertname: BlocknetPoolBlockSharesMissing
+        severity: critical
+        visibility: private
+        instance: 127.0.0.1:24784
+        job: blocknet_pool_monitor
+      exp_annotations:
+        summary: Pool shares near the block target arrive but blocks do not
+        description: Hashes 1-4x above the network target keep arriving at the usual rate, but fewer of the hashes below it do (p=3.0e-06 over 6 h). Compare blocks and near misses by address, source IP and miner release, and check the gateway.
+  - eval_time: 95m
+    alertname: BlocknetPoolBlockShareTailStale
+    exp_alerts: []
+
+- name: A short window after a monitor restart stays quiet
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_block_share_updated_timestamp_seconds{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 0+60x60
+  - series: blocknet_pool_monitor_block_share_window_seconds{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 3600x60
+  - series: blocknet_pool_monitor_block_share_shortfall_pvalue{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 0.000001x60
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: BlocknetPoolBlockSharesMissing
+    exp_alerts: []
+
+- name: Counts that stop updating raise the stale warning
+  interval: 1m
+  input_series:
+  # Updated for 10 minutes, then frozen.
+  - series: blocknet_pool_monitor_block_share_updated_timestamp_seconds{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 0+60x10 600x110
+  - series: blocknet_pool_monitor_block_share_window_seconds{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 21600x120
+  - series: blocknet_pool_monitor_block_share_shortfall_pvalue{instance="127.0.0.1:24784",job="blocknet_pool_monitor"}
+    values: 0.000001x120
+  alert_rule_test:
+  # Stale counts never raise the shortfall alerts.
+  - eval_time: 60m
+    alertname: BlocknetPoolBlockSharesMissing
+    exp_alerts: []
+  - eval_time: 55m
+    alertname: BlocknetPoolBlockShareTailStale
+    exp_alerts: []
+  - eval_time: 75m
+    alertname: BlocknetPoolBlockShareTailStale
+    exp_alerts:
+    - exp_labels:
+        alertname: BlocknetPoolBlockShareTailStale
+        severity: warning
+        visibility: private
+        instance: 127.0.0.1:24784
+        job: blocknet_pool_monitor
+      exp_annotations:
+        summary: The monitor stopped updating block-share tail counts
+        description: The block-share shortfall alert cannot fire while these counts are stale; check the monitor log for block share tail errors.
